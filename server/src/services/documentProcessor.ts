@@ -102,6 +102,7 @@ export async function processUploadedDocument(documentId: string, filePath: stri
         status: 'failed',
         extractedText: `Error processing file: ${error.message || 'Unknown error'}`
       }
-    }).catch(() => {});
+    }).catch(() => { });
   }
 }
+

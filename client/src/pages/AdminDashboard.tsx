@@ -553,9 +553,11 @@ export const AdminDashboard: React.FC = () => {
         <div className="space-y-6">
           <div className="px-3 py-2">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-purple-600 flex items-center justify-center text-white font-bold text-sm shadow-md shadow-purple-900/50">
-                K
-              </div>
+              <img
+                src="/kaira-logo.png"
+                alt="KAIRA Technologies"
+                className="h-10 w-10 object-contain bg-white rounded-xl p-1 shadow-md shadow-slate-950/40"
+              />
               <div>
                 <span className="text-base font-bold text-white tracking-tight">Admin Console</span>
                 <p className="text-[10px] text-purple-400 font-semibold uppercase tracking-wider">Full Authorization</p>
@@ -1787,3 +1789,4 @@ export const AdminDashboard: React.FC = () => {
     </div>
   );
 };
+

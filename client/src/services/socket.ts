@@ -18,3 +18,4 @@ export function registerSocketUser(userId: string, role: string, name: string) {
   const s = getSocket();
   s.emit('user:register', { userId, role, name });
 }
+

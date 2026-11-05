@@ -243,3 +243,4 @@ router.delete('/documents/:id', authenticate, requireRole(['admin']), async (req
 });
 
 export default router;
+
