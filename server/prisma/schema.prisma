@@ -1,0 +1,107 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id               String                @id @default(cuid())
+  name             String
+  email            String                @unique
+  phone            String?
+  role             String                // "admin" | "agent" | "customer"
+  passwordHash     String
+  googleId         String?
+  avatar           String?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  callsAsCustomer  CallRecord[]          @relation("CustomerCalls")
+  callsAsAgent     CallRecord[]          @relation("AgentCalls")
+  callsAsAdmin     CallRecord[]          @relation("AdminCalls")
+  transferRequests CallTransferRequest[]
+}
+
+model CallRecord {
+  id               String                @id @default(cuid())
+  callId           String                @unique
+  customerId       String?
+  customer         User?                 @relation("CustomerCalls", fields: [customerId], references: [id], onDelete: SetNull)
+  customerName     String
+  customerPhone    String?
+  agentId          String?
+  agent            User?                 @relation("AgentCalls", fields: [agentId], references: [id], onDelete: SetNull)
+  agentName        String?
+  adminId          String?
+  admin            User?                 @relation("AdminCalls", fields: [adminId], references: [id], onDelete: SetNull)
+  type             String                // "ai_voice" | "agent_voice" | "admin_transfer"
+  direction        String                // "incoming" | "outgoing"
+  status           String                // "active" | "completed" | "missed" | "transferred" | "rejected"
+  startTime        DateTime              @default(now())
+  endTime          DateTime?
+  duration         Int                   @default(0) // seconds
+  transferred      Boolean               @default(false)
+  transferReason   String?
+  customerQuestion String?
+  createdAt        DateTime              @default(now())
+
+  transcripts      CallTranscript[]
+  transferRequests CallTransferRequest[]
+}
+
+model CallTranscript {
+  id           String     @id @default(cuid())
+  callRecordId String
+  callRecord   CallRecord @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  sender       String     // "customer" | "ai" | "agent" | "admin" | "system"
+  senderName   String?
+  text         String
+  timestamp    DateTime   @default(now())
+}
+
+model CallTransferRequest {
+  id            String      @id @default(cuid())
+  callRecordId  String
+  callRecord    CallRecord  @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  customerId    String?
+  customer      User?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerName  String
+  customerPhone String?
+  question      String
+  reason        String
+  status        String      // "pending" | "ringing" | "accepted" | "connected" | "rejected" | "missed" | "completed"
+  adminId       String?
+  createdAt     DateTime    @default(now())
+  respondedAt   DateTime?
+}
+
+model KnowledgeDocument {
+  id            String           @id @default(cuid())
+  title         String
+  fileName      String
+  fileType      String
+  fileSize      Int
+  status        String           // "processing" | "indexed" | "failed"
+  extractedText String
+  entryCount    Int              @default(0)
+  createdAt     DateTime         @default(now())
+
+  entries       KnowledgeEntry[]
+}
+
+model KnowledgeEntry {
+  id          String             @id @default(cuid())
+  documentId  String?
+  document    KnowledgeDocument? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  title       String
+  category    String             // "company" | "products" | "services" | "pricing" | "policies" | "faq" | "support" | "general"
+  question    String?
+  answer      String?
+  content     String
+  keywords    String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+}
