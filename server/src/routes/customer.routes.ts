@@ -77,8 +77,12 @@ router.post('/', authenticate, requireRole(['admin']), async (req: Request, res:
       return;
     }
 
-    const defaultPassword = password || 'customer@123';
-    const passwordHash = await bcrypt.hash(defaultPassword, 10);
+    if (!password || password.length < 6) {
+      res.status(400).json({ error: 'A password with a minimum of 6 characters is required.' });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
 
     const customer = await prisma.user.create({
       data: {

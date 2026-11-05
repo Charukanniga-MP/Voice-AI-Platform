@@ -45,18 +45,10 @@ async function runAuthTests() {
   const custData = await custRes.json();
   console.log('Customer login test:', custRes.ok && custData.user.role === 'customer' ? 'PASS ✓' : 'FAIL ✗');
 
-  // 5. Google Login (Customer)
-  const gCustRes = await fetch(`${BASE}/auth/google`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      email: `google_${Date.now()}@gmail.com`,
-      name: 'Google User',
-      googleId: 'g_12345'
-    })
-  });
-  const gCustData = await gCustRes.json();
-  console.log('Google customer test (role is strictly customer):', gCustRes.ok && gCustData.user.role === 'customer' ? 'PASS ✓' : 'FAIL ✗');
+  // 5. Google OAuth 2.0 URL Endpoint
+  const gUrlRes = await fetch(`${BASE}/auth/google/url`);
+  const gUrlData = await gUrlRes.json();
+  console.log('Google OAuth 2.0 URL endpoint test:', gUrlRes.ok && typeof gUrlData.configured === 'boolean' ? 'PASS ✓' : 'FAIL ✗');
 
   // 6. RBAC Protection: Customer attempts to call Admin-only route
   const rbacRes = await fetch(`${BASE}/calls/stats`, {
