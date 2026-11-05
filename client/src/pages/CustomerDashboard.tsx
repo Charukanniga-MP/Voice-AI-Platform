@@ -33,6 +33,7 @@ export const CustomerDashboard: React.FC = () => {
 
   // Auto-scroll transcript
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transcripts, interimText]);
@@ -445,9 +446,8 @@ export const CustomerDashboard: React.FC = () => {
                 {/* Mute Button */}
                 <button
                   onClick={handleToggleMute}
-                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
-                    isMuted ? 'bg-red-50 border-red-200 text-red-600' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
-                  }`}
+                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${isMuted ? 'bg-red-50 border-red-200 text-red-600' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+                    }`}
                   title={isMuted ? 'Unmute Microphone' : 'Mute Microphone'}
                 >
                   {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
@@ -505,13 +505,12 @@ export const CustomerDashboard: React.FC = () => {
             {transcripts.map((t) => (
               <div
                 key={t.id}
-                className={`flex flex-col ${
-                  t.sender === 'customer'
+                className={`flex flex-col ${t.sender === 'customer'
                     ? 'items-end'
                     : t.sender === 'system'
-                    ? 'items-center'
-                    : 'items-start'
-                }`}
+                      ? 'items-center'
+                      : 'items-start'
+                  }`}
               >
                 {t.sender === 'system' ? (
                   <span className="px-3 py-1 bg-amber-50 border border-amber-200 text-amber-800 text-[11px] rounded-full font-medium my-1">
@@ -523,13 +522,12 @@ export const CustomerDashboard: React.FC = () => {
                       {t.senderName || (t.sender === 'customer' ? 'You' : t.sender === 'ai' ? 'KAIRA AI' : 'Admin')}
                     </span>
                     <div
-                      className={`px-4 py-2.5 rounded-2xl text-xs leading-relaxed ${
-                        t.sender === 'customer'
+                      className={`px-4 py-2.5 rounded-2xl text-xs leading-relaxed ${t.sender === 'customer'
                           ? 'bg-indigo-600 text-white rounded-tr-xs shadow-xs'
                           : t.sender === 'ai'
-                          ? 'bg-slate-100 text-slate-800 rounded-tl-xs border border-slate-200/80'
-                          : 'bg-emerald-50 text-emerald-900 border border-emerald-200 rounded-tl-xs'
-                      }`}
+                            ? 'bg-slate-100 text-slate-800 rounded-tl-xs border border-slate-200/80'
+                            : 'bg-emerald-50 text-emerald-900 border border-emerald-200 rounded-tl-xs'
+                        }`}
                     >
                       {t.text}
                     </div>
@@ -613,13 +611,12 @@ export const CustomerDashboard: React.FC = () => {
                       )}
                     </td>
                     <td className="py-3 px-4">
-                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${
-                        call.status === 'completed'
+                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${call.status === 'completed'
                           ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                           : call.status === 'active'
-                          ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                          : 'bg-red-50 text-red-700 border border-red-200'
-                      }`}>
+                            ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                            : 'bg-red-50 text-red-700 border border-red-200'
+                        }`}>
                         {call.status}
                       </span>
                     </td>

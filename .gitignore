@@ -4,4 +4,6 @@ uploads/
 *.db
 *.db-journal
 .env
-
+.env.*
+*.env
+!.env.example

@@ -13,10 +13,12 @@ import knowledgeRoutes from './routes/knowledge.routes.js';
 import { initSocketServer } from './services/socket.js';
 import { seedDatabase } from './seed.js';
 
-dotenv.config();
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Load .env from server directory and current directory
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+dotenv.config();
 
 const app = express();
 const server = http.createServer(app);

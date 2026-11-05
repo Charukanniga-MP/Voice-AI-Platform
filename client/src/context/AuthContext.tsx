@@ -6,9 +6,14 @@ interface AuthContextType {
   user: User | null;
   token: string | null;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<User>;
+  login: (email: string, password: string, role?: 'admin' | 'agent') => Promise<User>;
+  loginAdmin: (email: string, password: string) => Promise<User>;
+  loginAgent: (email: string, password: string) => Promise<User>;
   register: (data: { name: string; email: string; phone?: string; password: string; confirmPassword: string }) => Promise<User>;
   initiateGoogleLogin: () => Promise<void>;
+  loginWithGoogleIdToken: (idToken: string) => Promise<User>;
+  loginWithGoogleCode: (code: string, redirectUri?: string) => Promise<User>;
+  getGoogleConfig: () => Promise<{ configured: boolean; clientId: string | null }>;
   setSession: (token: string, user: User) => void;
   logout: () => void;
 }
@@ -37,8 +42,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.setItem('kaira_user', JSON.stringify(parsedUser));
         registerSocketUser(parsedUser.id, parsedUser.role, parsedUser.name);
 
-        // Clean up URL without reloading
-        window.history.replaceState({}, document.title, window.location.pathname);
+        // Clean up URL without reloading to root dashboard
+        window.history.replaceState({}, document.title, '/');
         setIsLoading(false);
         return;
       } catch (err) {
@@ -64,11 +69,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(false);
   }, []);
 
-  const login = async (email: string, password: string): Promise<User> => {
+  const login = async (email: string, password: string, role?: 'admin' | 'agent'): Promise<User> => {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email, password, role })
     });
 
     const data = await res.json();
@@ -85,6 +90,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return data.user;
   };
 
+  const loginAdmin = async (email: string, password: string): Promise<User> => {
+    return login(email, password, 'admin');
+  };
+
+  const loginAgent = async (email: string, password: string): Promise<User> => {
+    return login(email, password, 'agent');
+  };
+
   const register = async (formData: { name: string; email: string; phone?: string; password: string; confirmPassword: string }): Promise<User> => {
     const res = await fetch('/api/auth/register', {
       method: 'POST',
@@ -95,6 +108,58 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const data = await res.json();
     if (!res.ok) {
       throw new Error(data.error || 'Registration failed.');
+    }
+
+    setToken(data.token);
+    setUser(data.user);
+    localStorage.setItem('kaira_token', data.token);
+    localStorage.setItem('kaira_user', JSON.stringify(data.user));
+
+    registerSocketUser(data.user.id, data.user.role, data.user.name);
+    return data.user;
+  };
+
+  const getGoogleConfig = async (): Promise<{ configured: boolean; clientId: string | null }> => {
+    try {
+      const res = await fetch('/api/auth/google/config');
+      if (!res.ok) return { configured: false, clientId: null };
+      return await res.json();
+    } catch {
+      return { configured: false, clientId: null };
+    }
+  };
+
+  const loginWithGoogleIdToken = async (idToken: string): Promise<User> => {
+    const res = await fetch('/api/auth/google/verify-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Google authentication failed.');
+    }
+
+    setToken(data.token);
+    setUser(data.user);
+    localStorage.setItem('kaira_token', data.token);
+    localStorage.setItem('kaira_user', JSON.stringify(data.user));
+
+    registerSocketUser(data.user.id, data.user.role, data.user.name);
+    return data.user;
+  };
+
+  const loginWithGoogleCode = async (code: string, redirectUri?: string): Promise<User> => {
+    const res = await fetch('/api/auth/google/code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, redirectUri })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Google code exchange failed.');
     }
 
     setToken(data.token);
@@ -136,7 +201,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, isLoading, login, register, initiateGoogleLogin, setSession, logout }}>
+    <AuthContext.Provider value={{ user, token, isLoading, login, loginAdmin, loginAgent, register, initiateGoogleLogin, loginWithGoogleIdToken, loginWithGoogleCode, getGoogleConfig, setSession, logout }}>
       {children}
     </AuthContext.Provider>
   );
