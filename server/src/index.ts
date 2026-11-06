@@ -8,16 +8,20 @@ import { Server as SocketIOServer } from 'socket.io';
 
 import authRoutes from './routes/auth.routes.js';
 import customerRoutes from './routes/customer.routes.js';
+import agentRoutes from './routes/agent.routes.js';
 import callRoutes from './routes/call.routes.js';
 import knowledgeRoutes from './routes/knowledge.routes.js';
 import ticketRoutes from './routes/ticket.routes.js';
+import telephonyRoutes from './routes/telephony.routes.js';
 import { initSocketServer } from './services/socket.js';
 import { seedDatabase } from './seed.js';
 
-dotenv.config();
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Load .env from server directory and current directory
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
@@ -30,6 +34,9 @@ const io = new SocketIOServer(server, {
   }
 });
 
+// Provide io instance to express app
+app.set('io', io);
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -41,9 +48,11 @@ app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/customers', customerRoutes);
+app.use('/api/agents', agentRoutes);
 app.use('/api/calls', callRoutes);
 app.use('/api/knowledge', knowledgeRoutes);
 app.use('/api/tickets', ticketRoutes);
+app.use('/api/telephony', telephonyRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

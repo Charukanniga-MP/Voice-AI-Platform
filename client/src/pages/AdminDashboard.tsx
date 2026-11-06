@@ -6,24 +6,39 @@ import { voiceService } from '../services/voice.js';
 import { SupportTickets } from './SupportTickets.js';
 import {
   User, CallRecord, CallTranscript, CallTransferRequest,
-  KnowledgeEntry, KnowledgeDocument, CallStats
+  KnowledgeEntry, KnowledgeDocument, CallStats, LanguageCode, SUPPORTED_LANGUAGES
 } from '../types.js';
 import {
   Users, PhoneCall, PhoneIncoming, PhoneOutgoing, PhoneForwarded,
   PhoneOff, Mic, MicOff, Volume2, VolumeX, Clock, Search,
-  BookOpen, Plus, Trash2, Edit3, Upload, FileText, CheckCircle2,
-  AlertCircle, ShieldAlert, Phone, Eye, X, MessageSquare, RefreshCw
+  BookOpen, Plus, Trash2, Edit3, Upload, CheckCircle2, MessageSquare,
+  AlertCircle, ShieldAlert, Eye, Headphones, Radio, RefreshCw, Globe
 } from 'lucide-react';
+
+// Pure deduplication utility function
+function deduplicate<T>(items: T[], keyFn: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  const result: T[] = [];
+  for (const item of items) {
+    const key = keyFn(item).trim().toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(item);
+    }
+  }
+  return result;
+}
 
 export const AdminDashboard: React.FC = () => {
   const { user, token } = useAuth();
 
-  // Active navigation section: 'overview' | 'customers' | 'calls' | 'transfers' | 'knowledge'
-  const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'calls' | 'transfers' | 'knowledge' | 'tickets'>('overview');
+  // Active navigation section
+  const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'agents' | 'calls' | 'transfers' | 'knowledge' | 'tickets'>('overview');
 
   // Stats state
   const [stats, setStats] = useState<CallStats>({
     totalCustomers: 0,
+    totalAgents: 0,
     totalCalls: 0,
     totalIncoming: 0,
     totalOutgoing: 0,
@@ -72,18 +87,32 @@ export const AdminDashboard: React.FC = () => {
   const [custFormPhone, setCustFormPhone] = useState('');
   const [custFormPassword, setCustFormPassword] = useState('');
 
-  // Section C: Call Monitoring State
+  // Section C: Agent Management State
+  const [agents, setAgents] = useState<User[]>([]);
+  const [agentSearch, setAgentSearch] = useState('');
+  const [loadingAgents, setLoadingAgents] = useState(false);
+  const [showAddAgentModal, setShowAddAgentModal] = useState(false);
+  const [editingAgent, setEditingAgent] = useState<User | null>(null);
+  const [deletingAgent, setDeletingAgent] = useState<User | null>(null);
+
+  // Agent Form State
+  const [agentFormName, setAgentFormName] = useState('');
+  const [agentFormEmail, setAgentFormEmail] = useState('');
+  const [agentFormPhone, setAgentFormPhone] = useState('');
+  const [agentFormPassword, setAgentFormPassword] = useState('');
+
+  // Section D: Call Monitoring State
   const [calls, setCalls] = useState<CallRecord[]>([]);
   const [callFilter, setCallFilter] = useState<'all' | 'incoming' | 'outgoing' | 'transferred' | 'active' | 'completed' | 'missed'>('all');
   const [callSearch, setCallSearch] = useState('');
   const [loadingCalls, setLoadingCalls] = useState(false);
   const [selectedCallDetails, setSelectedCallDetails] = useState<CallRecord | null>(null);
 
-  // Section D: Transfer Management State
+  // Section E: Transfer Management State
   const [allTransfers, setAllTransfers] = useState<CallTransferRequest[]>([]);
   const [loadingTransfers, setLoadingTransfers] = useState(false);
 
-  // Section E: Knowledge Base State
+  // Section F: Knowledge Base State
   const [kbEntries, setKbEntries] = useState<KnowledgeEntry[]>([]);
   const [kbDocuments, setKbDocuments] = useState<KnowledgeDocument[]>([]);
   const [kbSearch, setKbSearch] = useState('');
@@ -135,7 +164,7 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Fetch Customers
+  // Fetch Customers with Deduplication
   const fetchCustomers = async () => {
     if (!token) return;
     setLoadingCustomers(true);
@@ -144,7 +173,11 @@ export const AdminDashboard: React.FC = () => {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
-      if (res.ok) setCustomers(data.customers || []);
+      if (res.ok) {
+        // Enforce strict uniqueness by lowercase email
+        const unique = deduplicate<User>(data.customers || [], c => c.email);
+        setCustomers(unique);
+      }
     } catch (err) {
       console.error('Failed to fetch customers:', err);
     } finally {
@@ -152,7 +185,27 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Fetch Calls
+  // Fetch Support Agents with Deduplication
+  const fetchAgents = async () => {
+    if (!token) return;
+    setLoadingAgents(true);
+    try {
+      const res = await fetch(`/api/agents?search=${encodeURIComponent(agentSearch)}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const unique = deduplicate<User>(data.agents || [], a => a.email);
+        setAgents(unique);
+      }
+    } catch (err) {
+      console.error('Failed to fetch agents:', err);
+    } finally {
+      setLoadingAgents(false);
+    }
+  };
+
+  // Fetch Calls with Deduplication
   const fetchCalls = async () => {
     if (!token) return;
     setLoadingCalls(true);
@@ -161,7 +214,10 @@ export const AdminDashboard: React.FC = () => {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
-      if (res.ok) setCalls(data.calls || []);
+      if (res.ok) {
+        const unique = deduplicate<CallRecord>(data.calls || [], c => c.providerCallSid || c.callId || c.id);
+        setCalls(unique);
+      }
     } catch (err) {
       console.error('Failed to fetch calls:', err);
     } finally {
@@ -169,7 +225,7 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Fetch Transfers
+  // Fetch Transfers with Deduplication
   const fetchTransfers = async () => {
     if (!token) return;
     setLoadingTransfers(true);
@@ -178,7 +234,11 @@ export const AdminDashboard: React.FC = () => {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
-      if (res.ok) setAllTransfers(data.transfers || []);
+      if (res.ok) {
+        // Deduplicate transfers by callRecordId to show each call's latest transfer
+        const unique = deduplicate<CallTransferRequest>(data.transfers || [], t => t.callRecordId || t.id);
+        setAllTransfers(unique);
+      }
     } catch (err) {
       console.error('Failed to fetch transfers:', err);
     } finally {
@@ -186,7 +246,7 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Fetch Knowledge Base & Documents
+  // Fetch Knowledge Base & Documents with Deduplication
   const fetchKnowledge = async () => {
     if (!token) return;
     setLoadingKb(true);
@@ -203,8 +263,14 @@ export const AdminDashboard: React.FC = () => {
       const entriesData = await entriesRes.json();
       const docsData = await docsRes.json();
 
-      if (entriesRes.ok) setKbEntries(entriesData.entries || []);
-      if (docsRes.ok) setKbDocuments(docsData.documents || []);
+      if (entriesRes.ok) {
+        const uniqueEntries = deduplicate<KnowledgeEntry>(entriesData.entries || [], e => `${e.title}:::${e.question || ''}`);
+        setKbEntries(uniqueEntries);
+      }
+      if (docsRes.ok) {
+        const uniqueDocs = deduplicate<KnowledgeDocument>(docsData.documents || [], d => d.id);
+        setKbDocuments(uniqueDocs);
+      }
     } catch (err) {
       console.error('Failed to fetch knowledge:', err);
     } finally {
@@ -212,77 +278,59 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Load section data
+  // Initial stats load
   useEffect(() => {
     fetchStats();
+  }, [token]);
+
+  // Section-specific data fetching
+  useEffect(() => {
     if (activeSection === 'overview') fetchStats();
     if (activeSection === 'customers') fetchCustomers();
+    if (activeSection === 'agents') fetchAgents();
     if (activeSection === 'calls') fetchCalls();
     if (activeSection === 'transfers') fetchTransfers();
     if (activeSection === 'knowledge') fetchKnowledge();
-  }, [activeSection, token, customerSearch, callFilter, callSearch, kbCategory, kbSearch]);
+  }, [activeSection, token, customerSearch, agentSearch, callFilter, callSearch, kbCategory, kbSearch]);
 
-  // Socket setup for Incoming Call Transfers & Real-time Live Voice
+  // Socket setup with clean teardown
   useEffect(() => {
     const socket = getSocket();
 
-    // 1. Critical: Incoming Call Transfer Notification from AI Voice Agent!
-    socket.on('transfer:incoming', (data: {
-      transferId: string;
-      callId: string;
-      customerName: string;
-      customerPhone: string;
-      question: string;
-      reason: string;
-      duration: number;
-    }) => {
-      console.log('[Admin] Incoming AI Call Transfer received:', data);
+    const handleIncomingTransfer = (data: any) => {
       setIncomingTransfer(data);
       fetchStats();
-    });
+    };
 
-    // Another admin accepted transfer
-    socket.on('transfer:status_updated', (data: { transferId: string; status: string }) => {
+    const handleTransferUpdated = (data: any) => {
       if (incomingTransfer && incomingTransfer.transferId === data.transferId) {
         setIncomingTransfer(null);
       }
       fetchTransfers();
       fetchStats();
-    });
+    };
 
-    // Live transcript stream
-    socket.on('call:live_transcript', (data: { sender: any; senderName: string; text: string; timestamp: string }) => {
-      setTranscripts(prev => [
-        ...prev,
-        {
-          id: 't_' + Date.now() + Math.random(),
-          sender: data.sender,
-          senderName: data.senderName,
-          text: data.text,
-          timestamp: data.timestamp
-        }
-      ]);
-    });
-
-    // Call status updates (refresh stats)
-    socket.on('call:status_changed', () => {
+    const handleStatusChanged = () => {
       fetchStats();
       if (activeSection === 'calls') fetchCalls();
-    });
+    };
 
-    // Call ended
-    socket.on('call:ended', () => {
+    const handleCallEnded = () => {
       if (activeTransferredCall) {
         handleEndTransferredCall();
       }
-    });
+    };
+
+    socket.on('transfer:incoming', handleIncomingTransfer);
+    socket.on('transfer:status_updated', handleTransferUpdated);
+    socket.on('call:status_changed', handleStatusChanged);
+    socket.on('call:ended', handleCallEnded);
 
     return () => {
-      socket.off('transfer:incoming');
-      socket.off('transfer:status_updated');
-      socket.off('call:live_transcript');
-      socket.off('call:status_changed');
-      socket.off('call:ended');
+      socket.off('transfer:incoming', handleIncomingTransfer);
+      socket.off('transfer:status_updated', handleTransferUpdated);
+      socket.off('call:status_changed', handleStatusChanged);
+      socket.off('call:ended', handleCallEnded);
     };
   }, [incomingTransfer, activeTransferredCall, activeSection]);
 
@@ -291,10 +339,7 @@ export const AdminDashboard: React.FC = () => {
     if (!incomingTransfer) return;
 
     try {
-      // 1. Request microphone permission
       await webrtcManager.getMicrophoneStream();
-
-      // 2. Emit accept over socket
       const socket = getSocket();
       socket.emit('transfer:accept', {
         transferId: incomingTransfer.transferId,
@@ -302,7 +347,6 @@ export const AdminDashboard: React.FC = () => {
         adminName: user?.name
       });
 
-      // 3. Set active transferred session
       setActiveTransferredCall({
         callId: incomingTransfer.callId,
         transferId: incomingTransfer.transferId,
@@ -329,7 +373,6 @@ export const AdminDashboard: React.FC = () => {
         }
       ]);
 
-      // Start Admin Speech Recognition for live transcript
       voiceService.startListening((text, isFinal) => {
         if (isFinal && text.trim()) {
           socket.emit('call:live_speech', {
@@ -385,22 +428,31 @@ export const AdminDashboard: React.FC = () => {
   const handleSaveCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const cleanEmail = custFormEmail.trim().toLowerCase();
+
+      // Client-side uniqueness check
+      if (!editingCustomer && customers.some(c => c.email.trim().toLowerCase() === cleanEmail)) {
+        alert(`A customer with email "${cleanEmail}" is already registered.`);
+        return;
+      }
+
       if (editingCustomer) {
-        // Update
         const res = await fetch(`/api/customers/${editingCustomer.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ name: custFormName, email: custFormEmail, phone: custFormPhone })
+          body: JSON.stringify({ name: custFormName, email: cleanEmail, phone: custFormPhone })
         });
-        if (!res.ok) throw new Error('Failed to update customer');
+        if (!res.ok) {
+          const d = await res.json();
+          throw new Error(d.error || 'Failed to update customer');
+        }
       } else {
-        // Create
         const res = await fetch('/api/customers', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({
             name: custFormName,
-            email: custFormEmail,
+            email: cleanEmail,
             phone: custFormPhone,
             password: custFormPassword || 'customer@123'
           })
@@ -440,31 +492,119 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  // Agent Management Handlers
+  const handleSaveAgent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const cleanEmail = agentFormEmail.trim().toLowerCase();
+
+      if (!editingAgent && agents.some(a => a.email.trim().toLowerCase() === cleanEmail)) {
+        alert(`A Support Agent with email "${cleanEmail}" already exists.`);
+        return;
+      }
+
+      if (editingAgent) {
+        const res = await fetch(`/api/agents/${editingAgent.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            name: agentFormName,
+            email: cleanEmail,
+            phone: agentFormPhone,
+            password: agentFormPassword || undefined
+          })
+        });
+        if (!res.ok) {
+          const d = await res.json();
+          throw new Error(d.error || 'Failed to update agent');
+        }
+      } else {
+        const res = await fetch('/api/agents', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            name: agentFormName,
+            email: cleanEmail,
+            phone: agentFormPhone,
+            password: agentFormPassword || 'kaira@123'
+          })
+        });
+        if (!res.ok) {
+          const d = await res.json();
+          throw new Error(d.error || 'Failed to create agent');
+        }
+      }
+
+      setShowAddAgentModal(false);
+      setEditingAgent(null);
+      setAgentFormName('');
+      setAgentFormEmail('');
+      setAgentFormPhone('');
+      setAgentFormPassword('');
+      fetchAgents();
+      fetchStats();
+    } catch (err: any) {
+      alert(err.message || 'Operation failed');
+    }
+  };
+
+  const handleDeleteAgent = async () => {
+    if (!deletingAgent) return;
+    try {
+      const res = await fetch(`/api/agents/${deletingAgent.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || 'Failed to delete agent');
+      }
+      setDeletingAgent(null);
+      fetchAgents();
+      fetchStats();
+    } catch (err: any) {
+      alert(err.message || 'Delete failed');
+    }
+  };
+
   // Knowledge Base Handlers
   const handleSaveKbEntry = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       const payload = {
-        title: kbTitle,
+        title: kbTitle.trim(),
         category: kbCat,
-        question: kbQuestion,
-        answer: kbAnswer,
-        content: kbContent,
-        keywords: kbKeywords
+        question: kbQuestion.trim() || undefined,
+        answer: kbAnswer.trim() || undefined,
+        content: kbContent.trim(),
+        keywords: kbKeywords.trim() || undefined
       };
 
+      if (!editingKbEntry) {
+        // Prevent client-side duplicate submission
+        if (kbEntries.some(e => e.title.trim().toLowerCase() === payload.title.toLowerCase())) {
+          alert(`A Knowledge Base entry with title "${payload.title}" already exists.`);
+          return;
+        }
+      }
+
       if (editingKbEntry) {
-        await fetch(`/api/knowledge/${editingKbEntry.id}`, {
+        const res = await fetch(`/api/knowledge/${editingKbEntry.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify(payload)
         });
+        if (!res.ok) throw new Error('Failed to update knowledge entry');
       } else {
-        await fetch('/api/knowledge', {
+        const res = await fetch('/api/knowledge', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify(payload)
         });
+        if (!res.ok) {
+          const d = await res.json();
+          throw new Error(d.error || 'Failed to create knowledge entry');
+        }
       }
 
       setShowAddKbModal(false);
@@ -494,7 +634,7 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Upload Document Handler (PDF / DOCX)
+  // Upload Document Handler
   const handleUploadDocument = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!uploadFile) return;
@@ -519,7 +659,7 @@ export const AdminDashboard: React.FC = () => {
       setUploadFile(null);
       setUploadTitle('');
       fetchKnowledge();
-      setTimeout(fetchKnowledge, 2500); // Re-fetch when background indexing finishes
+      setTimeout(fetchKnowledge, 2500);
     } catch (err: any) {
       alert(err.message || 'Document upload error');
     } finally {
@@ -570,8 +710,8 @@ export const AdminDashboard: React.FC = () => {
             <button
               onClick={() => setActiveSection('overview')}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'overview'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
-                  : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
                 }`}
             >
               <Clock className="w-4 h-4" />
@@ -581,8 +721,8 @@ export const AdminDashboard: React.FC = () => {
             <button
               onClick={() => setActiveSection('customers')}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'customers'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
-                  : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
                 }`}
             >
               <Users className="w-4 h-4" />
@@ -590,10 +730,21 @@ export const AdminDashboard: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setActiveSection('agents')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'agents'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                }`}
+            >
+              <Headphones className="w-4 h-4" />
+              Agent Management
+            </button>
+
+            <button
               onClick={() => setActiveSection('calls')}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'calls'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
-                  : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
                 }`}
             >
               <PhoneCall className="w-4 h-4" />
@@ -603,8 +754,8 @@ export const AdminDashboard: React.FC = () => {
             <button
               onClick={() => setActiveSection('transfers')}
               className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'transfers'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
-                  : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
                 }`}
             >
               <div className="flex items-center gap-3">
@@ -632,8 +783,8 @@ export const AdminDashboard: React.FC = () => {
             <button
               onClick={() => setActiveSection('knowledge')}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'knowledge'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
-                  : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
                 }`}
             >
               <BookOpen className="w-4 h-4" />
@@ -658,7 +809,7 @@ export const AdminDashboard: React.FC = () => {
               <div>
                 <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Executive Dashboard Overview</h1>
                 <p className="text-xs text-slate-500 mt-1">
-                  Live operational metrics calculated directly from database records.
+                  Live operational metrics calculated directly from database records without duplication.
                 </p>
               </div>
               <button
@@ -670,7 +821,7 @@ export const AdminDashboard: React.FC = () => {
               </button>
             </div>
 
-            {/* 8 Database Statistic Cards */}
+            {/* Unique Database Statistic Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {/* Total Customers */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
@@ -679,7 +830,17 @@ export const AdminDashboard: React.FC = () => {
                   <Users className="w-4 h-4 text-indigo-500" />
                 </div>
                 <p className="text-2xl font-extrabold text-slate-900">{stats.totalCustomers}</p>
-                <p className="text-[11px] text-slate-400">Registered platform customers</p>
+                <p className="text-[11px] text-slate-400">Unique registered customer accounts</p>
+              </div>
+
+              {/* Total Support Agents */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Support Agents</span>
+                  <Headphones className="w-4 h-4 text-purple-500" />
+                </div>
+                <p className="text-2xl font-extrabold text-slate-900">{stats.totalAgents ?? 1}</p>
+                <p className="text-[11px] text-slate-400">Authorized support agents</p>
               </div>
 
               {/* Total Incoming Calls */}
@@ -689,7 +850,7 @@ export const AdminDashboard: React.FC = () => {
                   <PhoneIncoming className="w-4 h-4 text-emerald-500" />
                 </div>
                 <p className="text-2xl font-extrabold text-slate-900">{stats.totalIncoming}</p>
-                <p className="text-[11px] text-slate-400">Customer-initiated calls</p>
+                <p className="text-[11px] text-slate-400">Customer-initiated voice calls</p>
               </div>
 
               {/* Total Outgoing Calls */}
@@ -699,7 +860,7 @@ export const AdminDashboard: React.FC = () => {
                   <PhoneOutgoing className="w-4 h-4 text-blue-500" />
                 </div>
                 <p className="text-2xl font-extrabold text-slate-900">{stats.totalOutgoing}</p>
-                <p className="text-[11px] text-slate-400">Agent-initiated calls</p>
+                <p className="text-[11px] text-slate-400">Agent-initiated telephone calls</p>
               </div>
 
               {/* Total Calls */}
@@ -709,7 +870,7 @@ export const AdminDashboard: React.FC = () => {
                   <PhoneCall className="w-4 h-4 text-purple-500" />
                 </div>
                 <p className="text-2xl font-extrabold text-slate-900">{stats.totalCalls}</p>
-                <p className="text-[11px] text-slate-400">Lifetime communications</p>
+                <p className="text-[11px] text-slate-400">Total verified communications</p>
               </div>
 
               {/* Active Calls */}
@@ -720,16 +881,6 @@ export const AdminDashboard: React.FC = () => {
                 </div>
                 <p className="text-2xl font-extrabold text-emerald-600">{stats.activeCalls}</p>
                 <p className="text-[11px] text-slate-400">Currently in progress</p>
-              </div>
-
-              {/* Completed Calls */}
-              <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
-                <div className="flex items-center justify-between text-slate-400">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Completed Calls</span>
-                  <CheckCircle2 className="w-4 h-4 text-teal-500" />
-                </div>
-                <p className="text-2xl font-extrabold text-slate-900">{stats.completedCalls}</p>
-                <p className="text-[11px] text-slate-400">Successfully closed</p>
               </div>
 
               {/* Calls Transferred to Admin */}
@@ -749,7 +900,87 @@ export const AdminDashboard: React.FC = () => {
                   <ShieldAlert className="w-4 h-4 text-red-500" />
                 </div>
                 <p className="text-2xl font-extrabold text-red-600">{stats.pendingTransfers}</p>
-                <p className="text-[11px] text-slate-400">Awaiting Admin action</p>
+                <p className="text-[11px] text-slate-400">Awaiting Admin acceptance</p>
+              </div>
+            </div>
+
+            {/* Multilingual Calling & Queue Metrics */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Waiting Call Queue</span>
+                  <Users className="w-4 h-4 text-amber-500" />
+                </div>
+                <p className="text-2xl font-extrabold text-amber-600">{stats.queuedCalls ?? 0}</p>
+                <p className="text-[11px] text-slate-400">Customers waiting for an agent</p>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Agent Concurrency</span>
+                  <Headphones className="w-4 h-4 text-emerald-500" />
+                </div>
+                <p className="text-2xl font-extrabold text-slate-900">
+                  <span className="text-emerald-600">{stats.availableAgents ?? 0}</span>
+                  <span className="text-slate-400 text-lg font-normal"> / </span>
+                  <span className="text-amber-600">{stats.busyAgents ?? 0}</span>
+                </p>
+                <p className="text-[11px] text-slate-400">Available vs Busy agents</p>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Avg Customer Wait</span>
+                  <Clock className="w-4 h-4 text-blue-500" />
+                </div>
+                <p className="text-2xl font-extrabold text-slate-900">{stats.avgWaitTime ?? 0}s</p>
+                <p className="text-[11px] text-slate-400">Average queue wait duration</p>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Avg Call Duration</span>
+                  <Clock className="w-4 h-4 text-purple-500" />
+                </div>
+                <p className="text-2xl font-extrabold text-slate-900">
+                  {Math.floor((stats.avgDuration ?? 0) / 60)}m {(stats.avgDuration ?? 0) % 60}s
+                </p>
+                <p className="text-[11px] text-slate-400">Average call length</p>
+              </div>
+            </div>
+
+            {/* Multilingual Call Distribution */}
+            <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Globe className="w-5 h-5 text-indigo-600" />
+                  <h3 className="font-extrabold text-slate-900 text-base">
+                    Multilingual Voice Call Distribution (5 Regional Languages)
+                  </h3>
+                </div>
+                <span className="text-xs text-slate-400">Grounded real-time interpretation</span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                {[
+                  { code: 'en', name: 'English', native: 'English' },
+                  { code: 'ta', name: 'Tamil', native: 'தமிழ்' },
+                  { code: 'te', name: 'Telugu', native: 'తెలుగు' },
+                  { code: 'ml', name: 'Malayalam', native: 'മലയാളം' },
+                  { code: 'hi', name: 'Hindi', native: 'हिन्दी' }
+                ].map(l => {
+                  const count = stats.callsByLanguage?.[l.code] || 0;
+                  return (
+                    <div key={l.code} className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-700">{l.name}</span>
+                        <span className="text-[11px] text-slate-400 font-medium">{l.native}</span>
+                      </div>
+                      <div className="text-2xl font-black text-slate-900">{count}</div>
+                      <p className="text-[10px] text-slate-400">Total calls handled</p>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -782,15 +1013,15 @@ export const AdminDashboard: React.FC = () => {
               </div>
 
               <div
-                onClick={() => setActiveSection('knowledge')}
+                onClick={() => setActiveSection('agents')}
                 className="p-6 rounded-3xl bg-gradient-to-br from-purple-50 to-fuchsia-50 border border-purple-200 cursor-pointer hover:shadow-md transition-all space-y-3"
               >
                 <div className="w-10 h-10 rounded-2xl bg-purple-600 text-white flex items-center justify-center font-bold">
-                  <BookOpen className="w-5 h-5" />
+                  <Headphones className="w-5 h-5" />
                 </div>
-                <h3 className="font-bold text-slate-900 text-sm">Knowledge Base Engine</h3>
+                <h3 className="font-bold text-slate-900 text-sm">Agent Management</h3>
                 <p className="text-xs text-slate-600">
-                  Upload PDF and DOCX documentation, manage Q&A entries, and update the AI agent's grounded index.
+                  Provision and manage human Support Agents handling customer outbound and escalated voice calls.
                 </p>
               </div>
             </div>
@@ -803,7 +1034,9 @@ export const AdminDashboard: React.FC = () => {
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
                 <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Customer Management</h1>
-                <p className="text-xs text-slate-500 mt-1">Complete CRUD control of all customer accounts and communication records.</p>
+                <p className="text-xs text-slate-500 mt-1">
+                  Complete management of all customer accounts. Each customer record is verified and uniquely identified by email.
+                </p>
               </div>
               <button
                 onClick={() => {
@@ -845,7 +1078,7 @@ export const AdminDashboard: React.FC = () => {
                     <thead className="bg-slate-50 text-slate-700 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
                       <tr>
                         <th className="py-3.5 px-4">Customer Name</th>
-                        <th className="py-3.5 px-4">Email</th>
+                        <th className="py-3.5 px-4">Email Address</th>
                         <th className="py-3.5 px-4">Phone Number</th>
                         <th className="py-3.5 px-4">Registration Date</th>
                         <th className="py-3.5 px-4">Total Calls</th>
@@ -857,8 +1090,8 @@ export const AdminDashboard: React.FC = () => {
                       {customers.map((c) => (
                         <tr key={c.id} className="hover:bg-slate-50/60 transition-colors">
                           <td className="py-3.5 px-4 font-semibold text-slate-900">{c.name}</td>
-                          <td className="py-3.5 px-4 text-slate-600">{c.email}</td>
-                          <td className="py-3.5 px-4 text-slate-600">{c.phone || 'N/A'}</td>
+                          <td className="py-3.5 px-4 text-slate-600 font-mono text-[11px]">{c.email}</td>
+                          <td className="py-3.5 px-4 text-slate-600 font-mono">{c.phone || 'N/A'}</td>
                           <td className="py-3.5 px-4 text-slate-500">
                             {c.createdAt ? new Date(c.createdAt).toLocaleDateString() : 'N/A'}
                           </td>
@@ -909,7 +1142,122 @@ export const AdminDashboard: React.FC = () => {
           </div>
         )}
 
-        {/* SECTION C: INCOMING & OUTGOING CALL MANAGEMENT */}
+        {/* SECTION C: AGENT MANAGEMENT */}
+        {activeSection === 'agents' && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Support Agent Management</h1>
+                <p className="text-xs text-slate-500 mt-1">
+                  Manage human Support Agents authorized to place telephone calls and accept customer escalations.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setEditingAgent(null);
+                  setAgentFormName('');
+                  setAgentFormEmail('');
+                  setAgentFormPhone('');
+                  setAgentFormPassword('');
+                  setShowAddAgentModal(true);
+                }}
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                Add Support Agent
+              </button>
+            </div>
+
+            {/* Search Bar */}
+            <div className="relative max-w-md">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              <input
+                type="text"
+                placeholder="Search agents by name, email, phone..."
+                value={agentSearch}
+                onChange={(e) => setAgentSearch(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500/20 text-slate-900"
+              />
+            </div>
+
+            {/* Agents Table */}
+            <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs overflow-hidden">
+              {loadingAgents ? (
+                <div className="py-12 text-center text-xs text-slate-500">Loading support agents...</div>
+              ) : agents.length === 0 ? (
+                <div className="py-12 text-center text-xs text-slate-400">No support agents found.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-600">
+                    <thead className="bg-slate-50 text-slate-700 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
+                      <tr>
+                        <th className="py-3.5 px-4">Agent Name</th>
+                        <th className="py-3.5 px-4">Email / Login ID</th>
+                        <th className="py-3.5 px-4">Direct Phone</th>
+                        <th className="py-3.5 px-4">Created Date</th>
+                        <th className="py-3.5 px-4">Handled Calls</th>
+                        <th className="py-3.5 px-4">Status</th>
+                        <th className="py-3.5 px-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {agents.map((a) => (
+                        <tr key={a.id} className="hover:bg-slate-50/60 transition-colors">
+                          <td className="py-3.5 px-4 font-semibold text-slate-900 flex items-center gap-2">
+                            <div className="w-7 h-7 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center font-bold text-xs">
+                              {a.name.charAt(0).toUpperCase()}
+                            </div>
+                            {a.name}
+                          </td>
+                          <td className="py-3.5 px-4 text-slate-600 font-mono text-[11px]">{a.email}</td>
+                          <td className="py-3.5 px-4 text-slate-600 font-mono">{a.phone || 'N/A'}</td>
+                          <td className="py-3.5 px-4 text-slate-500">
+                            {a.createdAt ? new Date(a.createdAt).toLocaleDateString() : 'N/A'}
+                          </td>
+                          <td className="py-3.5 px-4 font-mono font-medium text-purple-700">
+                            {(a as any).totalHandledCalls || 0}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              Active Agent
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4 text-right space-x-2">
+                            <button
+                              onClick={() => {
+                                setEditingAgent(a);
+                                setAgentFormName(a.name);
+                                setAgentFormEmail(a.email);
+                                setAgentFormPhone(a.phone || '');
+                                setAgentFormPassword('');
+                                setShowAddAgentModal(true);
+                              }}
+                              className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg font-medium transition-colors cursor-pointer"
+                              title="Edit Agent"
+                            >
+                              <Edit3 className="w-3.5 h-3.5 inline" />
+                            </button>
+                            {a.email !== 'agent@kaira' && (
+                              <button
+                                onClick={() => setDeletingAgent(a)}
+                                className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg font-medium transition-colors cursor-pointer"
+                                title="Delete Agent"
+                              >
+                                <Trash2 className="w-3.5 h-3.5 inline" />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* SECTION D: CALL MONITORING */}
         {activeSection === 'calls' && (
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -933,6 +1281,18 @@ export const AdminDashboard: React.FC = () => {
               </div>
             </div>
 
+            {/* Search Bar */}
+            <div className="relative max-w-md">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              <input
+                type="text"
+                placeholder="Search calls by customer name, phone, call ID..."
+                value={callSearch}
+                onChange={(e) => setCallSearch(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500/20 text-slate-900"
+              />
+            </div>
+
             {/* Calls Table */}
             <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs overflow-hidden">
               {loadingCalls ? (
@@ -947,8 +1307,9 @@ export const AdminDashboard: React.FC = () => {
                         <th className="py-3.5 px-4">Date & Time</th>
                         <th className="py-3.5 px-4">Customer</th>
                         <th className="py-3.5 px-4">Phone</th>
+                        <th className="py-3.5 px-4">Language</th>
                         <th className="py-3.5 px-4">Handler</th>
-                        <th className="py-3.5 px-4">Call Type</th>
+                        <th className="py-3.5 px-4">Channel / Type</th>
                         <th className="py-3.5 px-4">Duration</th>
                         <th className="py-3.5 px-4">Call Status</th>
                         <th className="py-3.5 px-4">Transferred</th>
@@ -962,22 +1323,32 @@ export const AdminDashboard: React.FC = () => {
                             {new Date(call.startTime).toLocaleString()}
                           </td>
                           <td className="py-3.5 px-4 font-semibold text-slate-900">{call.customerName}</td>
-                          <td className="py-3.5 px-4 text-slate-600">{call.customerPhone || 'N/A'}</td>
+                          <td className="py-3.5 px-4 text-slate-600 font-mono">{call.customerPhone || 'N/A'}</td>
+                          <td className="py-3.5 px-4">
+                            <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-semibold text-[10px]">
+                              {SUPPORTED_LANGUAGES[(call.language as LanguageCode) || 'en']?.name || 'English'}
+                            </span>
+                          </td>
                           <td className="py-3.5 px-4 text-slate-700">
                             {call.admin?.name || call.agent?.name || 'KAIRA AI'}
                           </td>
-                          <td className="py-3.5 px-4 capitalize">
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700">
+                          <td className="py-3.5 px-4">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700 capitalize">
                               {call.type.replace('_', ' ')}
                             </span>
+                            {call.providerName === 'twilio' && (
+                              <span className="ml-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-100 text-blue-700 border border-blue-200 uppercase">
+                                PSTN
+                              </span>
+                            )}
                           </td>
                           <td className="py-3.5 px-4 font-mono font-medium">{formatDuration(call.duration)}</td>
                           <td className="py-3.5 px-4">
                             <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${call.status === 'completed'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : call.status === 'active'
-                                  ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                  : 'bg-red-50 text-red-700 border border-red-200'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : call.status === 'active'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : 'bg-red-50 text-red-700 border border-red-200'
                               }`}>
                               {call.status}
                             </span>
@@ -1009,7 +1380,7 @@ export const AdminDashboard: React.FC = () => {
           </div>
         )}
 
-        {/* SECTION D: LIVE CALL TRANSFER MANAGEMENT */}
+        {/* SECTION E: LIVE CALL TRANSFERS */}
         {activeSection === 'transfers' && (
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -1121,7 +1492,7 @@ export const AdminDashboard: React.FC = () => {
             <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs overflow-hidden">
               <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
                 <h3 className="font-bold text-slate-900 text-sm">Transfer History & Follow-ups</h3>
-                <span className="text-xs text-slate-400">{allTransfers.length} total transfer events</span>
+                <span className="text-xs text-slate-400">{allTransfers.length} unique transfer events</span>
               </div>
 
               {loadingTransfers ? (
@@ -1149,19 +1520,19 @@ export const AdminDashboard: React.FC = () => {
                             {new Date(req.createdAt).toLocaleString()}
                           </td>
                           <td className="py-3.5 px-4 font-semibold text-slate-900">{req.customerName}</td>
-                          <td className="py-3.5 px-4 text-slate-600">{req.customerPhone || 'N/A'}</td>
+                          <td className="py-3.5 px-4 text-slate-600 font-mono">{req.customerPhone || 'N/A'}</td>
                           <td className="py-3.5 px-4 font-medium text-indigo-700 max-w-xs truncate">
                             "{req.question}"
                           </td>
                           <td className="py-3.5 px-4 text-slate-500 max-w-xs truncate">{req.reason}</td>
                           <td className="py-3.5 px-4">
                             <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${req.status === 'connected' || req.status === 'accepted'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : req.status === 'ringing' || req.status === 'pending'
-                                  ? 'bg-amber-50 text-amber-700 border border-amber-200 animate-pulse font-bold'
-                                  : req.status === 'missed'
-                                    ? 'bg-red-50 text-red-700 border border-red-200'
-                                    : 'bg-slate-100 text-slate-700'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : req.status === 'ringing' || req.status === 'pending'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200 animate-pulse font-bold'
+                                : req.status === 'missed'
+                                  ? 'bg-red-50 text-red-700 border border-red-200'
+                                  : 'bg-slate-100 text-slate-700'
                               }`}>
                               {req.status}
                             </span>
@@ -1206,7 +1577,7 @@ export const AdminDashboard: React.FC = () => {
 
         {activeSection === 'tickets' && <SupportTickets />}
 
-        {/* SECTION E: KNOWLEDGE BASE MANAGEMENT */}
+        {/* SECTION F: KNOWLEDGE BASE MANAGEMENT */}
         {activeSection === 'knowledge' && (
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -1273,7 +1644,7 @@ export const AdminDashboard: React.FC = () => {
                 </button>
               </form>
 
-              {/* Uploaded Documents Processing Status List */}
+              {/* Uploaded Documents List */}
               {kbDocuments.length > 0 && (
                 <div className="pt-4 border-t border-slate-100 space-y-2">
                   <h4 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
@@ -1286,7 +1657,8 @@ export const AdminDashboard: React.FC = () => {
                           <p className="font-bold text-slate-800 truncate">{doc.title}</p>
                           <p className="text-[10px] text-slate-400 truncate">{doc.fileName} • {(doc.fileSize / 1024).toFixed(1)} KB</p>
                           <div className="flex items-center gap-1.5 pt-1">
-                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${doc.status === 'indexed' ? 'bg-emerald-100 text-emerald-800' : doc.status === 'processing' ? 'bg-amber-100 text-amber-800 animate-pulse' : 'bg-red-100 text-red-800'
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${doc.status === 'indexed' ? 'bg-emerald-100 text-emerald-800' :
+                              doc.status === 'processing' ? 'bg-amber-100 text-amber-800 animate-pulse' : 'bg-red-100 text-red-800'
                               }`}>
                               {doc.status}
                             </span>
@@ -1316,7 +1688,6 @@ export const AdminDashboard: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-3">
-                  {/* Category Filter */}
                   <select
                     value={kbCategory}
                     onChange={(e) => setKbCategory(e.target.value)}
@@ -1332,7 +1703,6 @@ export const AdminDashboard: React.FC = () => {
                     <option value="general">General</option>
                   </select>
 
-                  {/* Search */}
                   <div className="relative w-64">
                     <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
                     <input
@@ -1407,56 +1777,50 @@ export const AdminDashboard: React.FC = () => {
 
       </main>
 
-      {/* 3. INCOMING CALL TRANSFER MODAL (HIGH VISIBILITY ALERT!) */}
+      {/* 3. INCOMING TRANSFER NOTIFICATION MODAL */}
       {incomingTransfer && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border-2 border-amber-400 space-y-5">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-lg shadow-amber-200 animate-bounce">
-                <PhoneCall className="w-6 h-6" />
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-purple-200 space-y-4">
+            <div className="flex items-center gap-3 text-purple-700">
+              <div className="w-12 h-12 rounded-2xl bg-purple-100 flex items-center justify-center">
+                <Radio className="w-6 h-6 animate-pulse" />
               </div>
               <div>
-                <span className="text-[11px] font-bold text-amber-600 uppercase tracking-wider block">
-                  Live Transfer Request
-                </span>
-                <h3 className="text-base font-extrabold text-slate-900">Incoming Customer Voice Call</h3>
+                <h3 className="font-extrabold text-slate-900 text-base">Incoming Call Transfer</h3>
+                <p className="text-xs text-slate-500">AI Voice Agent escalated to Admin</p>
               </div>
             </div>
 
-            <div className="bg-amber-50/70 p-4 rounded-2xl border border-amber-200 space-y-2 text-xs">
+            <div className="p-4 bg-purple-50/70 border border-purple-100 rounded-2xl text-xs space-y-2">
               <div className="flex justify-between">
                 <span className="font-semibold text-slate-500">Customer:</span>
                 <span className="font-bold text-slate-900">{incomingTransfer.customerName}</span>
               </div>
               <div className="flex justify-between">
                 <span className="font-semibold text-slate-500">Phone:</span>
-                <span className="text-slate-800 font-mono">{incomingTransfer.customerPhone}</span>
+                <span className="font-mono text-slate-700">{incomingTransfer.customerPhone || 'N/A'}</span>
               </div>
-              <div className="border-t border-amber-200/60 pt-2">
-                <span className="font-semibold text-slate-500 block mb-0.5">Customer's Question:</span>
-                <p className="font-bold text-indigo-900 bg-white p-2 rounded-xl border border-amber-200/50">
+              <div>
+                <span className="font-semibold text-slate-500 block mb-1">Customer Question:</span>
+                <p className="p-2.5 bg-white rounded-xl border border-purple-200/80 font-medium text-slate-800">
                   "{incomingTransfer.question}"
                 </p>
               </div>
-              <div>
-                <span className="font-semibold text-slate-500 block mb-0.5">Reason for Transfer:</span>
-                <p className="text-amber-800">{incomingTransfer.reason}</p>
-              </div>
             </div>
 
-            <div className="flex items-center gap-3 pt-2">
+            <div className="flex items-center gap-2 pt-2">
               <button
                 onClick={handleRejectTransfer}
-                className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                className="flex-1 py-2.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer"
               >
-                Reject Transfer
+                Decline
               </button>
               <button
                 onClick={handleAcceptTransfer}
-                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-xl shadow-lg shadow-emerald-200 transition-colors cursor-pointer flex items-center justify-center gap-2"
+                className="flex-1 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-md cursor-pointer flex items-center justify-center gap-1.5"
               >
-                <Phone className="w-4 h-4" />
-                Accept & Speak Live
+                <PhoneCall className="w-4 h-4" />
+                Accept Voice Call
               </button>
             </div>
           </div>
@@ -1469,57 +1833,57 @@ export const AdminDashboard: React.FC = () => {
           <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="font-bold text-slate-900 text-sm">
-                {editingCustomer ? 'Edit Customer' : 'Add New Customer'}
+                {editingCustomer ? 'Edit Customer Information' : 'Add New Customer'}
               </h3>
               <button onClick={() => setShowAddCustomerModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">✕</button>
             </div>
 
-            <form onSubmit={handleSaveCustomer} className="space-y-3">
+            <form onSubmit={handleSaveCustomer} className="space-y-3 text-xs">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Full Name</label>
+                <label className="block font-semibold text-slate-700 mb-1">Full Name</label>
                 <input
                   type="text"
                   required
                   value={custFormName}
                   onChange={(e) => setCustFormName(e.target.value)}
-                  placeholder="John Smith"
-                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl text-slate-900"
+                  placeholder="e.g. John Doe"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-900"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Email Address</label>
+                <label className="block font-semibold text-slate-700 mb-1">Email Address (Unique Identifier)</label>
                 <input
                   type="email"
                   required
                   value={custFormEmail}
                   onChange={(e) => setCustFormEmail(e.target.value)}
-                  placeholder="john@example.com"
-                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl text-slate-900"
+                  placeholder="e.g. john@example.com"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-900"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Phone Number</label>
+                <label className="block font-semibold text-slate-700 mb-1">Phone Number</label>
                 <input
                   type="tel"
                   value={custFormPhone}
                   onChange={(e) => setCustFormPhone(e.target.value)}
                   placeholder="+1 (555) 000-0000"
-                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl text-slate-900"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-900 font-mono"
                 />
               </div>
 
               {!editingCustomer && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Initial Password</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Password</label>
                   <input
                     type="password"
                     required
                     value={custFormPassword}
                     onChange={(e) => setCustFormPassword(e.target.value)}
-                    placeholder="Temporary password (min. 6 characters)"
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl text-slate-900"
+                    placeholder="Min. 6 characters"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-900"
                   />
                 </div>
               )}
@@ -1528,15 +1892,15 @@ export const AdminDashboard: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setShowAddCustomerModal(false)}
-                  className="flex-1 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                  className="flex-1 py-2 font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 rounded-xl shadow-xs cursor-pointer"
+                  className="flex-1 py-2 font-semibold text-white bg-purple-600 hover:bg-purple-700 rounded-xl shadow-xs cursor-pointer"
                 >
-                  Save Customer
+                  {editingCustomer ? 'Update Customer' : 'Create Customer'}
                 </button>
               </div>
             </form>
@@ -1544,7 +1908,7 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* 5. DELETE CUSTOMER CONFIRMATION MODAL */}
+      {/* 5. DELETE CUSTOMER CONFIRMATION */}
       {deletingCustomer && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 space-y-4">
@@ -1553,7 +1917,7 @@ export const AdminDashboard: React.FC = () => {
               <h3 className="font-bold text-slate-900 text-sm">Delete Customer Account</h3>
             </div>
             <p className="text-xs text-slate-600">
-              Are you sure you want to delete customer <span className="font-bold text-slate-900">{deletingCustomer.name}</span>? This action is permanent and removes associated calls.
+              Are you sure you want to delete <span className="font-bold text-slate-900">{deletingCustomer.name}</span> ({deletingCustomer.email})? This action cannot be undone.
             </p>
             <div className="flex items-center gap-2 pt-2">
               <button
@@ -1573,7 +1937,117 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* 6. CUSTOMER HISTORY MODAL */}
+      {/* 6. ADD / EDIT AGENT MODAL */}
+      {showAddAgentModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="font-bold text-slate-900 text-sm">
+                {editingAgent ? 'Edit Support Agent' : 'Add New Support Agent'}
+              </h3>
+              <button onClick={() => setShowAddAgentModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">✕</button>
+            </div>
+
+            <form onSubmit={handleSaveAgent} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Agent Full Name</label>
+                <input
+                  type="text"
+                  required
+                  value={agentFormName}
+                  onChange={(e) => setAgentFormName(e.target.value)}
+                  placeholder="e.g. Sarah Jenkins"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Agent Email / Username (Unique Identifier)</label>
+                <input
+                  type="text"
+                  required
+                  value={agentFormEmail}
+                  onChange={(e) => setAgentFormEmail(e.target.value)}
+                  placeholder="e.g. agent2@kaira"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Direct Phone Number</label>
+                <input
+                  type="tel"
+                  value={agentFormPhone}
+                  onChange={(e) => setAgentFormPhone(e.target.value)}
+                  placeholder="+1 (555) 018-9921"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-900 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  {editingAgent ? 'Update Password (leave blank to keep current)' : 'Password'}
+                </label>
+                <input
+                  type="password"
+                  required={!editingAgent}
+                  value={agentFormPassword}
+                  onChange={(e) => setAgentFormPassword(e.target.value)}
+                  placeholder="Min. 6 characters"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-900"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setShowAddAgentModal(false)}
+                  className="flex-1 py-2 font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2 font-semibold text-white bg-purple-600 hover:bg-purple-700 rounded-xl shadow-xs cursor-pointer"
+                >
+                  {editingAgent ? 'Update Agent' : 'Create Agent'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 7. DELETE AGENT CONFIRMATION */}
+      {deletingAgent && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center gap-3 text-red-600">
+              <AlertCircle className="w-6 h-6" />
+              <h3 className="font-bold text-slate-900 text-sm">Delete Support Agent</h3>
+            </div>
+            <p className="text-xs text-slate-600">
+              Are you sure you want to revoke authorization for <span className="font-bold text-slate-900">{deletingAgent.name}</span> ({deletingAgent.email})?
+            </p>
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                onClick={() => setDeletingAgent(null)}
+                className="flex-1 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteAgent}
+                className="flex-1 py-2 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-xs cursor-pointer"
+              >
+                Confirm Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. CUSTOMER HISTORY MODAL */}
       {selectedCustomerHistory && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-slate-100 space-y-4 max-h-[90vh] overflow-y-auto">
@@ -1616,7 +2090,7 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* 7. CALL DETAILS & FULL TRANSCRIPT MODAL */}
+      {/* 9. CALL DETAILS & FULL TRANSCRIPT MODAL */}
       {selectedCallDetails && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 space-y-4">
@@ -1630,6 +2104,32 @@ export const AdminDashboard: React.FC = () => {
               <button onClick={() => setSelectedCallDetails(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer">✕</button>
             </div>
 
+            {/* Telephony & Call Metadata */}
+            <div className="grid grid-cols-2 gap-2 text-[11px] bg-slate-50 p-3 rounded-2xl border border-slate-200">
+              <div>
+                <span className="text-slate-400 block font-semibold uppercase text-[9px]">Destination Phone</span>
+                <span className="font-mono text-slate-800">{selectedCallDetails.customerPhone || 'N/A'}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block font-semibold uppercase text-[9px]">Provider / Channel</span>
+                <span className="font-medium text-slate-800">
+                  {selectedCallDetails.providerName ? `${selectedCallDetails.providerName.toUpperCase()} Telephony` : 'WebRTC Voice'}
+                </span>
+              </div>
+              {selectedCallDetails.providerCallSid && (
+                <div className="col-span-2">
+                  <span className="text-slate-400 block font-semibold uppercase text-[9px]">Provider Call SID</span>
+                  <span className="font-mono text-slate-600 text-[10px] break-all">{selectedCallDetails.providerCallSid}</span>
+                </div>
+              )}
+              {selectedCallDetails.failureReason && (
+                <div className="col-span-2">
+                  <span className="text-red-400 block font-semibold uppercase text-[9px]">Failure Reason</span>
+                  <span className="font-semibold text-red-600">{selectedCallDetails.failureReason}</span>
+                </div>
+              )}
+            </div>
+
             <div className="max-h-80 overflow-y-auto space-y-3 p-2">
               <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Conversation Transcript</h4>
               {(!selectedCallDetails.transcripts || selectedCallDetails.transcripts.length === 0) ? (
@@ -1641,6 +2141,11 @@ export const AdminDashboard: React.FC = () => {
                     <p className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-slate-800">
                       {t.text}
                     </p>
+                    {t.translation && (
+                      <p className="text-[11px] italic text-indigo-600 mt-1 pl-2">
+                        Translation: {t.translation}
+                      </p>
+                    )}
                   </div>
                 ))
               )}
@@ -1656,7 +2161,7 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* 8. ADD / EDIT KNOWLEDGE ENTRY MODAL */}
+      {/* 10. ADD / EDIT KNOWLEDGE ENTRY MODAL */}
       {showAddKbModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 space-y-4 max-h-[90vh] overflow-y-auto">
@@ -1669,7 +2174,7 @@ export const AdminDashboard: React.FC = () => {
 
             <form onSubmit={handleSaveKbEntry} className="space-y-3 text-xs">
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Title</label>
+                <label className="block font-semibold text-slate-700 mb-1">Title (Unique)</label>
                 <input
                   type="text"
                   required
@@ -1762,7 +2267,7 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* 9. DELETE KB ENTRY CONFIRMATION */}
+      {/* 11. DELETE KB ENTRY CONFIRMATION */}
       {deletingKbEntry && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 space-y-4">
@@ -1794,4 +2299,3 @@ export const AdminDashboard: React.FC = () => {
     </div>
   );
 };
-

@@ -66,7 +66,18 @@ router.get('/', authenticate, requireRole(['admin', 'agent']), async (req: Reque
       orderBy: { updatedAt: 'desc' }
     });
 
-    res.json({ entries });
+    // Deduplicate in memory by title + question
+    const seenEntries = new Set<string>();
+    const uniqueEntries = [];
+    for (const e of entries) {
+      const key = `${e.title.trim().toLowerCase()}:::${(e.question || '').trim().toLowerCase()}`;
+      if (!seenEntries.has(key)) {
+        seenEntries.add(key);
+        uniqueEntries.push(e);
+      }
+    }
+
+    res.json({ entries: uniqueEntries });
   } catch (err: any) {
     console.error('[Knowledge] Fetch error:', err);
     res.status(500).json({ error: 'Failed to retrieve knowledge entries.' });
@@ -101,11 +112,29 @@ router.post('/', authenticate, requireRole(['admin']), async (req: Request, res:
       return;
     }
 
+    const cleanTitle = title.trim();
+    const cleanQuestion = question ? question.trim() : null;
+
+    // Duplicate check: avoid adding entries with identical title or question
+    const existing = await prisma.knowledgeEntry.findFirst({
+      where: {
+        OR: [
+          { title: cleanTitle },
+          ...(cleanQuestion ? [{ question: cleanQuestion }] : [])
+        ]
+      }
+    });
+
+    if (existing) {
+      res.status(400).json({ error: `A Knowledge Base entry with title "${cleanTitle}" already exists.` });
+      return;
+    }
+
     const entry = await prisma.knowledgeEntry.create({
       data: {
-        title: title.trim(),
+        title: cleanTitle,
         category: category || 'general',
-        question: question ? question.trim() : null,
+        question: cleanQuestion,
         answer: answer ? answer.trim() : null,
         content: content.trim(),
         keywords: keywords ? keywords.trim() : null
