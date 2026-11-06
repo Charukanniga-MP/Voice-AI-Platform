@@ -51,6 +51,9 @@ export interface CallRecord {
   transferred: boolean;
   transferReason?: string | null;
   customerQuestion?: string | null;
+  providerCallSid?: string | null;
+  providerName?: string | null;
+  failureReason?: string | null;
   customer?: { id: string; name: string; email: string; phone?: string | null };
   agent?: { id: string; name: string };
   admin?: { id: string; name: string };

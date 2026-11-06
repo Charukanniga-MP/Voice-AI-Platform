@@ -954,10 +954,15 @@ export const AdminDashboard: React.FC = () => {
                           <td className="py-3.5 px-4 text-slate-700">
                             {call.admin?.name || call.agent?.name || 'KAIRA AI'}
                           </td>
-                          <td className="py-3.5 px-4 capitalize">
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700">
+                          <td className="py-3.5 px-4">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700 capitalize">
                               {call.type.replace('_', ' ')}
                             </span>
+                            {call.providerName === 'twilio' && (
+                              <span className="ml-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-100 text-blue-700 border border-blue-200 uppercase">
+                                PSTN
+                              </span>
+                            )}
                           </td>
                           <td className="py-3.5 px-4 font-mono font-medium">{formatDuration(call.duration)}</td>
                           <td className="py-3.5 px-4">
@@ -1614,6 +1619,32 @@ export const AdminDashboard: React.FC = () => {
                 </p>
               </div>
               <button onClick={() => setSelectedCallDetails(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer">✕</button>
+            </div>
+
+            {/* Telephony & Call Metadata */}
+            <div className="grid grid-cols-2 gap-2 text-[11px] bg-slate-50 p-3 rounded-2xl border border-slate-200">
+              <div>
+                <span className="text-slate-400 block font-semibold uppercase text-[9px]">Destination Phone</span>
+                <span className="font-mono text-slate-800">{selectedCallDetails.customerPhone || 'N/A'}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block font-semibold uppercase text-[9px]">Provider / Channel</span>
+                <span className="font-medium text-slate-800">
+                  {selectedCallDetails.providerName ? `${selectedCallDetails.providerName.toUpperCase()} Telephony` : 'WebRTC Voice'}
+                </span>
+              </div>
+              {selectedCallDetails.providerCallSid && (
+                <div className="col-span-2">
+                  <span className="text-slate-400 block font-semibold uppercase text-[9px]">Provider Call SID</span>
+                  <span className="font-mono text-slate-600 text-[10px] break-all">{selectedCallDetails.providerCallSid}</span>
+                </div>
+              )}
+              {selectedCallDetails.failureReason && (
+                <div className="col-span-2">
+                  <span className="text-red-400 block font-semibold uppercase text-[9px]">Failure Reason</span>
+                  <span className="font-semibold text-red-600">{selectedCallDetails.failureReason}</span>
+                </div>
+              )}
             </div>
 
             <div className="max-h-80 overflow-y-auto space-y-3 p-2">

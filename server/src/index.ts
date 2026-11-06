@@ -10,6 +10,7 @@ import authRoutes from './routes/auth.routes.js';
 import customerRoutes from './routes/customer.routes.js';
 import callRoutes from './routes/call.routes.js';
 import knowledgeRoutes from './routes/knowledge.routes.js';
+import telephonyRoutes from './routes/telephony.routes.js';
 import { initSocketServer } from './services/socket.js';
 import { seedDatabase } from './seed.js';
 
@@ -31,6 +32,9 @@ const io = new SocketIOServer(server, {
   }
 });
 
+// Provide io instance to express app
+app.set('io', io);
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -44,6 +48,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/calls', callRoutes);
 app.use('/api/knowledge', knowledgeRoutes);
+app.use('/api/telephony', telephonyRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

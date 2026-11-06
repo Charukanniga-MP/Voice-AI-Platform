@@ -625,6 +625,10 @@ export const CustomerDashboard: React.FC = () => {
                         <span className="text-purple-700 font-medium">
                           Transferred to Admin {call.admin?.name ? `(${call.admin.name})` : ''}
                         </span>
+                      ) : call.type === 'agent_voice' ? (
+                        <span className="text-blue-700 font-medium">
+                          Support Agent {call.agent?.name ? `(${call.agent.name})` : ''}
+                        </span>
                       ) : (
                         <span className="text-indigo-700 font-medium">KAIRA AI Voice</span>
                       )}
