@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext.js';
 import { getSocket } from '../services/socket.js';
 import { voiceService } from '../services/voice.js';
 import { webrtcManager } from '../services/webrtc.js';
+import { SupportTickets } from './SupportTickets.js';
 import { CallRecord, CallTranscript, LanguageCode, SUPPORTED_LANGUAGES } from '../types.js';
 import {
   PhoneCall, PhoneOff, Mic, MicOff, Volume2, VolumeX,
@@ -1011,6 +1012,11 @@ export const CustomerDashboard: React.FC = () => {
             </table>
           </div>
         )}
+      </div>
+
+      {/* Customer Support Tickets Section */}
+      <div className="bg-white rounded-3xl shadow-xl shadow-slate-100 border border-slate-200/80 p-6 sm:p-8 space-y-4">
+        <SupportTickets isCustomerView={true} />
       </div>
 
       {/* Transcript Modal for Historical Calls */}

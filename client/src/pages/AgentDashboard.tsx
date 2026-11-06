@@ -5,6 +5,7 @@ import { telephonyVoiceManager, TelephonyCallState } from '../services/telephony
 import { webrtcManager } from '../services/webrtc.js';
 import { voiceService } from '../services/voice.js';
 import { ringtoneService } from '../services/ringtone.js';
+import { SupportTickets } from './SupportTickets.js';
 import { User, CallRecord, KnowledgeEntry, LanguageCode, SUPPORTED_LANGUAGES } from '../types.js';
 import {
   PhoneCall, PhoneOutgoing, PhoneOff, Mic, MicOff,
@@ -37,8 +38,8 @@ interface IncomingCall {
 export const AgentDashboard: React.FC = () => {
   const { user, token } = useAuth();
 
-  // Navigation tab: 'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge'
-  const [activeTab, setActiveTab] = useState<'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge'>('outgoing');
+  // Navigation tab: 'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets'
+  const [activeTab, setActiveTab] = useState<'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets'>('outgoing');
 
   // Agent Availability & Supported Languages
   const [agentStatus, setAgentStatus] = useState<'available' | 'busy'>(
@@ -782,6 +783,15 @@ export const AgentDashboard: React.FC = () => {
               <BookOpen className="w-3.5 h-3.5 text-blue-600" />
               Knowledge Base
             </button>
+            <button
+              onClick={() => setActiveTab('tickets')}
+              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'tickets' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <MessageSquare className="w-3.5 h-3.5 text-purple-600" />
+              Support Tickets
+            </button>
           </div>
         </div>
 
@@ -1362,6 +1372,13 @@ export const AgentDashboard: React.FC = () => {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* 5. SUPPORT TICKETS TAB */}
+      {activeTab === 'tickets' && (
+        <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 space-y-6 shadow-xs">
+          <SupportTickets />
         </div>
       )}
     </div>

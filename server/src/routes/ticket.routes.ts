@@ -1,16 +1,32 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../db.js';
-import { authenticate, requireRole } from '../middleware/auth.js';
+import { authenticate } from '../middleware/auth.js';
 
 const router = Router();
 const statuses = ['open', 'in_progress', 'waiting', 'resolved', 'closed'];
 const priorities = ['low', 'normal', 'high', 'urgent'];
 
-router.use(authenticate, requireRole(['admin', 'agent']));
+router.use(authenticate);
 
-router.get('/', async (_req: Request, res: Response) => {
+// 1. Get Support Tickets (Role-scoped: Customers see own tickets; Agents/Admins see all)
+router.get('/', async (req: Request, res: Response) => {
   try {
-    const tickets = await prisma.supportTicket.findMany({ orderBy: [{ updatedAt: 'desc' }] });
+    const user = req.user!;
+    let whereClause: any = {};
+
+    if (user.role === 'customer') {
+      whereClause = {
+        OR: [
+          { customerId: user.id },
+          { customerEmail: user.email.toLowerCase().trim() }
+        ]
+      };
+    }
+
+    const tickets = await prisma.supportTicket.findMany({
+      where: whereClause,
+      orderBy: [{ updatedAt: 'desc' }]
+    });
     res.json({ tickets });
   } catch (err) {
     console.error('[Tickets] Fetch error:', err);
@@ -18,10 +34,17 @@ router.get('/', async (_req: Request, res: Response) => {
   }
 });
 
+// 2. Create Support Ticket (Customers, Agents, Admins)
 router.post('/', async (req: Request, res: Response) => {
   try {
+    const user = req.user!;
     const { customerId, customerName, customerEmail, subject, description, priority, assignedTo, followUpAt } = req.body;
-    if (!customerName?.trim() || !subject?.trim() || !description?.trim()) {
+
+    const finalName = user.role === 'customer' ? user.name : (customerName?.trim() || user.name);
+    const finalEmail = user.role === 'customer' ? user.email : (customerEmail?.trim() || user.email);
+    const finalCustomerId = user.role === 'customer' ? user.id : (customerId || null);
+
+    if (!finalName?.trim() || !subject?.trim() || !description?.trim()) {
       res.status(400).json({ error: 'Customer name, subject, and description are required.' });
       return;
     }
@@ -29,16 +52,17 @@ router.post('/', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'Invalid ticket priority.' });
       return;
     }
+
     const ticket = await prisma.supportTicket.create({
       data: {
-        customerId: customerId || null,
-        customerName: customerName.trim(),
-        customerEmail: customerEmail?.trim() || null,
+        customerId: finalCustomerId,
+        customerName: finalName.trim(),
+        customerEmail: finalEmail?.trim()?.toLowerCase() || null,
         subject: subject.trim(),
         description: description.trim(),
         priority: priority || 'normal',
-        assignedTo: assignedTo?.trim() || null,
-        followUpAt: followUpAt ? new Date(followUpAt) : null
+        assignedTo: user.role !== 'customer' && assignedTo?.trim() ? assignedTo.trim() : null,
+        followUpAt: user.role !== 'customer' && followUpAt ? new Date(followUpAt) : null
       }
     });
     res.status(201).json({ ticket });
@@ -48,9 +72,23 @@ router.post('/', async (req: Request, res: Response) => {
   }
 });
 
+// 3. Update Support Ticket (Admins & Agents can update status/priority/assignedTo; Customers can update open tickets)
 router.patch('/:id', async (req: Request, res: Response) => {
   try {
-    const { status, priority, assignedTo, followUpAt } = req.body;
+    const user = req.user!;
+    const existing = await prisma.supportTicket.findUnique({ where: { id: req.params.id } });
+    if (!existing) {
+      res.status(404).json({ error: 'Support ticket not found.' });
+      return;
+    }
+
+    // Role check
+    if (user.role === 'customer' && existing.customerId !== user.id && existing.customerEmail?.toLowerCase() !== user.email.toLowerCase()) {
+      res.status(403).json({ error: 'Access denied to this ticket.' });
+      return;
+    }
+
+    const { status, priority, assignedTo, followUpAt, description } = req.body;
     if (status !== undefined && !statuses.includes(status)) {
       res.status(400).json({ error: 'Invalid ticket status.' });
       return;
@@ -59,19 +97,43 @@ router.patch('/:id', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'Invalid ticket priority.' });
       return;
     }
+
+    const updateData: any = {};
+    if (user.role === 'customer') {
+      if (description) updateData.description = description.trim();
+    } else {
+      if (status !== undefined) updateData.status = status;
+      if (priority !== undefined) updateData.priority = priority;
+      if (assignedTo !== undefined) updateData.assignedTo = assignedTo || null;
+      if (followUpAt !== undefined) updateData.followUpAt = followUpAt ? new Date(followUpAt) : null;
+      if (description) updateData.description = description.trim();
+    }
+
     const ticket = await prisma.supportTicket.update({
       where: { id: req.params.id },
-      data: {
-        ...(status !== undefined ? { status } : {}),
-        ...(priority !== undefined ? { priority } : {}),
-        ...(assignedTo !== undefined ? { assignedTo: assignedTo || null } : {}),
-        ...(followUpAt !== undefined ? { followUpAt: followUpAt ? new Date(followUpAt) : null } : {})
-      }
+      data: updateData
     });
     res.json({ ticket });
   } catch (err) {
     console.error('[Tickets] Update error:', err);
     res.status(500).json({ error: 'Failed to update support ticket.' });
+  }
+});
+
+// 4. Delete Support Ticket (Admins and Agents only)
+router.delete('/:id', async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    if (user.role !== 'admin' && user.role !== 'agent') {
+      res.status(403).json({ error: 'Only administrators and agents can delete tickets.' });
+      return;
+    }
+
+    await prisma.supportTicket.delete({ where: { id: req.params.id } });
+    res.json({ message: 'Support ticket deleted successfully.' });
+  } catch (err) {
+    console.error('[Tickets] Delete error:', err);
+    res.status(500).json({ error: 'Failed to delete support ticket.' });
   }
 });
 

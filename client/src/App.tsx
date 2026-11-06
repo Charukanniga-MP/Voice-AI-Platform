@@ -1,10 +1,29 @@
-import React, { useState } from 'react';
+import React, { useState, Suspense, lazy } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext.js';
 import { Navbar } from './components/Navbar.js';
 import { LoginPage } from './pages/Login.js';
-import { CustomerDashboard } from './pages/CustomerDashboard.js';
-import { AgentDashboard } from './pages/AgentDashboard.js';
-import { AdminDashboard } from './pages/AdminDashboard.js';
+
+// Lazy-loaded role dashboards for optimal initial bundle loading speed and memory efficiency
+const CustomerDashboard = lazy(() =>
+  import('./pages/CustomerDashboard.js').then(module => ({ default: module.CustomerDashboard }))
+);
+const AgentDashboard = lazy(() =>
+  import('./pages/AgentDashboard.js').then(module => ({ default: module.AgentDashboard }))
+);
+const AdminDashboard = lazy(() =>
+  import('./pages/AdminDashboard.js').then(module => ({ default: module.AdminDashboard }))
+);
+
+const RoleLoader: React.FC<{ roleName: string }> = ({ roleName }) => (
+  <div className="flex-1 flex flex-col items-center justify-center p-12 min-h-[400px]">
+    <div className="w-10 h-10 rounded-2xl bg-indigo-600 flex items-center justify-center text-white shadow-lg animate-bounce mb-3">
+      <span className="font-extrabold text-base">K</span>
+    </div>
+    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider animate-pulse">
+      Preparing {roleName} workspace...
+    </p>
+  </div>
+);
 
 const MainApp: React.FC = () => {
   const { user, isLoading } = useAuth();
@@ -36,9 +55,11 @@ const MainApp: React.FC = () => {
       <Navbar />
 
       <div className="flex-1">
-        {role === 'customer' && <CustomerDashboard />}
-        {role === 'agent' && <AgentDashboard />}
-        {role === 'admin' && <AdminDashboard />}
+        <Suspense fallback={<RoleLoader roleName={role} />}>
+          {role === 'customer' && <CustomerDashboard />}
+          {role === 'agent' && <AgentDashboard />}
+          {role === 'admin' && <AdminDashboard />}
+        </Suspense>
       </div>
     </div>
   );
