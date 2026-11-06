@@ -460,7 +460,7 @@ export const CustomerDashboard: React.FC = () => {
           },
           body: JSON.stringify({ rating: stars })
         });
-      } catch (e) {}
+      } catch (e) { }
     }
     setRatingSubmitted(true);
     setTimeout(() => {
@@ -527,11 +527,10 @@ export const CustomerDashboard: React.FC = () => {
                     key={code}
                     disabled={isCallActive}
                     onClick={() => handleLanguageChange(code)}
-                    className={`px-3 py-2.5 rounded-2xl text-left border transition-all cursor-pointer ${
-                      isSelected
+                    className={`px-3 py-2.5 rounded-2xl text-left border transition-all cursor-pointer ${isSelected
                         ? 'bg-white text-indigo-900 border-white shadow-md font-bold scale-[1.02]'
                         : 'bg-white/10 text-white border-white/20 hover:bg-white/20 hover:border-white/40'
-                    } ${isCallActive ? 'opacity-60 cursor-not-allowed' : ''}`}
+                      } ${isCallActive ? 'opacity-60 cursor-not-allowed' : ''}`}
                   >
                     <div className="text-sm font-extrabold leading-tight">{meta.nativeName}</div>
                     <div className={`text-[11px] ${isSelected ? 'text-indigo-600 font-semibold' : 'text-blue-200'}`}>
@@ -551,15 +550,14 @@ export const CustomerDashboard: React.FC = () => {
         <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-4 bg-slate-50/70">
           <div className="flex items-center gap-3">
             <div
-              className={`w-3.5 h-3.5 rounded-full ${
-                callStatus === 'idle'
+              className={`w-3.5 h-3.5 rounded-full ${callStatus === 'idle'
                   ? 'bg-slate-300'
                   : callStatus === 'queued'
-                  ? 'bg-amber-500 animate-pulse'
-                  : callStatus === 'ringing'
-                  ? 'bg-indigo-500 animate-ping'
-                  : 'bg-emerald-500 animate-pulse'
-              }`}
+                    ? 'bg-amber-500 animate-pulse'
+                    : callStatus === 'ringing'
+                      ? 'bg-indigo-500 animate-ping'
+                      : 'bg-emerald-500 animate-pulse'
+                }`}
             />
             <div>
               <h2 className="text-sm font-bold text-slate-800">Customer Support Call Session</h2>
@@ -751,9 +749,8 @@ export const CustomerDashboard: React.FC = () => {
                 {/* Mute Button */}
                 <button
                   onClick={handleToggleMute}
-                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
-                    isMuted ? 'bg-red-50 border-red-200 text-red-600' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
-                  }`}
+                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${isMuted ? 'bg-red-50 border-red-200 text-red-600' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+                    }`}
                   title={isMuted ? 'Unmute' : 'Mute'}
                 >
                   {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
@@ -811,13 +808,12 @@ export const CustomerDashboard: React.FC = () => {
             {transcripts.map((t) => (
               <div
                 key={t.id}
-                className={`flex flex-col ${
-                  t.sender === 'customer'
+                className={`flex flex-col ${t.sender === 'customer'
                     ? 'items-end'
                     : t.sender === 'system'
-                    ? 'items-center'
-                    : 'items-start'
-                }`}
+                      ? 'items-center'
+                      : 'items-start'
+                  }`}
               >
                 {t.sender === 'system' ? (
                   <span className="px-3 py-1 bg-amber-50 border border-amber-200 text-amber-800 text-[11px] rounded-full font-medium my-1">
@@ -829,20 +825,18 @@ export const CustomerDashboard: React.FC = () => {
                       {t.senderName || (t.sender === 'customer' ? 'You' : t.sender === 'ai' ? 'KAIRA AI' : 'Agent')}
                     </span>
                     <div
-                      className={`px-4 py-2.5 rounded-2xl text-xs leading-relaxed ${
-                        t.sender === 'customer'
+                      className={`px-4 py-2.5 rounded-2xl text-xs leading-relaxed ${t.sender === 'customer'
                           ? 'bg-blue-600 text-white rounded-tr-xs shadow-xs'
                           : t.sender === 'ai'
-                          ? 'bg-slate-100 text-slate-800 rounded-tl-xs border border-slate-200'
-                          : 'bg-emerald-50 text-emerald-950 border border-emerald-200 rounded-tl-xs'
-                      }`}
+                            ? 'bg-slate-100 text-slate-800 rounded-tl-xs border border-slate-200'
+                            : 'bg-emerald-50 text-emerald-950 border border-emerald-200 rounded-tl-xs'
+                        }`}
                     >
                       <div>{t.text}</div>
                       {/* Translation subtitle */}
                       {t.translation && (
-                        <div className={`mt-1.5 pt-1.5 border-t text-[11px] font-normal italic ${
-                          t.sender === 'customer' ? 'border-blue-400/50 text-blue-100' : 'border-emerald-200 text-emerald-700'
-                        }`}>
+                        <div className={`mt-1.5 pt-1.5 border-t text-[11px] font-normal italic ${t.sender === 'customer' ? 'border-blue-400/50 text-blue-100' : 'border-emerald-200 text-emerald-700'
+                          }`}>
                           Translation: {t.translation}
                         </div>
                       )}
@@ -979,13 +973,12 @@ export const CustomerDashboard: React.FC = () => {
                       </td>
                       <td className="py-3 px-4">
                         <span
-                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${
-                            call.status === 'completed'
+                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${call.status === 'completed'
                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                               : call.status === 'active'
-                              ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                              : 'bg-red-50 text-red-700 border border-red-200'
-                          }`}
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : 'bg-red-50 text-red-700 border border-red-200'
+                            }`}
                         >
                           {call.status}
                         </span>

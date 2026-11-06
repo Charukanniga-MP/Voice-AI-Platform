@@ -320,7 +320,7 @@ router.get('/google/url', (req: Request, res: Response) => {
     try {
       const u = new URL(originHeader as string);
       returnOrigin = u.origin;
-    } catch {}
+    } catch { }
   }
 
   const statePayload = {
@@ -352,7 +352,7 @@ router.get('/google/callback', async (req: Request, res: Response) => {
         const u = new URL(decodedState.returnTo);
         frontendUrl = u.origin;
       }
-    } catch {}
+    } catch { }
   }
 
   const { code, error } = req.query;

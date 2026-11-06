@@ -709,8 +709,8 @@ export const AdminDashboard: React.FC = () => {
             <button
               onClick={() => setActiveSection('overview')}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'overview'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
-                  : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
                 }`}
             >
               <Clock className="w-4 h-4" />
@@ -720,8 +720,8 @@ export const AdminDashboard: React.FC = () => {
             <button
               onClick={() => setActiveSection('customers')}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'customers'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
-                  : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
                 }`}
             >
               <Users className="w-4 h-4" />
@@ -731,8 +731,8 @@ export const AdminDashboard: React.FC = () => {
             <button
               onClick={() => setActiveSection('agents')}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'agents'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
-                  : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
                 }`}
             >
               <Headphones className="w-4 h-4" />
@@ -742,8 +742,8 @@ export const AdminDashboard: React.FC = () => {
             <button
               onClick={() => setActiveSection('calls')}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'calls'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
-                  : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
                 }`}
             >
               <PhoneCall className="w-4 h-4" />
@@ -753,8 +753,8 @@ export const AdminDashboard: React.FC = () => {
             <button
               onClick={() => setActiveSection('transfers')}
               className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'transfers'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
-                  : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
                 }`}
             >
               <div className="flex items-center gap-3">
@@ -771,8 +771,8 @@ export const AdminDashboard: React.FC = () => {
             <button
               onClick={() => setActiveSection('knowledge')}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'knowledge'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
-                  : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
                 }`}
             >
               <BookOpen className="w-4 h-4" />
@@ -1333,10 +1333,10 @@ export const AdminDashboard: React.FC = () => {
                           <td className="py-3.5 px-4 font-mono font-medium">{formatDuration(call.duration)}</td>
                           <td className="py-3.5 px-4">
                             <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${call.status === 'completed'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : call.status === 'active'
-                                  ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                  : 'bg-red-50 text-red-700 border border-red-200'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : call.status === 'active'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : 'bg-red-50 text-red-700 border border-red-200'
                               }`}>
                               {call.status}
                             </span>
@@ -1515,12 +1515,12 @@ export const AdminDashboard: React.FC = () => {
                           <td className="py-3.5 px-4 text-slate-500 max-w-xs truncate">{req.reason}</td>
                           <td className="py-3.5 px-4">
                             <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${req.status === 'connected' || req.status === 'accepted'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : req.status === 'ringing' || req.status === 'pending'
-                                  ? 'bg-amber-50 text-amber-700 border border-amber-200 animate-pulse font-bold'
-                                  : req.status === 'missed'
-                                    ? 'bg-red-50 text-red-700 border border-red-200'
-                                    : 'bg-slate-100 text-slate-700'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : req.status === 'ringing' || req.status === 'pending'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200 animate-pulse font-bold'
+                                : req.status === 'missed'
+                                  ? 'bg-red-50 text-red-700 border border-red-200'
+                                  : 'bg-slate-100 text-slate-700'
                               }`}>
                               {req.status}
                             </span>
@@ -1644,7 +1644,7 @@ export const AdminDashboard: React.FC = () => {
                           <p className="text-[10px] text-slate-400 truncate">{doc.fileName} • {(doc.fileSize / 1024).toFixed(1)} KB</p>
                           <div className="flex items-center gap-1.5 pt-1">
                             <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${doc.status === 'indexed' ? 'bg-emerald-100 text-emerald-800' :
-                                doc.status === 'processing' ? 'bg-amber-100 text-amber-800 animate-pulse' : 'bg-red-100 text-red-800'
+                              doc.status === 'processing' ? 'bg-amber-100 text-amber-800 animate-pulse' : 'bg-red-100 text-red-800'
                               }`}>
                               {doc.status}
                             </span>
