@@ -106,3 +106,18 @@ model KnowledgeEntry {
   updatedAt   DateTime           @updatedAt
 }
 
+model SupportTicket {
+  id             String   @id @default(cuid())
+  customerId     String?
+  customerName   String
+  customerEmail  String?
+  subject        String
+  description    String
+  priority       String   @default("normal")
+  status         String   @default("open")
+  assignedTo     String?
+  followUpAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+

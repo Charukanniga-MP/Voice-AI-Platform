@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext.js';
 import { getSocket } from '../services/socket.js';
 import { webrtcManager } from '../services/webrtc.js';
 import { voiceService } from '../services/voice.js';
+import { SupportTickets } from './SupportTickets.js';
 import {
   User, CallRecord, CallTranscript, CallTransferRequest,
   KnowledgeEntry, KnowledgeDocument, CallStats
@@ -18,7 +19,7 @@ export const AdminDashboard: React.FC = () => {
   const { user, token } = useAuth();
 
   // Active navigation section: 'overview' | 'customers' | 'calls' | 'transfers' | 'knowledge'
-  const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'calls' | 'transfers' | 'knowledge'>('overview');
+  const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'calls' | 'transfers' | 'knowledge' | 'tickets'>('overview');
 
   // Stats state
   const [stats, setStats] = useState<CallStats>({
@@ -618,6 +619,17 @@ export const AdminDashboard: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setActiveSection('tickets')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'tickets'
+                  ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                  : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                }`}
+            >
+              <MessageSquare className="w-4 h-4" />
+              Support Tickets
+            </button>
+
+            <button
               onClick={() => setActiveSection('knowledge')}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'knowledge'
                   ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
@@ -1191,6 +1203,8 @@ export const AdminDashboard: React.FC = () => {
             </div>
           </div>
         )}
+
+        {activeSection === 'tickets' && <SupportTickets />}
 
         {/* SECTION E: KNOWLEDGE BASE MANAGEMENT */}
         {activeSection === 'knowledge' && (

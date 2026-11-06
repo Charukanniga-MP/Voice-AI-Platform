@@ -10,6 +10,7 @@ import authRoutes from './routes/auth.routes.js';
 import customerRoutes from './routes/customer.routes.js';
 import callRoutes from './routes/call.routes.js';
 import knowledgeRoutes from './routes/knowledge.routes.js';
+import ticketRoutes from './routes/ticket.routes.js';
 import { initSocketServer } from './services/socket.js';
 import { seedDatabase } from './seed.js';
 
@@ -42,6 +43,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/calls', callRoutes);
 app.use('/api/knowledge', knowledgeRoutes);
+app.use('/api/tickets', ticketRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
