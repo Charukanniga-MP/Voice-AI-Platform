@@ -5,13 +5,13 @@ import { webrtcManager } from '../services/webrtc.js';
 import { voiceService } from '../services/voice.js';
 import {
   User, CallRecord, CallTranscript, CallTransferRequest,
-  KnowledgeEntry, KnowledgeDocument, CallStats
+  KnowledgeEntry, KnowledgeDocument, CallStats, LanguageCode, SUPPORTED_LANGUAGES
 } from '../types.js';
 import {
   Users, PhoneCall, PhoneIncoming, PhoneOutgoing, PhoneForwarded,
   PhoneOff, Mic, MicOff, Volume2, VolumeX, Clock, Search,
   BookOpen, Plus, Trash2, Edit3, Upload, CheckCircle2,
-  AlertCircle, ShieldAlert, Eye, Headphones, Radio, RefreshCw
+  AlertCircle, ShieldAlert, Eye, Headphones, Radio, RefreshCw, Globe
 } from 'lucide-react';
 
 // Pure deduplication utility function
@@ -708,11 +708,10 @@ export const AdminDashboard: React.FC = () => {
           <nav className="space-y-1">
             <button
               onClick={() => setActiveSection('overview')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                activeSection === 'overview'
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'overview'
                   ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
                   : 'hover:bg-slate-800 text-slate-300 hover:text-white'
-              }`}
+                }`}
             >
               <Clock className="w-4 h-4" />
               Dashboard Overview
@@ -720,11 +719,10 @@ export const AdminDashboard: React.FC = () => {
 
             <button
               onClick={() => setActiveSection('customers')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                activeSection === 'customers'
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'customers'
                   ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
                   : 'hover:bg-slate-800 text-slate-300 hover:text-white'
-              }`}
+                }`}
             >
               <Users className="w-4 h-4" />
               Customer Management
@@ -732,11 +730,10 @@ export const AdminDashboard: React.FC = () => {
 
             <button
               onClick={() => setActiveSection('agents')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                activeSection === 'agents'
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'agents'
                   ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
                   : 'hover:bg-slate-800 text-slate-300 hover:text-white'
-              }`}
+                }`}
             >
               <Headphones className="w-4 h-4" />
               Agent Management
@@ -744,11 +741,10 @@ export const AdminDashboard: React.FC = () => {
 
             <button
               onClick={() => setActiveSection('calls')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                activeSection === 'calls'
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'calls'
                   ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
                   : 'hover:bg-slate-800 text-slate-300 hover:text-white'
-              }`}
+                }`}
             >
               <PhoneCall className="w-4 h-4" />
               Call Monitoring
@@ -756,11 +752,10 @@ export const AdminDashboard: React.FC = () => {
 
             <button
               onClick={() => setActiveSection('transfers')}
-              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                activeSection === 'transfers'
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'transfers'
                   ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
                   : 'hover:bg-slate-800 text-slate-300 hover:text-white'
-              }`}
+                }`}
             >
               <div className="flex items-center gap-3">
                 <PhoneForwarded className="w-4 h-4" />
@@ -775,11 +770,10 @@ export const AdminDashboard: React.FC = () => {
 
             <button
               onClick={() => setActiveSection('knowledge')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                activeSection === 'knowledge'
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'knowledge'
                   ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
                   : 'hover:bg-slate-800 text-slate-300 hover:text-white'
-              }`}
+                }`}
             >
               <BookOpen className="w-4 h-4" />
               Knowledge Base
@@ -895,6 +889,86 @@ export const AdminDashboard: React.FC = () => {
                 </div>
                 <p className="text-2xl font-extrabold text-red-600">{stats.pendingTransfers}</p>
                 <p className="text-[11px] text-slate-400">Awaiting Admin acceptance</p>
+              </div>
+            </div>
+
+            {/* Multilingual Calling & Queue Metrics */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Waiting Call Queue</span>
+                  <Users className="w-4 h-4 text-amber-500" />
+                </div>
+                <p className="text-2xl font-extrabold text-amber-600">{stats.queuedCalls ?? 0}</p>
+                <p className="text-[11px] text-slate-400">Customers waiting for an agent</p>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Agent Concurrency</span>
+                  <Headphones className="w-4 h-4 text-emerald-500" />
+                </div>
+                <p className="text-2xl font-extrabold text-slate-900">
+                  <span className="text-emerald-600">{stats.availableAgents ?? 0}</span>
+                  <span className="text-slate-400 text-lg font-normal"> / </span>
+                  <span className="text-amber-600">{stats.busyAgents ?? 0}</span>
+                </p>
+                <p className="text-[11px] text-slate-400">Available vs Busy agents</p>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Avg Customer Wait</span>
+                  <Clock className="w-4 h-4 text-blue-500" />
+                </div>
+                <p className="text-2xl font-extrabold text-slate-900">{stats.avgWaitTime ?? 0}s</p>
+                <p className="text-[11px] text-slate-400">Average queue wait duration</p>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Avg Call Duration</span>
+                  <Clock className="w-4 h-4 text-purple-500" />
+                </div>
+                <p className="text-2xl font-extrabold text-slate-900">
+                  {Math.floor((stats.avgDuration ?? 0) / 60)}m {(stats.avgDuration ?? 0) % 60}s
+                </p>
+                <p className="text-[11px] text-slate-400">Average call length</p>
+              </div>
+            </div>
+
+            {/* Multilingual Call Distribution */}
+            <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Globe className="w-5 h-5 text-indigo-600" />
+                  <h3 className="font-extrabold text-slate-900 text-base">
+                    Multilingual Voice Call Distribution (5 Regional Languages)
+                  </h3>
+                </div>
+                <span className="text-xs text-slate-400">Grounded real-time interpretation</span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                {[
+                  { code: 'en', name: 'English', native: 'English' },
+                  { code: 'ta', name: 'Tamil', native: 'தமிழ்' },
+                  { code: 'te', name: 'Telugu', native: 'తెలుగు' },
+                  { code: 'ml', name: 'Malayalam', native: 'മലയാളം' },
+                  { code: 'hi', name: 'Hindi', native: 'हिन्दी' }
+                ].map(l => {
+                  const count = stats.callsByLanguage?.[l.code] || 0;
+                  return (
+                    <div key={l.code} className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-700">{l.name}</span>
+                        <span className="text-[11px] text-slate-400 font-medium">{l.native}</span>
+                      </div>
+                      <div className="text-2xl font-black text-slate-900">{count}</div>
+                      <p className="text-[10px] text-slate-400">Total calls handled</p>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -1186,9 +1260,8 @@ export const AdminDashboard: React.FC = () => {
                   <button
                     key={f}
                     onClick={() => setCallFilter(f)}
-                    className={`px-3 py-1.5 rounded-xl capitalize transition-all cursor-pointer ${
-                      callFilter === f ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                    className={`px-3 py-1.5 rounded-xl capitalize transition-all cursor-pointer ${callFilter === f ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                      }`}
                   >
                     {f}
                   </button>
@@ -1222,6 +1295,7 @@ export const AdminDashboard: React.FC = () => {
                         <th className="py-3.5 px-4">Date & Time</th>
                         <th className="py-3.5 px-4">Customer</th>
                         <th className="py-3.5 px-4">Phone</th>
+                        <th className="py-3.5 px-4">Language</th>
                         <th className="py-3.5 px-4">Handler</th>
                         <th className="py-3.5 px-4">Channel / Type</th>
                         <th className="py-3.5 px-4">Duration</th>
@@ -1238,6 +1312,11 @@ export const AdminDashboard: React.FC = () => {
                           </td>
                           <td className="py-3.5 px-4 font-semibold text-slate-900">{call.customerName}</td>
                           <td className="py-3.5 px-4 text-slate-600 font-mono">{call.customerPhone || 'N/A'}</td>
+                          <td className="py-3.5 px-4">
+                            <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-semibold text-[10px]">
+                              {SUPPORTED_LANGUAGES[(call.language as LanguageCode) || 'en']?.name || 'English'}
+                            </span>
+                          </td>
                           <td className="py-3.5 px-4 text-slate-700">
                             {call.admin?.name || call.agent?.name || 'KAIRA AI'}
                           </td>
@@ -1253,13 +1332,12 @@ export const AdminDashboard: React.FC = () => {
                           </td>
                           <td className="py-3.5 px-4 font-mono font-medium">{formatDuration(call.duration)}</td>
                           <td className="py-3.5 px-4">
-                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${
-                              call.status === 'completed'
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${call.status === 'completed'
                                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                 : call.status === 'active'
-                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                : 'bg-red-50 text-red-700 border border-red-200'
-                            }`}>
+                                  ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                  : 'bg-red-50 text-red-700 border border-red-200'
+                              }`}>
                               {call.status}
                             </span>
                           </td>
@@ -1347,9 +1425,8 @@ export const AdminDashboard: React.FC = () => {
                         const m = webrtcManager.toggleMute();
                         setIsMuted(m);
                       }}
-                      className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
-                        isMuted ? 'bg-red-50 text-red-600 border-red-200' : 'bg-white text-slate-700 border-slate-200'
-                      }`}
+                      className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${isMuted ? 'bg-red-50 text-red-600 border-red-200' : 'bg-white text-slate-700 border-slate-200'
+                        }`}
                     >
                       {isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4 text-emerald-600" />}
                       {isMuted ? 'Unmute Mic' : 'Mute Mic'}
@@ -1437,15 +1514,14 @@ export const AdminDashboard: React.FC = () => {
                           </td>
                           <td className="py-3.5 px-4 text-slate-500 max-w-xs truncate">{req.reason}</td>
                           <td className="py-3.5 px-4">
-                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${
-                              req.status === 'connected' || req.status === 'accepted'
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${req.status === 'connected' || req.status === 'accepted'
                                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                 : req.status === 'ringing' || req.status === 'pending'
-                                ? 'bg-amber-50 text-amber-700 border border-amber-200 animate-pulse font-bold'
-                                : req.status === 'missed'
-                                ? 'bg-red-50 text-red-700 border border-red-200'
-                                : 'bg-slate-100 text-slate-700'
-                            }`}>
+                                  ? 'bg-amber-50 text-amber-700 border border-amber-200 animate-pulse font-bold'
+                                  : req.status === 'missed'
+                                    ? 'bg-red-50 text-red-700 border border-red-200'
+                                    : 'bg-slate-100 text-slate-700'
+                              }`}>
                               {req.status}
                             </span>
                           </td>
@@ -1567,10 +1643,9 @@ export const AdminDashboard: React.FC = () => {
                           <p className="font-bold text-slate-800 truncate">{doc.title}</p>
                           <p className="text-[10px] text-slate-400 truncate">{doc.fileName} • {(doc.fileSize / 1024).toFixed(1)} KB</p>
                           <div className="flex items-center gap-1.5 pt-1">
-                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
-                              doc.status === 'indexed' ? 'bg-emerald-100 text-emerald-800' :
-                              doc.status === 'processing' ? 'bg-amber-100 text-amber-800 animate-pulse' : 'bg-red-100 text-red-800'
-                            }`}>
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${doc.status === 'indexed' ? 'bg-emerald-100 text-emerald-800' :
+                                doc.status === 'processing' ? 'bg-amber-100 text-amber-800 animate-pulse' : 'bg-red-100 text-red-800'
+                              }`}>
                               {doc.status}
                             </span>
                             <span className="text-[10px] text-slate-500 font-medium">{doc.entryCount} entries extracted</span>
@@ -2052,6 +2127,11 @@ export const AdminDashboard: React.FC = () => {
                     <p className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-slate-800">
                       {t.text}
                     </p>
+                    {t.translation && (
+                      <p className="text-[11px] italic text-indigo-600 mt-1 pl-2">
+                        Translation: {t.translation}
+                      </p>
+                    )}
                   </div>
                 ))
               )}

@@ -16,6 +16,10 @@ model User {
   passwordHash     String
   googleId         String?
   avatar           String?
+  preferredLanguage String?              @default("en") // "ta" | "en" | "te" | "ml" | "hi"
+  supportedLanguages String?             @default("en,ta,te,ml,hi") // for agents
+  agentStatus      String?               @default("available") // "available" | "busy" | "offline"
+  maxConcurrentCalls Int                 @default(1)
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
 
@@ -39,13 +43,18 @@ model CallRecord {
   admin            User?                 @relation("AdminCalls", fields: [adminId], references: [id], onDelete: SetNull)
   type             String                // "ai_voice" | "agent_voice" | "admin_transfer"
   direction        String                // "incoming" | "outgoing"
-  status           String                // "active" | "completed" | "missed" | "transferred" | "rejected"
+  status           String                // "queued" | "ringing" | "active" | "completed" | "missed" | "transferred" | "rejected"
+  language         String?               @default("en") // "ta" | "en" | "te" | "ml" | "hi"
   startTime        DateTime              @default(now())
   endTime          DateTime?
   duration         Int                   @default(0) // seconds
+  queueDuration    Int                   @default(0) // seconds in queue
   transferred      Boolean               @default(false)
   transferReason   String?
   customerQuestion String?
+  callNotes        String?
+  endedBy          String?               // "customer" | "agent" | "network" | "system"
+  rating           Int?
   providerCallSid  String?               @unique
   providerName     String?               @default("twilio")
   failureReason    String?
@@ -62,6 +71,8 @@ model CallTranscript {
   sender       String     // "customer" | "ai" | "agent" | "admin" | "system"
   senderName   String?
   text         String
+  translation  String?
+  language     String?
   timestamp    DateTime   @default(now())
 }
 

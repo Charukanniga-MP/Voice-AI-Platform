@@ -208,3 +208,4 @@ router.delete('/:id', authenticate, requireRole(['admin']), async (req: Request,
 });
 
 export default router;
+

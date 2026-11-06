@@ -827,11 +827,49 @@ router.get('/me', authenticate, async (req: Request, res: Response) => {
         phone: user.phone,
         role: user.role,
         avatar: user.avatar,
+        preferredLanguage: user.preferredLanguage || 'en',
+        supportedLanguages: user.supportedLanguages || 'en,ta,te,ml,hi',
+        agentStatus: user.agentStatus || 'available',
+        maxConcurrentCalls: user.maxConcurrentCalls || 1,
         createdAt: user.createdAt
       }
     });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to retrieve profile.' });
+  }
+});
+
+// 6b. Update user preferences (language, agent status)
+router.put('/preferences', authenticate, async (req: Request, res: Response) => {
+  try {
+    const { preferredLanguage, supportedLanguages, agentStatus } = req.body;
+    const updateData: any = {};
+    if (preferredLanguage) updateData.preferredLanguage = preferredLanguage;
+    if (supportedLanguages) updateData.supportedLanguages = Array.isArray(supportedLanguages) ? supportedLanguages.join(',') : supportedLanguages;
+    if (agentStatus) updateData.agentStatus = agentStatus;
+
+    const user = await prisma.user.update({
+      where: { id: req.user!.id },
+      data: updateData
+    });
+
+    res.json({
+      message: 'Preferences updated successfully.',
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        avatar: user.avatar,
+        preferredLanguage: user.preferredLanguage || 'en',
+        supportedLanguages: user.supportedLanguages || 'en,ta,te,ml,hi',
+        agentStatus: user.agentStatus || 'available',
+        maxConcurrentCalls: user.maxConcurrentCalls || 1
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to update preferences.' });
   }
 });
 

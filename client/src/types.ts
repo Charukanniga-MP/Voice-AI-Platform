@@ -1,3 +1,13 @@
+export type LanguageCode = 'en' | 'ta' | 'te' | 'ml' | 'hi';
+
+export const SUPPORTED_LANGUAGES: Record<LanguageCode, { name: string; nativeName: string; bcp47: string }> = {
+  en: { name: 'English', nativeName: 'English', bcp47: 'en-US' },
+  ta: { name: 'Tamil', nativeName: 'தமிழ்', bcp47: 'ta-IN' },
+  te: { name: 'Telugu', nativeName: 'తెలుగు', bcp47: 'te-IN' },
+  ml: { name: 'Malayalam', nativeName: 'മലയാളം', bcp47: 'ml-IN' },
+  hi: { name: 'Hindi', nativeName: 'हिन्दी', bcp47: 'hi-IN' }
+};
+
 export interface User {
   id: string;
   name: string;
@@ -5,6 +15,10 @@ export interface User {
   phone?: string | null;
   role: 'admin' | 'agent' | 'customer';
   avatar?: string | null;
+  preferredLanguage?: LanguageCode | string;
+  supportedLanguages?: string;
+  agentStatus?: 'available' | 'busy' | 'offline';
+  maxConcurrentCalls?: number;
   createdAt?: string;
   totalCalls?: number;
   lastCallDate?: string | null;
@@ -15,6 +29,8 @@ export interface CallTranscript {
   sender: 'customer' | 'ai' | 'agent' | 'admin' | 'system';
   senderName?: string | null;
   text: string;
+  translation?: string | null;
+  language?: string | null;
   timestamp: string;
 }
 
@@ -44,13 +60,18 @@ export interface CallRecord {
   adminId?: string | null;
   type: 'ai_voice' | 'agent_voice' | 'admin_transfer';
   direction: 'incoming' | 'outgoing';
-  status: 'active' | 'completed' | 'missed' | 'transferred' | 'rejected';
+  status: 'queued' | 'ringing' | 'active' | 'completed' | 'missed' | 'transferred' | 'rejected';
+  language?: LanguageCode | string;
   startTime: string;
   endTime?: string | null;
   duration: number; // in seconds
+  queueDuration?: number;
   transferred: boolean;
   transferReason?: string | null;
   customerQuestion?: string | null;
+  callNotes?: string | null;
+  endedBy?: string | null;
+  rating?: number | null;
   providerCallSid?: string | null;
   providerName?: string | null;
   failureReason?: string | null;
@@ -98,5 +119,11 @@ export interface CallStats {
   completedCalls: number;
   transferredCalls: number;
   pendingTransfers: number;
+  queuedCalls?: number;
+  availableAgents?: number;
+  busyAgents?: number;
+  avgWaitTime?: number; // in seconds
+  avgDuration?: number; // in seconds
+  callsByLanguage?: Record<string, number>;
 }
 

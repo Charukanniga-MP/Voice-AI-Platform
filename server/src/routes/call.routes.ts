@@ -16,7 +16,13 @@ router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, 
       activeCalls,
       completedCalls,
       transferredCalls,
-      pendingTransfers
+      pendingTransfers,
+      queuedCalls,
+      availableAgents,
+      busyAgents,
+      allCompletedCalls,
+      allQueuedRecords,
+      allCallsWithLang
     ] = await Promise.all([
       prisma.user.count({ where: { role: 'customer' } }),
       prisma.user.count({ where: { role: 'agent' } }),
@@ -26,8 +32,43 @@ router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, 
       prisma.callRecord.count({ where: { status: 'active' } }),
       prisma.callRecord.count({ where: { status: 'completed' } }),
       prisma.callRecord.count({ where: { transferred: true } }),
-      prisma.callTransferRequest.count({ where: { status: { in: ['pending', 'ringing'] } } })
+      prisma.callTransferRequest.count({ where: { status: { in: ['pending', 'ringing'] } } }),
+      prisma.callRecord.count({ where: { status: 'queued' } }),
+      prisma.user.count({ where: { role: 'agent', agentStatus: 'available' } }),
+      prisma.user.count({ where: { role: 'agent', agentStatus: 'busy' } }),
+      prisma.callRecord.findMany({
+        where: { status: 'completed', duration: { gt: 0 } },
+        select: { duration: true }
+      }),
+      prisma.callRecord.findMany({
+        where: { queueDuration: { gt: 0 } },
+        select: { queueDuration: true }
+      }),
+      prisma.callRecord.findMany({
+        select: { language: true }
+      })
     ]);
+
+    const avgDuration = allCompletedCalls.length > 0
+      ? Math.round(allCompletedCalls.reduce((acc, c) => acc + (c.duration || 0), 0) / allCompletedCalls.length)
+      : 0;
+
+    const avgWaitTime = allQueuedRecords.length > 0
+      ? Math.round(allQueuedRecords.reduce((acc, c) => acc + (c.queueDuration || 0), 0) / allQueuedRecords.length)
+      : 0;
+
+    const callsByLanguage: Record<string, number> = {
+      en: 0,
+      ta: 0,
+      te: 0,
+      ml: 0,
+      hi: 0
+    };
+
+    allCallsWithLang.forEach(c => {
+      const lang = c.language || 'en';
+      callsByLanguage[lang] = (callsByLanguage[lang] || 0) + 1;
+    });
 
     res.json({
       totalCustomers,
@@ -38,7 +79,13 @@ router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, 
       activeCalls,
       completedCalls,
       transferredCalls,
-      pendingTransfers
+      pendingTransfers,
+      queuedCalls,
+      availableAgents,
+      busyAgents,
+      avgWaitTime,
+      avgDuration,
+      callsByLanguage
     });
   } catch (err: any) {
     console.error('[Calls] Stats error:', err);
@@ -49,7 +96,7 @@ router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, 
 // 2. All calls with filter tabs (Admin & Agent)
 router.get('/', authenticate, requireRole(['admin', 'agent']), async (req: Request, res: Response) => {
   try {
-    const { filter, search } = req.query as { filter?: string; search?: string };
+    const { filter, search, language } = req.query as { filter?: string; search?: string; language?: string };
 
     const where: any = {};
 
@@ -58,7 +105,12 @@ router.get('/', authenticate, requireRole(['admin', 'agent']), async (req: Reque
     else if (filter === 'transferred') where.transferred = true;
     else if (filter === 'active') where.status = 'active';
     else if (filter === 'completed') where.status = 'completed';
+    else if (filter === 'queued') where.status = 'queued';
     else if (filter === 'missed') where.status = 'missed';
+
+    if (language) {
+      where.language = language;
+    }
 
     if (search) {
       where.OR = [
@@ -71,8 +123,8 @@ router.get('/', authenticate, requireRole(['admin', 'agent']), async (req: Reque
     const calls = await prisma.callRecord.findMany({
       where,
       include: {
-        customer: { select: { id: true, name: true, email: true, phone: true } },
-        agent: { select: { id: true, name: true } },
+        customer: { select: { id: true, name: true, email: true, phone: true, preferredLanguage: true } },
+        agent: { select: { id: true, name: true, supportedLanguages: true } },
         admin: { select: { id: true, name: true } },
         transcripts: { orderBy: { timestamp: 'asc' } },
         transferRequests: true
@@ -162,7 +214,54 @@ router.get('/transfers', authenticate, requireRole(['admin']), async (req: Reque
   }
 });
 
-// 5. Get single call details with complete transcript
+// 5. Active Waiting Queue (Admin & Agent)
+router.get('/queue', authenticate, requireRole(['admin', 'agent']), async (req: Request, res: Response) => {
+  try {
+    const queuedCalls = await prisma.callRecord.findMany({
+      where: { status: 'queued' },
+      include: {
+        customer: { select: { id: true, name: true, phone: true, preferredLanguage: true } }
+      },
+      orderBy: { startTime: 'asc' }
+    });
+
+    res.json({ queuedCalls });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to retrieve queued calls.' });
+  }
+});
+
+// 6. Save Call Notes (Agent & Admin)
+router.post('/:id/notes', authenticate, requireRole(['admin', 'agent']), async (req: Request, res: Response) => {
+  try {
+    const { notes } = req.body;
+    const call = await prisma.callRecord.update({
+      where: { id: req.params.id },
+      data: { callNotes: notes }
+    });
+
+    res.json({ message: 'Call notes saved successfully.', callNotes: call.callNotes });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to save call notes.' });
+  }
+});
+
+// 7. Save Customer Rating (Customer only)
+router.post('/:id/rating', authenticate, async (req: Request, res: Response) => {
+  try {
+    const { rating } = req.body;
+    await prisma.callRecord.update({
+      where: { id: req.params.id },
+      data: { rating: Number(rating) }
+    });
+
+    res.json({ message: 'Rating saved.' });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to save call rating.' });
+  }
+});
+
+// 8. Get single call details with complete transcript
 router.get('/:id', authenticate, async (req: Request, res: Response) => {
   try {
     const call = await prisma.callRecord.findUnique({
@@ -181,7 +280,6 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
       return;
     }
 
-    // Role check: Customer can only view their own call
     if (req.user!.role === 'customer' && call.customerId !== req.user!.id) {
       res.status(403).json({ error: 'Access denied.' });
       return;
@@ -194,4 +292,3 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
 });
 
 export default router;
-

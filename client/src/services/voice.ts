@@ -6,11 +6,20 @@ declare global {
   }
 }
 
+export const LANGUAGE_BCP47: Record<string, string> = {
+  en: 'en-US',
+  ta: 'ta-IN',
+  te: 'te-IN',
+  ml: 'ml-IN',
+  hi: 'hi-IN'
+};
+
 export class VoiceService {
   private recognition: any = null;
   private isListening: boolean = false;
   private synth: SpeechSynthesis | null = null;
   private currentUtterance: SpeechSynthesisUtterance | null = null;
+  private currentLang: string = 'en-US';
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -26,6 +35,24 @@ export class VoiceService {
         this.synth = window.speechSynthesis;
       }
     }
+  }
+
+  // Set active language for Speech Recognition and Synthesis
+  public setLanguage(langCode: string) {
+    const bcp47 = LANGUAGE_BCP47[langCode] || langCode || 'en-US';
+    this.currentLang = bcp47;
+    if (this.recognition) {
+      const wasListening = this.isListening;
+      if (wasListening) {
+        this.stopListening();
+      }
+      this.recognition.lang = bcp47;
+      console.log(`[VoiceService] Recognition language set to: ${bcp47}`);
+    }
+  }
+
+  public getLanguage(): string {
+    return this.currentLang;
   }
 
   // Start speech recognition
@@ -74,7 +101,7 @@ export class VoiceService {
     try {
       this.isListening = true;
       this.recognition.start();
-      console.log('[VoiceService] Speech recognition started');
+      console.log(`[VoiceService] Speech recognition started (${this.currentLang})`);
     } catch (err) {
       console.error('[VoiceService] Could not start speech recognition:', err);
     }
@@ -90,8 +117,8 @@ export class VoiceService {
     }
   }
 
-  // Speak text using natural TTS
-  public speak(text: string, onEnd?: () => void): Promise<void> {
+  // Speak text using natural TTS in the target language
+  public speak(text: string, onEnd?: () => void, langCode?: string): Promise<void> {
     return new Promise((resolve) => {
       if (!this.synth) {
         if (onEnd) onEnd();
@@ -104,15 +131,20 @@ export class VoiceService {
       const utterance = new SpeechSynthesisUtterance(text);
       this.currentUtterance = utterance;
 
-      // Select best available English voice
-      const voices = this.synth.getVoices();
-      const preferred = voices.find(v =>
-        (v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('Samantha') || v.name.includes('Zira') || v.name.includes('Jenny')) &&
-        v.lang.startsWith('en')
-      ) || voices.find(v => v.lang.startsWith('en'));
+      const targetBcp47 = (langCode && LANGUAGE_BCP47[langCode]) || (langCode && langCode.includes('-') ? langCode : this.currentLang);
+      utterance.lang = targetBcp47;
 
-      if (preferred) {
-        utterance.voice = preferred;
+      const voices = this.synth.getVoices();
+      const langPrefix = targetBcp47.split('-')[0];
+
+      // Find voice matching the target language
+      const matchingVoice = voices.find(v => v.lang.toLowerCase() === targetBcp47.toLowerCase()) ||
+        voices.find(v => v.lang.toLowerCase().startsWith(langPrefix)) ||
+        voices.find(v => v.name.includes('Google') && v.lang.startsWith('en')) ||
+        voices.find(v => v.lang.startsWith('en'));
+
+      if (matchingVoice) {
+        utterance.voice = matchingVoice;
       }
 
       utterance.rate = 1.0;
@@ -147,4 +179,3 @@ export class VoiceService {
 }
 
 export const voiceService = new VoiceService();
-
