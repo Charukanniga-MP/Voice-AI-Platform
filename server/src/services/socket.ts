@@ -56,6 +56,8 @@ export function initSocketServer(io: SocketIOServer) {
           if (userExists) validCustomerId = userExists.id;
         }
 
+        const isNewCall = !call;
+
         if (!call) {
           call = await prisma.callRecord.create({
             data: {
@@ -71,16 +73,19 @@ export function initSocketServer(io: SocketIOServer) {
           });
         }
 
-        // Add initial greeting transcript
         const greeting = "Hello! Welcome to KAIRA. I am your AI assistant. How may I help you today?";
-        await prisma.callTranscript.create({
-          data: {
-            callRecordId: call.id,
-            sender: 'ai',
-            senderName: 'KAIRA AI',
-            text: greeting
-          }
-        });
+
+        // Add initial greeting transcript ONLY if this is a newly created call
+        if (isNewCall) {
+          await prisma.callTranscript.create({
+            data: {
+              callRecordId: call.id,
+              sender: 'ai',
+              senderName: 'KAIRA AI',
+              text: greeting
+            }
+          });
+        }
 
         socket.emit('call:ready', {
           callId: data.callId,
@@ -150,18 +155,36 @@ export function initSocketServer(io: SocketIOServer) {
             }
           });
 
-          // Create transfer request
-          const transferReq = await prisma.callTransferRequest.create({
-            data: {
+          // Idempotent Transfer Request: reuse or update active transfer instead of duplicating
+          let transferReq = await prisma.callTransferRequest.findFirst({
+            where: {
               callRecordId: call.id,
-              customerId: call.customerId,
-              customerName: call.customerName,
-              customerPhone: call.customerPhone,
-              question: queryText,
-              reason: 'Information unavailable in approved Knowledge Base',
-              status: 'ringing'
+              status: { in: ['pending', 'ringing', 'accepted', 'connected'] }
             }
           });
+
+          if (!transferReq) {
+            transferReq = await prisma.callTransferRequest.create({
+              data: {
+                callRecordId: call.id,
+                customerId: call.customerId,
+                customerName: call.customerName,
+                customerPhone: call.customerPhone,
+                question: queryText,
+                reason: 'Information unavailable in approved Knowledge Base',
+                status: 'ringing'
+              }
+            });
+          } else {
+            // Update question if customer clarified their inquiry
+            transferReq = await prisma.callTransferRequest.update({
+              where: { id: transferReq.id },
+              data: {
+                question: queryText,
+                status: 'ringing'
+              }
+            });
+          }
 
           // Tell the customer: AI speaks fallback and transfer is starting
           socket.emit('call:ai_response', {

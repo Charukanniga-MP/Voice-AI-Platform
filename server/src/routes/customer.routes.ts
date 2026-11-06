@@ -36,19 +36,26 @@ router.get('/', authenticate, requireRole(['admin', 'agent']), async (req: Reque
       orderBy: { createdAt: 'desc' }
     });
 
-    const formatted = customers.map(c => {
-      const calls = c.callsAsCustomer;
-      const lastCall = calls.length > 0 ? calls[0].startTime : null;
-      return {
-        id: c.id,
-        name: c.name,
-        email: c.email,
-        phone: c.phone || 'N/A',
-        createdAt: c.createdAt,
-        totalCalls: calls.length,
-        lastCallDate: lastCall
-      };
-    });
+    // Deduplicate customers in memory by lowercase email
+    const seenEmails = new Set<string>();
+    const formatted = [];
+    for (const c of customers) {
+      const emailLower = c.email.trim().toLowerCase();
+      if (!seenEmails.has(emailLower)) {
+        seenEmails.add(emailLower);
+        const calls = c.callsAsCustomer || [];
+        const lastCall = calls.length > 0 ? calls[0].startTime : null;
+        formatted.push({
+          id: c.id,
+          name: c.name,
+          email: c.email,
+          phone: c.phone || 'N/A',
+          createdAt: c.createdAt,
+          totalCalls: calls.length,
+          lastCallDate: lastCall
+        });
+      }
+    }
 
     res.json({ customers: formatted });
   } catch (err: any) {
@@ -153,12 +160,27 @@ router.put('/:id', authenticate, requireRole(['admin']), async (req: Request, re
       return;
     }
 
+    const cleanEmail = email ? email.trim().toLowerCase() : existing.email;
+
+    if (cleanEmail !== existing.email) {
+      const emailConflict = await prisma.user.findFirst({
+        where: {
+          email: cleanEmail,
+          id: { not: existing.id }
+        }
+      });
+      if (emailConflict) {
+        res.status(400).json({ error: `The email "${cleanEmail}" is already in use by another account.` });
+        return;
+      }
+    }
+
     const updated = await prisma.user.update({
       where: { id: req.params.id },
       data: {
         name: name ? name.trim() : existing.name,
-        email: email ? email.trim().toLowerCase() : existing.email,
-        phone: phone !== undefined ? phone.trim() : existing.phone
+        email: cleanEmail,
+        phone: phone !== undefined ? (phone ? phone.trim() : null) : existing.phone
       }
     });
 

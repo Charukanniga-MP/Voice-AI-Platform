@@ -27,6 +27,11 @@ export async function processUploadedDocument(documentId: string, filePath: stri
       throw new Error('No readable text could be extracted from document.');
     }
 
+    // Clean up any previously extracted entries for this document to prevent duplicate indexing
+    await prisma.knowledgeEntry.deleteMany({
+      where: { documentId }
+    });
+
     // Break text into logical sections/paragraphs
     const paragraphs = extractedText
       .split(/\n\s*\n/)

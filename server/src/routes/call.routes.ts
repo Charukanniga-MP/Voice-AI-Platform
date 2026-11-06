@@ -9,6 +9,7 @@ router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, 
   try {
     const [
       totalCustomers,
+      totalAgents,
       totalCalls,
       totalIncoming,
       totalOutgoing,
@@ -18,6 +19,7 @@ router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, 
       pendingTransfers
     ] = await Promise.all([
       prisma.user.count({ where: { role: 'customer' } }),
+      prisma.user.count({ where: { role: 'agent' } }),
       prisma.callRecord.count(),
       prisma.callRecord.count({ where: { direction: 'incoming' } }),
       prisma.callRecord.count({ where: { direction: 'outgoing' } }),
@@ -29,6 +31,7 @@ router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, 
 
     res.json({
       totalCustomers,
+      totalAgents,
       totalCalls,
       totalIncoming,
       totalOutgoing,
@@ -77,7 +80,18 @@ router.get('/', authenticate, requireRole(['admin', 'agent']), async (req: Reque
       orderBy: { startTime: 'desc' }
     });
 
-    res.json({ calls });
+    // Deduplicate calls in memory to ensure unique records
+    const seenCallIds = new Set<string>();
+    const uniqueCalls = [];
+    for (const c of calls) {
+      const key = (c.providerCallSid || c.callId || c.id).trim();
+      if (!seenCallIds.has(key)) {
+        seenCallIds.add(key);
+        uniqueCalls.push(c);
+      }
+    }
+
+    res.json({ calls: uniqueCalls });
   } catch (err: any) {
     console.error('[Calls] Fetch error:', err);
     res.status(500).json({ error: 'Failed to retrieve calls.' });
@@ -99,7 +113,18 @@ router.get('/my-history', authenticate, async (req: Request, res: Response) => {
       orderBy: { startTime: 'desc' }
     });
 
-    res.json({ calls });
+    // Deduplicate calls in memory to ensure unique records
+    const seenCallIds = new Set<string>();
+    const uniqueCalls = [];
+    for (const c of calls) {
+      const key = (c.providerCallSid || c.callId || c.id).trim();
+      if (!seenCallIds.has(key)) {
+        seenCallIds.add(key);
+        uniqueCalls.push(c);
+      }
+    }
+
+    res.json({ calls: uniqueCalls });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to retrieve call history.' });
   }
@@ -120,7 +145,18 @@ router.get('/transfers', authenticate, requireRole(['admin']), async (req: Reque
       orderBy: { createdAt: 'desc' }
     });
 
-    res.json({ transfers });
+    // Deduplicate transfers by callRecordId (keep the latest transfer state per call)
+    const seenCallRecordIds = new Set<string>();
+    const uniqueTransfers = [];
+    for (const t of transfers) {
+      const key = t.callRecordId || t.id;
+      if (!seenCallRecordIds.has(key)) {
+        seenCallRecordIds.add(key);
+        uniqueTransfers.push(t);
+      }
+    }
+
+    res.json({ transfers: uniqueTransfers });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to retrieve transfer requests.' });
   }

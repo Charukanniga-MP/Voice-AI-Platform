@@ -46,7 +46,7 @@ model CallRecord {
   transferred      Boolean               @default(false)
   transferReason   String?
   customerQuestion String?
-  providerCallSid  String?
+  providerCallSid  String?               @unique
   providerName     String?               @default("twilio")
   failureReason    String?
   createdAt        DateTime              @default(now())

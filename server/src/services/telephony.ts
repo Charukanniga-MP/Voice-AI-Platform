@@ -144,17 +144,27 @@ class TelephonyService {
     const sidToMatch = CallSid || ParentCallSid;
     if (!sidToMatch) return;
 
-    // Find call record by providerCallSid or callId
-    const callRecord = await prisma.callRecord.findFirst({
+    // Find call record by providerCallSid or callId (strict matching to prevent cross-call corruption)
+    let callRecord = await prisma.callRecord.findFirst({
       where: {
         OR: [
           { providerCallSid: sidToMatch },
-          { callId: sidToMatch },
-          { customerPhone: To }
+          { callId: sidToMatch }
         ]
-      },
-      orderBy: { createdAt: 'desc' }
+      }
     });
+
+    if (!callRecord && To) {
+      callRecord = await prisma.callRecord.findFirst({
+        where: {
+          customerPhone: To,
+          status: { in: ['ringing', 'active'] },
+          direction: 'outgoing',
+          startTime: { gte: new Date(Date.now() - 15 * 60 * 1000) }
+        },
+        orderBy: { startTime: 'desc' }
+      });
+    }
 
     if (!callRecord) {
       console.log(`[Telephony Webhook] No matching CallRecord found for SID: ${sidToMatch}`);

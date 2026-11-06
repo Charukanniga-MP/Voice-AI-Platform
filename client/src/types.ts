@@ -90,6 +90,7 @@ export interface KnowledgeDocument {
 
 export interface CallStats {
   totalCustomers: number;
+  totalAgents?: number;
   totalCalls: number;
   totalIncoming: number;
   totalOutgoing: number;

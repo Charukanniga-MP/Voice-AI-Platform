@@ -506,10 +506,10 @@ export const CustomerDashboard: React.FC = () => {
               <div
                 key={t.id}
                 className={`flex flex-col ${t.sender === 'customer'
-                    ? 'items-end'
-                    : t.sender === 'system'
-                      ? 'items-center'
-                      : 'items-start'
+                  ? 'items-end'
+                  : t.sender === 'system'
+                    ? 'items-center'
+                    : 'items-start'
                   }`}
               >
                 {t.sender === 'system' ? (
@@ -523,10 +523,10 @@ export const CustomerDashboard: React.FC = () => {
                     </span>
                     <div
                       className={`px-4 py-2.5 rounded-2xl text-xs leading-relaxed ${t.sender === 'customer'
-                          ? 'bg-indigo-600 text-white rounded-tr-xs shadow-xs'
-                          : t.sender === 'ai'
-                            ? 'bg-slate-100 text-slate-800 rounded-tl-xs border border-slate-200/80'
-                            : 'bg-emerald-50 text-emerald-900 border border-emerald-200 rounded-tl-xs'
+                        ? 'bg-indigo-600 text-white rounded-tr-xs shadow-xs'
+                        : t.sender === 'ai'
+                          ? 'bg-slate-100 text-slate-800 rounded-tl-xs border border-slate-200/80'
+                          : 'bg-emerald-50 text-emerald-900 border border-emerald-200 rounded-tl-xs'
                         }`}
                     >
                       {t.text}
@@ -612,10 +612,10 @@ export const CustomerDashboard: React.FC = () => {
                     </td>
                     <td className="py-3 px-4">
                       <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${call.status === 'completed'
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                          : call.status === 'active'
-                            ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                            : 'bg-red-50 text-red-700 border border-red-200'
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        : call.status === 'active'
+                          ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                          : 'bg-red-50 text-red-700 border border-red-200'
                         }`}>
                         {call.status}
                       </span>

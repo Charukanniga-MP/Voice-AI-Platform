@@ -40,32 +40,70 @@ router.post('/voice', async (req: Request, res: Response) => {
 
     const cleanPhone = (To || '').trim();
 
-    // Look up customer by phone number
-    const customer = await prisma.user.findFirst({
-      where: {
-        role: 'customer',
-        phone: cleanPhone
-      }
-    });
+    // 1. Idempotency Check: Check if this CallSid already exists or if pre-registered
+    let existingCall = null;
+    if (CallSid) {
+      existingCall = await prisma.callRecord.findUnique({
+        where: { providerCallSid: CallSid }
+      });
+    }
 
-    const callId = 'call_pstn_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+    if (!existingCall && cleanPhone) {
+      // Check if this call was pre-registered in the last 60 seconds
+      existingCall = await prisma.callRecord.findFirst({
+        where: {
+          customerPhone: cleanPhone,
+          status: { in: ['active', 'ringing'] },
+          direction: 'outgoing',
+          startTime: { gte: new Date(Date.now() - 60000) }
+        },
+        orderBy: { startTime: 'desc' }
+      });
+    }
 
-    // Create database CallRecord
-    const newCall = await prisma.callRecord.create({
-      data: {
-        callId,
-        providerCallSid: CallSid || callId,
-        providerName: 'twilio',
-        customerId: customer ? customer.id : null,
-        customerName: customer ? customer.name : `Mobile Customer (${cleanPhone})`,
-        customerPhone: cleanPhone,
-        agentId: agentId || null,
-        type: 'agent_voice',
-        direction: 'outgoing',
-        status: 'ringing',
-        startTime: new Date()
-      }
-    });
+    let callRecordId = '';
+    let callId = '';
+
+    if (existingCall) {
+      // Update existing record rather than creating a duplicate
+      const updated = await prisma.callRecord.update({
+        where: { id: existingCall.id },
+        data: {
+          providerCallSid: CallSid || existingCall.providerCallSid,
+          status: 'ringing'
+        }
+      });
+      callRecordId = updated.id;
+      callId = updated.callId;
+      console.log(`[Telephony Webhook: Voice] Linked CallSid ${CallSid} to existing CallRecord ${callId}`);
+    } else {
+      // Look up customer by phone number
+      const customer = await prisma.user.findFirst({
+        where: {
+          role: 'customer',
+          phone: cleanPhone
+        }
+      });
+
+      callId = 'call_pstn_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+
+      const newCall = await prisma.callRecord.create({
+        data: {
+          callId,
+          providerCallSid: CallSid || callId,
+          providerName: 'twilio',
+          customerId: customer ? customer.id : null,
+          customerName: customer ? customer.name : `Mobile Customer (${cleanPhone})`,
+          customerPhone: cleanPhone,
+          agentId: agentId || null,
+          type: 'agent_voice',
+          direction: 'outgoing',
+          status: 'ringing',
+          startTime: new Date()
+        }
+      });
+      callRecordId = newCall.id;
+    }
 
     // Notify connected clients via Socket.IO
     const io = req.app.get('io');
@@ -110,6 +148,29 @@ router.post('/register-call', authenticate, requireRole(['agent', 'admin']), asy
       return;
     }
 
+    const cleanPhone = customerPhone.trim();
+
+    // Idempotency: check if an identical outbound call was initiated in the last 15 seconds
+    const recentDuplicate = await prisma.callRecord.findFirst({
+      where: {
+        agentId: req.user!.id,
+        customerPhone: cleanPhone,
+        direction: 'outgoing',
+        status: { in: ['active', 'ringing'] },
+        startTime: { gte: new Date(Date.now() - 15000) }
+      },
+      orderBy: { startTime: 'desc' }
+    });
+
+    if (recentDuplicate) {
+      res.json({
+        success: true,
+        callId: recentDuplicate.callId,
+        callRecord: recentDuplicate
+      });
+      return;
+    }
+
     const callId = 'pstn_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
 
     const callRecord = await prisma.callRecord.create({
@@ -117,7 +178,7 @@ router.post('/register-call', authenticate, requireRole(['agent', 'admin']), asy
         callId,
         customerId: customerId || null,
         customerName: customerName || 'Mobile Customer',
-        customerPhone,
+        customerPhone: cleanPhone,
         agentId: req.user!.id,
         agentName: req.user!.name,
         type: 'agent_voice',
@@ -208,3 +269,4 @@ router.post('/end-call', authenticate, requireRole(['agent', 'admin']), async (r
 });
 
 export default router;
+
