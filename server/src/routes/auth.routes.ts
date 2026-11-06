@@ -393,29 +393,55 @@ router.get('/google/callback', async (req: Request, res: Response) => {
 
     const tokenData = await tokenResponse.json();
 
-    if (!tokenResponse.ok || !tokenData.access_token) {
+    if (!tokenResponse.ok || (!tokenData.access_token && !tokenData.id_token)) {
       console.error('[Google OAuth] Token exchange error:', tokenData);
       res.redirect(`${frontendUrl}/?error=${encodeURIComponent(tokenData.error_description || 'Failed to exchange authorization code with Google.')}`);
       return;
     }
 
-    // Fetch verified user identity from Google
-    const userinfoResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-      headers: { Authorization: `Bearer ${tokenData.access_token}` }
-    });
+    // Dual verified identity resolution: verify ID token payload & fallback to UserInfo API
+    let cleanEmail = '';
+    let googleId = '';
+    let name = '';
+    let avatar: string | null = null;
 
-    const profile = await userinfoResponse.json();
+    if (tokenData.id_token) {
+      try {
+        const client = new OAuth2Client(clientId);
+        const ticket = await client.verifyIdToken({
+          idToken: tokenData.id_token,
+          audience: clientId
+        });
+        const payload = ticket.getPayload();
+        if (payload && payload.email) {
+          cleanEmail = payload.email.trim().toLowerCase();
+          googleId = payload.sub;
+          name = payload.name || payload.given_name || cleanEmail.split('@')[0];
+          avatar = payload.picture || null;
+        }
+      } catch (idErr: any) {
+        console.warn('[Google OAuth] Callback id_token verify warning:', idErr.message);
+      }
+    }
 
-    if (!userinfoResponse.ok || !profile.email) {
-      console.error('[Google OAuth] Userinfo fetch error:', profile);
+    if (!cleanEmail && tokenData.access_token) {
+      const userinfoResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` }
+      });
+      const profile = await userinfoResponse.json();
+      if (userinfoResponse.ok && profile.email) {
+        cleanEmail = profile.email.trim().toLowerCase();
+        googleId = profile.sub;
+        name = profile.name || profile.given_name || cleanEmail.split('@')[0];
+        avatar = profile.picture || null;
+      }
+    }
+
+    if (!cleanEmail) {
+      console.error('[Google OAuth] Userinfo fetch error:', tokenData);
       res.redirect(`${frontendUrl}/?error=${encodeURIComponent('Failed to retrieve user profile from Google.')}`);
       return;
     }
-
-    const cleanEmail = profile.email.trim().toLowerCase();
-    const googleId = profile.sub;
-    const name = profile.name || cleanEmail.split('@')[0];
-    const avatar = profile.picture || null;
 
     // Strict Role-Based Access Control: Google login is ONLY for Customers!
     // Check if account already exists in DB
@@ -525,7 +551,7 @@ router.post('/google/code', async (req: Request, res: Response) => {
 
     const tokenData = await tokenRes.json();
 
-    if (!tokenRes.ok || !tokenData.access_token) {
+    if (!tokenRes.ok || (!tokenData.access_token && !tokenData.id_token)) {
       console.error('[Google Code] Token exchange failed:', tokenData);
       res.status(401).json({
         error: tokenData.error_description || 'Failed to exchange authorization code with Google.'
@@ -533,22 +559,48 @@ router.post('/google/code', async (req: Request, res: Response) => {
       return;
     }
 
-    // Fetch verified profile from Google UserInfo endpoint
-    const userinfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-      headers: { Authorization: `Bearer ${tokenData.access_token}` }
-    });
+    // Dual verified identity resolution: verify ID token payload & fallback to UserInfo API
+    let cleanEmail = '';
+    let googleId = '';
+    let name = '';
+    let avatar: string | null = null;
 
-    const profile = await userinfoRes.json();
+    if (tokenData.id_token) {
+      try {
+        const client = new OAuth2Client(clientId);
+        const ticket = await client.verifyIdToken({
+          idToken: tokenData.id_token,
+          audience: clientId
+        });
+        const payload = ticket.getPayload();
+        if (payload && payload.email) {
+          cleanEmail = payload.email.trim().toLowerCase();
+          googleId = payload.sub;
+          name = payload.name || payload.given_name || cleanEmail.split('@')[0];
+          avatar = payload.picture || null;
+        }
+      } catch (idErr: any) {
+        console.warn('[Google Code] id_token verify warning:', idErr.message);
+      }
+    }
 
-    if (!userinfoRes.ok || !profile.email) {
+    if (!cleanEmail && tokenData.access_token) {
+      const userinfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` }
+      });
+      const profile = await userinfoRes.json();
+      if (userinfoRes.ok && profile.email) {
+        cleanEmail = profile.email.trim().toLowerCase();
+        googleId = profile.sub;
+        name = profile.name || profile.given_name || cleanEmail.split('@')[0];
+        avatar = profile.picture || null;
+      }
+    }
+
+    if (!cleanEmail) {
       res.status(401).json({ error: 'Failed to retrieve user profile from Google.' });
       return;
     }
-
-    const cleanEmail = profile.email.trim().toLowerCase();
-    const googleId = profile.sub;
-    const name = profile.name || profile.given_name || cleanEmail.split('@')[0];
-    const avatar = profile.picture || null;
 
     // Strict Role Enforcement: Google is strictly for Customers
     const existingUser = await prisma.user.findFirst({

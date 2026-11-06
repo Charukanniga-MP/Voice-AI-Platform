@@ -179,7 +179,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
   }, [googleClientId, isGoogleConfigured, portal]);
 
   // Handle Customer Google Sign-In click (Amazon-style official Google Account Selection)
-  const handleGoogleClick = async () => {
+  const handleGoogleClick = async (loginMode: 'popup' | 'redirect' = 'popup') => {
     setError(null);
 
     if (!isGoogleConfigured || !googleClientId) {
@@ -187,7 +187,20 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
       return;
     }
 
-    // 1. First priority: Open Google's official account selection window (Popup with select_account)
+    // Direct Full-Page Redirect Flow
+    if (loginMode === 'redirect') {
+      setLoading(true);
+      try {
+        await initiateGoogleLogin();
+      } catch (err: any) {
+        setError(err.message || 'Unable to initiate Google Sign-In redirect.');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // Official GIS Popup Flow
     if (window.google?.accounts?.oauth2?.initCodeClient) {
       try {
         const client = window.google.accounts.oauth2.initCodeClient({
@@ -197,7 +210,11 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
           select_account: true,
           callback: async (response) => {
             if (response.error) {
-              if (response.error !== 'popup_closed_by_user') {
+              if (response.error === 'popup_closed_by_user') {
+                setError(
+                  'Google popup closed. If Google displayed "Access blocked: Authorisation error / no registered origin (Error 401: invalid_client)", please add http://localhost:5173 to Authorized JavaScript origins in Google Cloud Console.'
+                );
+              } else {
                 setError(`Google sign-in error: ${response.error_description || response.error}`);
               }
               return;
@@ -219,6 +236,9 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
           },
           error_callback: (err) => {
             console.warn('[Google OAuth] Popup closed or error:', err);
+            setError(
+              'Google sign-in window encountered an issue. If Google showed "no registered origin (Error 401)", please ensure http://localhost:5173 is added to Authorized JavaScript origins in Google Cloud Console.'
+            );
           }
         });
 
@@ -436,12 +456,12 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {/* Primary Amazon-style Continue with Google Button */}
+                    {/* Primary Official Google Account Selection (Popup Window) */}
                     <button
                       type="button"
-                      onClick={handleGoogleClick}
+                      onClick={() => handleGoogleClick('popup')}
                       disabled={loading || isVerifyingGoogle}
-                      className="w-full flex items-center justify-center gap-3 py-3 px-4 border border-slate-300 rounded-xl bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400 active:scale-[0.99] transition-all cursor-pointer disabled:opacity-60 shadow-xs"
+                      className="w-full flex items-center justify-center gap-3 py-3 px-4 border border-slate-300 rounded-xl bg-white text-sm font-semibold text-slate-800 hover:bg-slate-50 hover:border-slate-400 active:scale-[0.99] transition-all cursor-pointer disabled:opacity-60 shadow-xs"
                     >
                       <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
                         <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.14z" />
@@ -452,22 +472,54 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                       <span>Continue with Google</span>
                     </button>
 
-                    {/* Official GIS Button Container & Status */}
-                    {isGoogleConfigured ? (
-                      <div className="flex items-center justify-center gap-1.5 text-[11px] text-emerald-600 font-medium">
-                        <ShieldCheck className="w-3.5 h-3.5" />
-                        <span>Google Official Account Selection Active</span>
+                    {/* Secondary Full-Page Redirect Mode */}
+                    <button
+                      type="button"
+                      onClick={() => handleGoogleClick('redirect')}
+                      disabled={loading || isVerifyingGoogle}
+                      className="w-full flex items-center justify-center gap-2 py-2 px-3 border border-slate-200 rounded-lg bg-slate-50 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 transition-colors cursor-pointer disabled:opacity-60"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Or Sign In via Google Redirect Page</span>
+                    </button>
+
+                    {/* Google Cloud Console Authorized Origin Notice & Direct Link */}
+                    <div className="mt-3 p-3 bg-amber-50/80 border border-amber-200/80 rounded-xl text-left space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-amber-900 flex items-center gap-1.5">
+                          <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span>Google Cloud Origin Requirement</span>
+                        </span>
+                        <a
+                          href="https://console.cloud.google.com/apis/credentials/oauthclient/1018334787224-nkk8l415st631mr3isgm0kjidlhp68h0.apps.googleusercontent.com?project=ai-voice-513817"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] font-semibold text-blue-700 hover:underline flex items-center gap-1"
+                        >
+                          Open Console <ExternalLink className="w-3 h-3" />
+                        </a>
                       </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setShowGoogleSetup(true)}
-                        className="w-full text-center text-[11px] text-blue-600 hover:text-blue-800 font-medium hover:underline flex items-center justify-center gap-1 cursor-pointer"
-                      >
-                        <Settings className="w-3 h-3" />
-                        <span>Setup Google Cloud OAuth Credentials</span>
-                      </button>
-                    )}
+
+                      <p className="text-[11px] text-amber-800 leading-relaxed">
+                        If Google displays <strong>"no registered origin (Error 401: invalid_client)"</strong>, add this exact URL to <em>Authorized JavaScript origins</em> in your Google Cloud Console:
+                      </p>
+
+                      <div className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-amber-200 font-mono text-[11px] text-slate-800">
+                        <span>{window.location.origin}</span>
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(window.location.origin)}
+                          className="text-slate-400 hover:text-blue-600 cursor-pointer flex items-center gap-1"
+                          title="Copy Origin"
+                        >
+                          {copiedText === window.location.origin ? (
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
 
                     {/* Hidden GIS anchor container for fallback rendering / one-tap */}
                     <div ref={googleBtnRef} className="hidden" />
@@ -806,12 +858,12 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-slate-800">Step 1: Open Google Cloud Console</span>
                   <a
-                    href="https://console.cloud.google.com/apis/credentials"
+                    href="https://console.cloud.google.com/apis/credentials/oauthclient/1018334787224-nkk8l415st631mr3isgm0kjidlhp68h0.apps.googleusercontent.com?project=ai-voice-513817"
                     target="_blank"
                     rel="noreferrer"
                     className="text-blue-600 hover:underline flex items-center gap-1 font-semibold"
                   >
-                    Console Link <ExternalLink className="w-3 h-3" />
+                    Direct Client Link <ExternalLink className="w-3 h-3" />
                   </a>
                 </div>
                 <p className="text-slate-600">
