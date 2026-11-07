@@ -13,6 +13,7 @@ import callRoutes from './routes/call.routes.js';
 import knowledgeRoutes from './routes/knowledge.routes.js';
 import ticketRoutes from './routes/ticket.routes.js';
 import telephonyRoutes from './routes/telephony.routes.js';
+import voiceRoutes from './routes/voice.routes.js';
 import { initSocketServer } from './services/socket.js';
 import { seedDatabase } from './seed.js';
 
@@ -53,6 +54,7 @@ app.use('/api/calls', callRoutes);
 app.use('/api/knowledge', knowledgeRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/telephony', telephonyRoutes);
+app.use('/api/voice', voiceRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
