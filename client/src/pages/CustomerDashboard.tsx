@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext.js';
+import { useLanguage } from '../context/LanguageContext.js';
 import { getSocket } from '../services/socket.js';
 import { voiceService } from '../services/voice.js';
 import { webrtcManager } from '../services/webrtc.js';
@@ -13,11 +14,7 @@ import {
 
 export const CustomerDashboard: React.FC = () => {
   const { user, token } = useAuth();
-
-  // Selected language
-  const [selectedLanguage, setSelectedLanguage] = useState<LanguageCode>(
-    (user?.preferredLanguage as LanguageCode) || 'en'
-  );
+  const { language: selectedLanguage, setLanguage: handleLanguageChange, t } = useLanguage();
 
   // Call status: 'idle' | 'connecting' | 'ringing' | 'queued' | 'active_agent' | 'active_ai' | 'transferring' | 'active_admin' | 'ended'
   const [callStatus, setCallStatus] = useState<
@@ -65,31 +62,6 @@ export const CustomerDashboard: React.FC = () => {
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transcripts, interimText]);
-
-  // Set voice recognition language on mount and when language changes
-  useEffect(() => {
-    voiceService.setLanguage(selectedLanguage);
-  }, [selectedLanguage]);
-
-  // Sync language selection with server
-  const handleLanguageChange = async (lang: LanguageCode) => {
-    setSelectedLanguage(lang);
-    voiceService.setLanguage(lang);
-    if (token) {
-      try {
-        await fetch('/api/auth/preferences', {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`
-          },
-          body: JSON.stringify({ preferredLanguage: lang })
-        });
-      } catch (err) {
-        console.warn('Could not save language preference:', err);
-      }
-    }
-  };
 
   // Duration timer: runs continuously without artificial limit
   useEffect(() => {
@@ -500,25 +472,25 @@ export const CustomerDashboard: React.FC = () => {
           <div className="flex items-center gap-2">
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-white/20 text-white backdrop-blur-xs border border-white/20">
               <Sparkles className="w-3.5 h-3.5" />
-              Multilingual Voice Platform
+              {t('dashboard.platform_badge')}
             </span>
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-400/20 text-emerald-200 border border-emerald-400/30">
-              5 Languages Supported
+              {t('dashboard.supported_languages_badge')}
             </span>
           </div>
 
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-            Welcome, {user?.name || 'Valued Customer'}
+            {t('dashboard.welcome_user', { name: user?.name || 'Valued Customer' })}
           </h1>
           <p className="text-blue-100 text-sm leading-relaxed">
-            Communicate naturally with our dedicated Support Specialists and AI Assistant in your preferred regional language. Choose your language below to begin.
+            {t('dashboard.banner_desc')}
           </p>
 
           {/* 5 Languages Selector */}
           <div className="pt-2">
             <div className="flex items-center gap-2 mb-2 text-xs font-semibold text-blue-200">
               <Globe className="w-4 h-4 text-blue-300" />
-              <span>Select Your Preferred Communication Language:</span>
+              <span>{t('dashboard.select_language_title')}</span>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
               {(Object.entries(SUPPORTED_LANGUAGES) as [LanguageCode, typeof SUPPORTED_LANGUAGES[LanguageCode]][]).map(([code, meta]) => {
@@ -561,16 +533,16 @@ export const CustomerDashboard: React.FC = () => {
                 }`}
             />
             <div>
-              <h2 className="text-sm font-bold text-slate-800">Customer Support Call Session</h2>
+              <h2 className="text-sm font-bold text-slate-800">{t('call.session_title')}</h2>
               <p className="text-xs text-slate-500">
-                {callStatus === 'idle' && `Ready • Preferred Language: ${SUPPORTED_LANGUAGES[selectedLanguage]?.name} (${SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName})`}
-                {callStatus === 'connecting' && 'Allocating low-latency voice channel...'}
-                {callStatus === 'ringing' && `Ringing Support Agent (${activePartner?.name || 'Agent'})...`}
-                {callStatus === 'queued' && `In Waiting Queue (Position #${queueInfo?.position || 1})...`}
-                {callStatus === 'active_agent' && `Live Call with Support Specialist: ${activePartner?.name} • Language: ${SUPPORTED_LANGUAGES[selectedLanguage]?.name}`}
-                {callStatus === 'active_ai' && (aiIsSpeaking ? 'AI Voice Assistant Speaking...' : 'AI Voice Assistant Listening...')}
-                {callStatus === 'transferring' && 'Escalating to Administrator (Live Ringing)...'}
-                {callStatus === 'active_admin' && `Connected with Administrator: ${activePartner?.name}`}
+                {callStatus === 'idle' && t('call.status_ready', { language: SUPPORTED_LANGUAGES[selectedLanguage]?.name, nativeName: SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName })}
+                {callStatus === 'connecting' && t('call.status_connecting')}
+                {callStatus === 'ringing' && t('call.status_ringing', { name: activePartner?.name || 'Agent' })}
+                {callStatus === 'queued' && t('call.status_queued', { position: queueInfo?.position || 1 })}
+                {callStatus === 'active_agent' && t('call.status_active_agent', { name: activePartner?.name || '', language: SUPPORTED_LANGUAGES[selectedLanguage]?.name })}
+                {callStatus === 'active_ai' && (aiIsSpeaking ? t('call.status_ai_speaking') : t('call.status_ai_listening'))}
+                {callStatus === 'transferring' && t('call.status_transferring')}
+                {callStatus === 'active_admin' && t('call.status_active_admin', { name: activePartner?.name || '' })}
               </p>
             </div>
           </div>
@@ -587,12 +559,12 @@ export const CustomerDashboard: React.FC = () => {
               {isMuted ? (
                 <>
                   <MicOff className="w-3.5 h-3.5 text-red-500" />
-                  <span className="text-red-600 font-semibold">Muted</span>
+                  <span className="text-red-600 font-semibold">{t('call.mic_muted')}</span>
                 </>
               ) : (
                 <>
                   <Mic className="w-3.5 h-3.5 text-emerald-500" />
-                  <span className="text-slate-700 font-semibold">Mic Live</span>
+                  <span className="text-slate-700 font-semibold">{t('call.mic_live')}</span>
                 </>
               )}
             </div>
@@ -611,14 +583,13 @@ export const CustomerDashboard: React.FC = () => {
                   </div>
                   <div>
                     <h3 className="text-base font-extrabold text-slate-900">
-                      Call Customer Support Specialist
+                      {t('call.card_agent_title')}
                     </h3>
                     <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                      Connect directly with an authorized human agent fluent in{' '}
-                      <span className="font-bold text-blue-700">
-                        {SUPPORTED_LANGUAGES[selectedLanguage]?.name} ({SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName})
-                      </span>
-                      .
+                      {t('call.card_agent_desc', {
+                        language: SUPPORTED_LANGUAGES[selectedLanguage]?.name,
+                        nativeName: SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName
+                      })}
                     </p>
                   </div>
                   <button
@@ -626,7 +597,7 @@ export const CustomerDashboard: React.FC = () => {
                     className="w-full py-3.5 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-md shadow-blue-200 hover:shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2"
                   >
                     <PhoneCall className="w-4 h-4" />
-                    Start Support Agent Call
+                    {t('call.card_agent_btn')}
                   </button>
                 </div>
 
@@ -637,10 +608,10 @@ export const CustomerDashboard: React.FC = () => {
                   </div>
                   <div>
                     <h3 className="text-base font-extrabold text-slate-900">
-                      Speak with AI Voice Assistant
+                      {t('call.card_ai_title')}
                     </h3>
                     <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                      Instant 24/7 AI answers strictly grounded in KAIRA Knowledge Base with automatic Admin escalation.
+                      {t('call.card_ai_desc')}
                     </p>
                   </div>
                   <button
@@ -648,7 +619,7 @@ export const CustomerDashboard: React.FC = () => {
                     className="w-full py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-md shadow-indigo-200 hover:shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2"
                   >
                     <PhoneCall className="w-4 h-4" />
-                    Start AI Voice Call
+                    {t('call.card_ai_btn')}
                   </button>
                 </div>
               </div>
@@ -663,22 +634,22 @@ export const CustomerDashboard: React.FC = () => {
               </div>
               <div className="space-y-2">
                 <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-amber-50 text-amber-800 border border-amber-200">
-                  All Agents Currently Busy
+                  {t('queue.all_busy')}
                 </span>
-                <h3 className="text-xl font-extrabold text-slate-900">You are in the Support Queue</h3>
+                <h3 className="text-xl font-extrabold text-slate-900">{t('queue.in_queue_title')}</h3>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                  A support agent fluent in {SUPPORTED_LANGUAGES[selectedLanguage]?.name} will connect with you the moment they become available.
+                  {t('queue.in_queue_desc', { language: SUPPORTED_LANGUAGES[selectedLanguage]?.name })}
                 </p>
               </div>
 
               <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-around">
                 <div>
-                  <div className="text-xs text-slate-400 font-semibold uppercase">Queue Position</div>
+                  <div className="text-xs text-slate-400 font-semibold uppercase">{t('queue.position_label')}</div>
                   <div className="text-2xl font-black text-indigo-700">#{queueInfo?.position || 1}</div>
                 </div>
                 <div className="h-8 w-px bg-slate-200" />
                 <div>
-                  <div className="text-xs text-slate-400 font-semibold uppercase">Est. Wait Time</div>
+                  <div className="text-xs text-slate-400 font-semibold uppercase">{t('queue.wait_time_label')}</div>
                   <div className="text-2xl font-black text-slate-800">~{queueInfo?.estimatedWaitTime || 45}s</div>
                 </div>
               </div>
@@ -687,7 +658,7 @@ export const CustomerDashboard: React.FC = () => {
                 onClick={handleCancelQueue}
                 className="px-6 py-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition-colors cursor-pointer"
               >
-                Cancel Call Request
+                {t('queue.cancel_btn')}
               </button>
             </div>
           )}
@@ -711,8 +682,8 @@ export const CustomerDashboard: React.FC = () => {
                 <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-2xl text-indigo-800 text-xs flex items-center justify-center gap-3 animate-pulse">
                   <PhoneCall className="w-5 h-5 text-indigo-600 shrink-0" />
                   <div className="text-left">
-                    <p className="font-bold">Contacting Support Specialist</p>
-                    <p className="text-indigo-700">Connecting your call in {SUPPORTED_LANGUAGES[selectedLanguage]?.name}. Please wait...</p>
+                    <p className="font-bold">{t('call.contacting_specialist')}</p>
+                    <p className="text-indigo-700">{t('call.connecting_wait', { language: SUPPORTED_LANGUAGES[selectedLanguage]?.name })}</p>
                   </div>
                 </div>
               )}
@@ -721,9 +692,12 @@ export const CustomerDashboard: React.FC = () => {
                 <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-800 text-xs flex items-center justify-center gap-3">
                   <Headphones className="w-5 h-5 text-emerald-600 shrink-0" />
                   <div className="text-left">
-                    <p className="font-bold">Live Support Specialist Connected: {activePartner?.name}</p>
+                    <p className="font-bold">{t('call.agent_connected', { name: activePartner?.name || '' })}</p>
                     <p className="text-emerald-700">
-                      Two-way voice active • Preferred Language: {SUPPORTED_LANGUAGES[selectedLanguage]?.name} ({SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName})
+                      {t('call.two_way_active', {
+                        language: SUPPORTED_LANGUAGES[selectedLanguage]?.name,
+                        nativeName: SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName
+                      })}
                     </p>
                   </div>
                 </div>
@@ -733,15 +707,15 @@ export const CustomerDashboard: React.FC = () => {
                 <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800 text-xs flex items-center justify-center gap-3 animate-pulse">
                   <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />
                   <div className="text-left">
-                    <p className="font-bold">Live Administrator Transfer in Progress</p>
-                    <p className="text-amber-700">Transferring your call to an Administrator live. Please hold...</p>
+                    <p className="font-bold">{t('call.transfer_in_progress')}</p>
+                    <p className="text-amber-700">{t('call.transfer_wait')}</p>
                   </div>
                 </div>
               )}
 
               {isCallHeld && (
                 <div className="p-3 bg-amber-100 border border-amber-300 text-amber-900 rounded-2xl text-xs font-bold animate-pulse">
-                  Call placed on hold by Support Specialist. Please wait...
+                  {t('call.call_on_hold')}
                 </div>
               )}
 
@@ -752,7 +726,7 @@ export const CustomerDashboard: React.FC = () => {
                   onClick={handleToggleMute}
                   className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${isMuted ? 'bg-red-50 border-red-200 text-red-600' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
                     }`}
-                  title={isMuted ? 'Unmute' : 'Mute'}
+                  title={isMuted ? t('call.unmute') : t('call.mute')}
                 >
                   {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
                 </button>
@@ -763,11 +737,11 @@ export const CustomerDashboard: React.FC = () => {
                   className="flex items-center gap-2 px-6 py-3.5 rounded-2xl bg-red-600 hover:bg-red-700 text-white font-semibold text-sm shadow-lg shadow-red-200 transition-all cursor-pointer"
                 >
                   <PhoneOff className="w-5 h-5" />
-                  End Call
+                  {t('call.end_call')}
                 </button>
 
                 {/* Speaker Volume */}
-                <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl">
+                <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl" title={t('call.speaker_volume')}>
                   {volume === 0 ? <VolumeX className="w-4 h-4 text-slate-400" /> : <Volume2 className="w-4 h-4 text-slate-600" />}
                   <input
                     type="range"
@@ -790,11 +764,11 @@ export const CustomerDashboard: React.FC = () => {
             <div className="flex items-center gap-2">
               <MessageSquare className="w-4 h-4 text-indigo-600" />
               <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                Live Conversation Transcript & Multilingual Subtitles
+                {t('transcript.title')}
               </h3>
             </div>
             <span className="text-[11px] text-slate-400">
-              {transcripts.length} exchanges recorded
+              {t('transcript.exchanges_recorded', { count: transcripts.length })}
             </span>
           </div>
 
@@ -802,43 +776,43 @@ export const CustomerDashboard: React.FC = () => {
             {transcripts.length === 0 && !interimText && (
               <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs text-center p-4">
                 <MessageSquare className="w-8 h-8 text-slate-300 mb-2 stroke-1" />
-                <p>When the call begins, the live transcript and real-time translation will stream here.</p>
+                <p>{t('transcript.empty_notice')}</p>
               </div>
             )}
 
-            {transcripts.map((t) => (
+            {transcripts.map((tItem) => (
               <div
-                key={t.id}
-                className={`flex flex-col ${t.sender === 'customer'
+                key={tItem.id}
+                className={`flex flex-col ${tItem.sender === 'customer'
                     ? 'items-end'
-                    : t.sender === 'system'
+                    : tItem.sender === 'system'
                       ? 'items-center'
                       : 'items-start'
                   }`}
               >
-                {t.sender === 'system' ? (
+                {tItem.sender === 'system' ? (
                   <span className="px-3 py-1 bg-amber-50 border border-amber-200 text-amber-800 text-[11px] rounded-full font-medium my-1">
-                    {t.text}
+                    {tItem.text}
                   </span>
                 ) : (
                   <div className="max-w-[85%] sm:max-w-[75%] space-y-1">
                     <span className="text-[10px] font-semibold text-slate-400 px-1 block">
-                      {t.senderName || (t.sender === 'customer' ? 'You' : t.sender === 'ai' ? 'KAIRA AI' : 'Agent')}
+                      {tItem.senderName || (tItem.sender === 'customer' ? t('transcript.speaker_you') : tItem.sender === 'ai' ? t('transcript.speaker_ai') : t('transcript.speaker_agent'))}
                     </span>
                     <div
-                      className={`px-4 py-2.5 rounded-2xl text-xs leading-relaxed ${t.sender === 'customer'
+                      className={`px-4 py-2.5 rounded-2xl text-xs leading-relaxed ${tItem.sender === 'customer'
                           ? 'bg-blue-600 text-white rounded-tr-xs shadow-xs'
-                          : t.sender === 'ai'
+                          : tItem.sender === 'ai'
                             ? 'bg-slate-100 text-slate-800 rounded-tl-xs border border-slate-200'
                             : 'bg-emerald-50 text-emerald-950 border border-emerald-200 rounded-tl-xs'
                         }`}
                     >
-                      <div>{t.text}</div>
+                      <div>{tItem.text}</div>
                       {/* Translation subtitle */}
-                      {t.translation && (
-                        <div className={`mt-1.5 pt-1.5 border-t text-[11px] font-normal italic ${t.sender === 'customer' ? 'border-blue-400/50 text-blue-100' : 'border-emerald-200 text-emerald-700'
+                      {tItem.translation && (
+                        <div className={`mt-1.5 pt-1.5 border-t text-[11px] font-normal italic ${tItem.sender === 'customer' ? 'border-blue-400/50 text-blue-100' : 'border-emerald-200 text-emerald-700'
                           }`}>
-                          Translation: {t.translation}
+                          {t('transcript.translation_prefix', { text: tItem.translation })}
                         </div>
                       )}
                     </div>
@@ -868,16 +842,16 @@ export const CustomerDashboard: React.FC = () => {
               <Star className="w-6 h-6 fill-amber-400" />
             </div>
             <div>
-              <h3 className="font-extrabold text-slate-900 text-base">Rate Your Experience</h3>
+              <h3 className="font-extrabold text-slate-900 text-base">{t('rating.title')}</h3>
               <p className="text-xs text-slate-500 mt-1">
-                How satisfied were you with this call session in {SUPPORTED_LANGUAGES[selectedLanguage]?.name}?
+                {t('rating.desc', { language: SUPPORTED_LANGUAGES[selectedLanguage]?.name })}
               </p>
             </div>
 
             {ratingSubmitted ? (
               <div className="p-3 bg-emerald-50 text-emerald-800 rounded-2xl text-xs font-bold flex items-center justify-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                Thank you for your feedback!
+                {t('rating.thank_you')}
               </div>
             ) : (
               <div className="flex items-center justify-center gap-2 py-2">
@@ -897,7 +871,7 @@ export const CustomerDashboard: React.FC = () => {
               onClick={() => setRatingCallId(null)}
               className="text-xs text-slate-400 hover:text-slate-600 font-semibold cursor-pointer"
             >
-              Skip
+              {t('rating.skip')}
             </button>
           </div>
         </div>
@@ -908,35 +882,35 @@ export const CustomerDashboard: React.FC = () => {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <History className="w-5 h-5 text-indigo-600" />
-            <h2 className="text-lg font-bold text-slate-900">My Call History</h2>
+            <h2 className="text-lg font-bold text-slate-900">{t('history.title')}</h2>
           </div>
           <button
             onClick={fetchHistory}
             className="flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer"
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            Refresh
+            {t('history.refresh')}
           </button>
         </div>
 
         {loadingHistory ? (
-          <div className="py-8 text-center text-xs text-slate-500">Loading call history...</div>
+          <div className="py-8 text-center text-xs text-slate-500">{t('history.loading')}</div>
         ) : history.length === 0 ? (
           <div className="py-8 text-center text-xs text-slate-400">
-            No previous voice calls found. Click one of the call buttons above to begin your first session!
+            {t('history.empty')}
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs text-slate-600">
               <thead className="bg-slate-50 text-slate-700 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
                 <tr>
-                  <th className="py-3 px-4">Date & Time</th>
-                  <th className="py-3 px-4">Duration</th>
-                  <th className="py-3 px-4">Language</th>
-                  <th className="py-3 px-4">Call Type</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">Handled By</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                  <th className="py-3 px-4">{t('history.col_datetime')}</th>
+                  <th className="py-3 px-4">{t('history.col_duration')}</th>
+                  <th className="py-3 px-4">{t('history.col_language')}</th>
+                  <th className="py-3 px-4">{t('history.col_type')}</th>
+                  <th className="py-3 px-4">{t('history.col_status')}</th>
+                  <th className="py-3 px-4">{t('history.col_handled_by')}</th>
+                  <th className="py-3 px-4 text-right">{t('history.col_actions')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -958,17 +932,17 @@ export const CustomerDashboard: React.FC = () => {
                       <td className="py-3 px-4">
                         {call.type === 'ai_voice' && (
                           <span className="px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 font-semibold text-[10px]">
-                            AI Voice
+                            {t('history.type_ai')}
                           </span>
                         )}
                         {call.type === 'admin_transfer' && (
                           <span className="px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 font-semibold text-[10px]">
-                            Admin Transfer
+                            {t('history.type_admin')}
                           </span>
                         )}
                         {call.type === 'agent_voice' && (
                           <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 font-semibold text-[10px]">
-                            Agent Call
+                            {t('history.type_agent')}
                           </span>
                         )}
                       </td>
@@ -1002,7 +976,7 @@ export const CustomerDashboard: React.FC = () => {
                           onClick={() => setSelectedHistoryCall(call)}
                           className="px-3 py-1 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 text-slate-700 rounded-lg font-medium transition-colors cursor-pointer"
                         >
-                          Transcript
+                          {t('history.view_transcript')}
                         </button>
                       </td>
                     </tr>
@@ -1025,7 +999,7 @@ export const CustomerDashboard: React.FC = () => {
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
-                <h3 className="font-bold text-slate-900 text-sm">Call Transcript</h3>
+                <h3 className="font-bold text-slate-900 text-sm">{t('history.modal_title')}</h3>
                 <p className="text-[11px] text-slate-500 font-mono">
                   {new Date(selectedHistoryCall.startTime).toLocaleString()} • Duration: {formatDuration(selectedHistoryCall.duration)}
                 </p>
@@ -1034,25 +1008,25 @@ export const CustomerDashboard: React.FC = () => {
                 onClick={() => setSelectedHistoryCall(null)}
                 className="text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
               >
-                ✕ Close
+                ✕ {t('history.modal_close')}
               </button>
             </div>
 
             <div className="max-h-80 overflow-y-auto space-y-3 p-2">
               {(!selectedHistoryCall.transcripts || selectedHistoryCall.transcripts.length === 0) ? (
-                <p className="text-xs text-slate-400 text-center py-4">No transcript entries recorded.</p>
+                <p className="text-xs text-slate-400 text-center py-4">{t('history.no_entries')}</p>
               ) : (
-                selectedHistoryCall.transcripts.map((t) => (
-                  <div key={t.id} className="text-xs">
+                selectedHistoryCall.transcripts.map((tItem) => (
+                  <div key={tItem.id} className="text-xs">
                     <span className="font-semibold text-slate-500 block mb-0.5">
-                      {t.senderName || t.sender}:
+                      {tItem.senderName || tItem.sender}:
                     </span>
                     <p className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-slate-800">
-                      {t.text}
+                      {tItem.text}
                     </p>
-                    {t.translation && (
+                    {tItem.translation && (
                       <p className="text-[11px] italic text-indigo-600 mt-1 pl-2">
-                        Translation: {t.translation}
+                        {t('transcript.translation_prefix', { text: tItem.translation })}
                       </p>
                     )}
                   </div>
@@ -1064,7 +1038,7 @@ export const CustomerDashboard: React.FC = () => {
               onClick={() => setSelectedHistoryCall(null)}
               className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
             >
-              Close
+              {t('history.modal_close')}
             </button>
           </div>
         </div>

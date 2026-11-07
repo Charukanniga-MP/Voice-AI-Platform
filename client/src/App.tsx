@@ -1,5 +1,6 @@
 import React, { useState, Suspense, lazy } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext.js';
+import { LanguageProvider } from './context/LanguageContext.js';
 import { Navbar } from './components/Navbar.js';
 import { LoginPage } from './pages/Login.js';
 
@@ -68,7 +69,9 @@ const MainApp: React.FC = () => {
 export default function App() {
   return (
     <AuthProvider>
-      <MainApp />
+      <LanguageProvider>
+        <MainApp />
+      </LanguageProvider>
     </AuthProvider>
   );
 }

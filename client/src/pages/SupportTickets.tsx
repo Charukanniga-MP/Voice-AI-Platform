@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, Plus, RefreshCw, Trash2, CheckCircle2, Clock, Filter, User as UserIcon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.js';
+import { useLanguage } from '../context/LanguageContext.js';
 
 interface Ticket {
   id: string;
@@ -16,10 +17,6 @@ interface Ticket {
   createdAt: string;
   updatedAt: string;
 }
-
-const statusLabels: Record<string, string> = {
-  open: 'Open', in_progress: 'In Progress', waiting: 'Waiting', resolved: 'Resolved', closed: 'Closed'
-};
 
 const priorityColors: Record<string, string> = {
   low: 'bg-slate-100 text-slate-700 border-slate-200',
@@ -38,6 +35,7 @@ const statusColors: Record<string, string> = {
 
 export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCustomerView = false }) => {
   const { user, token } = useAuth();
+  const { t } = useLanguage();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -54,6 +52,35 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const isCustomer = isCustomerView || user?.role === 'customer';
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'open': return t('tickets.filter_open');
+      case 'in_progress': return t('tickets.filter_in_progress');
+      case 'waiting': return t('tickets.filter_waiting');
+      case 'resolved': return t('tickets.filter_resolved');
+      case 'closed': return t('tickets.filter_closed');
+      default: return status;
+    }
+  };
+
+  const getPriorityLabel = (priorityVal: string) => {
+    switch (priorityVal) {
+      case 'low': return t('tickets.priority_low');
+      case 'normal': return t('tickets.priority_normal');
+      case 'high': return t('tickets.priority_high');
+      case 'urgent': return t('tickets.priority_urgent');
+      default: return priorityVal;
+    }
+  };
+
+  const statusOptions = [
+    { value: 'open', label: t('tickets.filter_open') },
+    { value: 'in_progress', label: t('tickets.filter_in_progress') },
+    { value: 'waiting', label: t('tickets.filter_waiting') },
+    { value: 'resolved', label: t('tickets.filter_resolved') },
+    { value: 'closed', label: t('tickets.filter_closed') }
+  ];
 
   const fetchTickets = useCallback(async () => {
     if (!token) return;
@@ -196,7 +223,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            {st === 'all' ? `All (${tickets.length})` : `${statusLabels[st]} (${tickets.filter(t => t.status === st).length})`}
+            {st === 'all' ? `${t('tickets.filter_all')} (${tickets.length})` : `${getStatusLabel(st)} (${tickets.filter(t => t.status === st).length})`}
           </button>
         ))}
       </div>
@@ -318,8 +345,8 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
         ) : filteredTickets.length === 0 ? (
           <p className="p-8 text-center text-sm text-slate-500">
             {statusFilter === 'all'
-              ? 'No support tickets found. Click "New Ticket" to open one.'
-              : `No tickets found with status "${statusLabels[statusFilter]}".`}
+              ? t('tickets.empty')
+              : `No tickets found with status "${getStatusLabel(statusFilter)}".`}
           </p>
         ) : (
           <table className="w-full min-w-[850px] text-left text-xs text-slate-600">
@@ -394,7 +421,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
                     <td className="px-4 py-3">
                       {isCustomer ? (
                         <span className={`inline-flex px-2 py-0.5 rounded-md border text-[11px] font-semibold ${statusColors[ticket.status] || statusColors.open}`}>
-                          {statusLabels[ticket.status] || ticket.status}
+                          {getStatusLabel(ticket.status)}
                         </span>
                       ) : (
                         <select
@@ -403,7 +430,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
                           onChange={event => void updateTicket(ticket.id, { status: event.target.value })}
                           className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs"
                         >
-                          {Object.entries(statusLabels).map(([value, label]) => (
+                          {statusOptions.map(({ value, label }) => (
                             <option key={value} value={value}>{label}</option>
                           ))}
                         </select>
