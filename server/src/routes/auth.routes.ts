@@ -39,25 +39,24 @@ router.post('/login', async (req: Request, res: Response) => {
       return;
     }
 
-    // Strict Role Enforcement: Customers MUST use Google Authentication only!
-    if (user.role === 'customer') {
-      res.status(403).json({
-        error: 'Customer accounts must authenticate using "Continue with Google". Password login is restricted to Administrators and Support Agents.'
-      });
-      return;
-    }
-
     // Role-specific check if role portal was specified
     if (role === 'admin' && user.role !== 'admin') {
       res.status(403).json({
-        error: 'Access denied. This account does not have Administrator privileges. Please sign in via the Support Agent portal.'
+        error: 'Access denied. This account does not have Administrator privileges. Please sign in via the Support Agent or Customer portal.'
       });
       return;
     }
 
     if (role === 'agent' && user.role !== 'agent') {
       res.status(403).json({
-        error: 'Access denied. This account does not have Support Agent privileges. Please sign in via the Administrator portal.'
+        error: 'Access denied. This account does not have Support Agent privileges. Please sign in via the Administrator or Customer portal.'
+      });
+      return;
+    }
+
+    if (role === 'customer' && user.role !== 'customer') {
+      res.status(403).json({
+        error: 'This account has internal staff privileges. Please sign in using the Support Agent or Admin tab.'
       });
       return;
     }
@@ -182,7 +181,7 @@ router.post('/register', async (req: Request, res: Response) => {
     });
 
     if (existing) {
-      res.status(400).json({ error: 'An account with this email address already exists.' });
+      res.status(409).json({ error: 'An account with this email address already exists. Please sign in.' });
       return;
     }
 

@@ -17,23 +17,34 @@ import {
   Loader2,
   Sparkles,
   User,
+  UserPlus,
+  Phone,
   Headset,
   Shield
 } from 'lucide-react';
 
 export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({ onAuthSuccess }) => {
-  const { login, loginAdmin, loginAgent, initiateGoogleLogin, loginWithGoogleIdToken, loginWithGoogleCode, getGoogleConfig } = useAuth();
+  const { login, register, loginAdmin, loginAgent, initiateGoogleLogin, loginWithGoogleIdToken, loginWithGoogleCode, getGoogleConfig } = useAuth();
 
   // Active Portal: 'customer' | 'agent' | 'admin'
   const [portal, setPortal] = useState<'customer' | 'agent' | 'admin'>('customer');
 
-  // Mode: 'login' | 'forgot'
-  const [mode, setMode] = useState<'login' | 'forgot'>('login');
+  // Mode: 'login' | 'register' | 'forgot'
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
 
-  // Admin & Agent form state
+  // Customer Sign In / Staff state
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
+
+  // Customer Sign Up form state
+  const [regName, setRegName] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regPhone, setRegPhone] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regConfirmPassword, setRegConfirmPassword] = useState('');
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   // Forgot password state
   const [forgotEmail, setForgotEmail] = useState('');
@@ -60,7 +71,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
 
   const googleBtnRef = useRef<HTMLDivElement>(null);
 
-  // Fetch Google OAuth configuration status on mount
+  // Fetch Google OAuth configuration status & saved rememberMe on mount
   const refreshGoogleConfig = async () => {
     try {
       const config = await getGoogleConfig();
@@ -77,6 +88,11 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
 
   useEffect(() => {
     refreshGoogleConfig();
+    const savedEmail = localStorage.getItem('kaira_remember_email');
+    if (savedEmail) {
+      setEmail(savedEmail);
+      setRememberMe(true);
+    }
   }, []);
 
   // Read URL error param on load (e.g. from Google redirect cancellation or failure)
@@ -260,8 +276,72 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
     }
   };
 
+  // Handle Customer Sign In (Email & Password)
+  const handleCustomerLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+
+    try {
+      if (rememberMe) {
+        localStorage.setItem('kaira_remember_email', email.trim());
+      } else {
+        localStorage.removeItem('kaira_remember_email');
+      }
+
+      const user = await login(email, password, 'customer');
+      onAuthSuccess(user.role);
+    } catch (err: any) {
+      setError(err.message || 'Invalid email or password.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle Customer Sign Up (New Account Registration)
+  const handleCustomerRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    if (!regName.trim() || !regEmail.trim() || !regPassword) {
+      setError('Please fill in all required fields.');
+      return;
+    }
+
+    if (regPassword !== regConfirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+
+    if (regPassword.length < 6) {
+      setError('Password must be at least 6 characters long.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      if (rememberMe) {
+        localStorage.setItem('kaira_remember_email', regEmail.trim());
+      }
+
+      const user = await register({
+        name: regName.trim(),
+        email: regEmail.trim(),
+        phone: regPhone ? regPhone.trim() : undefined,
+        password: regPassword,
+        confirmPassword: regConfirmPassword
+      });
+      onAuthSuccess(user.role);
+    } catch (err: any) {
+      setError(err.message || 'Registration failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Handle Admin / Agent Password Login
-  const handlePasswordLogin = async (e: React.FormEvent) => {
+  const handleStaffLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setLoading(true);
@@ -270,10 +350,8 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
       let user;
       if (portal === 'admin') {
         user = await loginAdmin(email, password);
-      } else if (portal === 'agent') {
-        user = await loginAgent(email, password);
       } else {
-        throw new Error('Customer login must be completed through Google Sign-In.');
+        user = await loginAgent(email, password);
       }
       onAuthSuccess(user.role);
     } catch (err: any) {
@@ -412,133 +490,409 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
 
         <div className="bg-white py-8 px-6 shadow-xl shadow-slate-200/50 rounded-2xl border border-slate-200/80 sm:px-10">
 
-          {/* Error Banner */}
+          {/* Error Banner with Dismiss Button */}
           {error && (
-            <div className="mb-5 p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs flex items-start gap-2.5">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-600" />
-              <div className="flex-1">
-                <p className="font-medium">{error}</p>
-                {portal === 'customer' && !isGoogleConfigured && error.includes('Google') && (
-                  <button
-                    type="button"
-                    onClick={() => { setShowGoogleSetup(true); setError(null); }}
-                    className="mt-2 text-xs font-semibold text-blue-700 underline hover:text-blue-900 flex items-center gap-1 cursor-pointer"
-                  >
-                    <Settings className="w-3.5 h-3.5" />
-                    Open Google OAuth Setup Guide
-                  </button>
-                )}
+            <div className="mb-5 p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs flex items-start justify-between gap-2.5">
+              <div className="flex items-start gap-2.5 flex-1">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-600" />
+                <div className="flex-1">
+                  <p className="font-medium">{error}</p>
+                  {error.includes('Google') && (
+                    <button
+                      type="button"
+                      onClick={() => setShowGoogleSetup(true)}
+                      className="mt-2 text-xs font-semibold text-blue-700 underline hover:text-blue-900 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Settings className="w-3.5 h-3.5" />
+                      Open Google OAuth Origin Setup Guide
+                    </button>
+                  )}
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={() => setError(null)}
+                className="text-red-400 hover:text-red-700 p-0.5 rounded cursor-pointer"
+                title="Dismiss error"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
           )}
 
           {/* ============================================================ */}
-          {/* 1. CUSTOMER PORTAL (GOOGLE AUTHENTICATION ONLY)              */}
+          {/* 1. CUSTOMER PORTAL (SIGN IN, SIGN UP & GOOGLE OAUTH)         */}
           {/* ============================================================ */}
           {portal === 'customer' && (
             <div>
-              <div className="text-center mb-6">
+              {/* Header */}
+              <div className="text-center mb-5">
                 <div className="inline-flex p-2.5 bg-blue-50 text-blue-600 rounded-2xl mb-2">
                   <Sparkles className="w-6 h-6" />
                 </div>
-                <h2 className="text-lg font-bold text-slate-900">Customer Portal</h2>
+                <h2 className="text-xl font-extrabold text-slate-900">
+                  {mode === 'login' ? 'Sign in to Your Account' : mode === 'register' ? 'Create Customer Account' : 'Reset Password'}
+                </h2>
                 <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
-                  Instant, secure sign-in with your Google account. No passwords required.
+                  {mode === 'login'
+                    ? 'Enter your credentials or continue with Google'
+                    : mode === 'register'
+                    ? 'Sign up for AI voice customer support and communication'
+                    : 'Enter your registered email address to receive recovery instructions'}
                 </p>
               </div>
 
-              {/* Customer Google Authentication Flow */}
-              <div className="py-2">
-                {isVerifyingGoogle ? (
-                  <div className="flex flex-col items-center justify-center gap-3 py-6 px-4 rounded-xl bg-blue-50 border border-blue-200 text-blue-700 text-xs font-semibold animate-pulse">
-                    <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
-                    <span>Verifying Google account & signing in...</span>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {/* Primary Official Google Account Selection (Popup Window) */}
-                    <button
-                      type="button"
-                      onClick={() => handleGoogleClick('popup')}
-                      disabled={loading || isVerifyingGoogle}
-                      className="w-full flex items-center justify-center gap-3 py-3 px-4 border border-slate-300 rounded-xl bg-white text-sm font-semibold text-slate-800 hover:bg-slate-50 hover:border-slate-400 active:scale-[0.99] transition-all cursor-pointer disabled:opacity-60 shadow-xs"
-                    >
-                      <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
-                        <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.14z" />
-                        <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z" />
-                        <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z" />
-                        <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z" />
-                      </svg>
-                      <span>Continue with Google</span>
-                    </button>
-
-                    {/* Secondary Full-Page Redirect Mode */}
-                    <button
-                      type="button"
-                      onClick={() => handleGoogleClick('redirect')}
-                      disabled={loading || isVerifyingGoogle}
-                      className="w-full flex items-center justify-center gap-2 py-2 px-3 border border-slate-200 rounded-lg bg-slate-50 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 transition-colors cursor-pointer disabled:opacity-60"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
-                      <span>Or Sign In via Google Redirect Page</span>
-                    </button>
-
-                    {/* Google Cloud Console Authorized Origin Notice & Direct Link */}
-                    <div className="mt-3 p-3 bg-amber-50/80 border border-amber-200/80 rounded-xl text-left space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-bold text-amber-900 flex items-center gap-1.5">
-                          <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                          <span>Google Cloud Origin Requirement</span>
-                        </span>
-                        <a
-                          href="https://console.cloud.google.com/apis/credentials/oauthclient/1018334787224-nkk8l415st631mr3isgm0kjidlhp68h0.apps.googleusercontent.com?project=ai-voice-513817"
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-[11px] font-semibold text-blue-700 hover:underline flex items-center gap-1"
-                        >
-                          Open Console <ExternalLink className="w-3 h-3" />
-                        </a>
-                      </div>
-
-                      <p className="text-[11px] text-amber-800 leading-relaxed">
-                        If Google displays <strong>"no registered origin (Error 401: invalid_client)"</strong>, add this exact URL to <em>Authorized JavaScript origins</em> in your Google Cloud Console:
-                      </p>
-
-                      <div className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-amber-200 font-mono text-[11px] text-slate-800">
-                        <span>{window.location.origin}</span>
-                        <button
-                          type="button"
-                          onClick={() => copyToClipboard(window.location.origin)}
-                          className="text-slate-400 hover:text-blue-600 cursor-pointer flex items-center gap-1"
-                          title="Copy Origin"
-                        >
-                          {copiedText === window.location.origin ? (
-                            <Check className="w-3.5 h-3.5 text-emerald-600" />
-                          ) : (
-                            <Copy className="w-3.5 h-3.5" />
-                          )}
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Hidden GIS anchor container for fallback rendering / one-tap */}
-                    <div ref={googleBtnRef} className="hidden" />
-                  </div>
-                )}
-              </div>
-
-              {/* Customer Guarantee Details */}
-              <div className="mt-6 pt-5 border-t border-slate-100 text-center">
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-left space-y-1.5">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
-                    <ShieldCheck className="w-4 h-4 text-blue-600" />
-                    <span>Customer Privacy & Security</span>
-                  </div>
-                  <p className="text-[11px] text-slate-500 leading-relaxed">
-                    Customer authentication is exclusively handled by Google. Your Google password is never requested, collected, or stored by KAIRA.
-                  </p>
+              {/* Mode Toggle Switch: Sign In vs Sign Up */}
+              {mode !== 'forgot' && (
+                <div className="flex bg-slate-100 p-1 rounded-xl mb-5 text-xs font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => { setMode('login'); setError(null); }}
+                    className={`flex-1 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      mode === 'login' ? 'bg-white text-blue-600 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Sign In
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setMode('register'); setError(null); }}
+                    className={`flex-1 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      mode === 'register' ? 'bg-white text-blue-600 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Sign Up
+                  </button>
                 </div>
-              </div>
+              )}
+
+              {/* A. CUSTOMER SIGN IN FORM */}
+              {mode === 'login' && (
+                <form onSubmit={handleCustomerLogin} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      Email Address
+                    </label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                        <Mail className="w-4 h-4" />
+                      </div>
+                      <input
+                        type="email"
+                        required
+                        autoComplete="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="name@company.com"
+                        className="block w-full pl-9 pr-3 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-colors text-slate-900"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-semibold text-slate-700">
+                        Password
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => { setMode('forgot'); setError(null); }}
+                        className="text-xs text-blue-600 hover:text-blue-800 font-medium hover:underline cursor-pointer"
+                      >
+                        Forgot password?
+                      </button>
+                    </div>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                        <Lock className="w-4 h-4" />
+                      </div>
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        required
+                        autoComplete="current-password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Enter your password"
+                        className="block w-full pl-9 pr-10 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-colors text-slate-900"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                      >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Remember Me Checkbox */}
+                  <div className="flex items-center justify-between text-xs pt-0.5">
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={rememberMe}
+                        onChange={(e) => setRememberMe(e.target.checked)}
+                        className="w-4 h-4 rounded text-blue-600 border-slate-300 focus:ring-blue-500/20"
+                      />
+                      <span>Remember Me</span>
+                    </label>
+                  </div>
+
+                  {/* Standard Sign In Button */}
+                  <button
+                    type="submit"
+                    disabled={loading || isVerifyingGoogle}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 shadow-sm transition-colors cursor-pointer disabled:opacity-60"
+                  >
+                    {loading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <>
+                        <span>Sign In</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+
+                  {/* OR Divider */}
+                  <div className="relative my-4">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-slate-200" />
+                    </div>
+                    <div className="relative flex justify-center text-[10px] uppercase tracking-wider">
+                      <span className="bg-white px-3 text-slate-400 font-bold">OR</span>
+                    </div>
+                  </div>
+
+                  {/* Continue with Google Button (Directly below Sign In) */}
+                  {isVerifyingGoogle ? (
+                    <div className="flex flex-col items-center justify-center gap-2 py-4 px-4 rounded-xl bg-blue-50 border border-blue-200 text-blue-700 text-xs font-semibold animate-pulse">
+                      <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+                      <span>Verifying Google account & signing in...</span>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      <button
+                        type="button"
+                        onClick={() => handleGoogleClick('popup')}
+                        disabled={loading || isVerifyingGoogle}
+                        className="w-full flex items-center justify-center gap-3 py-2.5 px-4 border border-slate-300 rounded-xl bg-white text-xs font-bold text-slate-700 hover:bg-slate-50 hover:border-slate-400 active:scale-[0.99] transition-all cursor-pointer disabled:opacity-60 shadow-xs"
+                      >
+                        <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                          <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.14z" />
+                          <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z" />
+                          <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z" />
+                          <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z" />
+                        </svg>
+                        <span>Continue with Google</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleGoogleClick('redirect')}
+                        disabled={loading || isVerifyingGoogle}
+                        className="w-full text-center text-[11px] text-slate-500 hover:text-slate-700 hover:underline cursor-pointer flex items-center justify-center gap-1"
+                      >
+                        <ExternalLink className="w-3 h-3 text-slate-400" />
+                        <span>Sign in via Google redirect page</span>
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="text-center pt-3 border-t border-slate-100">
+                    <span className="text-xs text-slate-500">Don't have an account? </span>
+                    <button
+                      type="button"
+                      onClick={() => { setMode('register'); setError(null); }}
+                      className="text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                    >
+                      Create New Customer Account
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* B. CUSTOMER SIGN UP FORM */}
+              {mode === 'register' && (
+                <form onSubmit={handleCustomerRegister} className="space-y-3.5">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Full Name
+                    </label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                        <User className="w-4 h-4" />
+                      </div>
+                      <input
+                        type="text"
+                        required
+                        value={regName}
+                        onChange={(e) => setRegName(e.target.value)}
+                        placeholder="John Doe"
+                        className="block w-full pl-9 pr-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-colors text-slate-900"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Email Address
+                    </label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                        <Mail className="w-4 h-4" />
+                      </div>
+                      <input
+                        type="email"
+                        required
+                        value={regEmail}
+                        onChange={(e) => setRegEmail(e.target.value)}
+                        placeholder="name@company.com"
+                        className="block w-full pl-9 pr-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-colors text-slate-900"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Phone Number (Optional)
+                    </label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                        <Phone className="w-4 h-4" />
+                      </div>
+                      <input
+                        type="tel"
+                        value={regPhone}
+                        onChange={(e) => setRegPhone(e.target.value)}
+                        placeholder="+1 (555) 000-0000"
+                        className="block w-full pl-9 pr-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-colors text-slate-900"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Password
+                    </label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                        <Lock className="w-4 h-4" />
+                      </div>
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        required
+                        value={regPassword}
+                        onChange={(e) => setRegPassword(e.target.value)}
+                        placeholder="Minimum 6 characters"
+                        className="block w-full pl-9 pr-10 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-colors text-slate-900"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                      >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Confirm Password
+                    </label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                        <Lock className="w-4 h-4" />
+                      </div>
+                      <input
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        required
+                        value={regConfirmPassword}
+                        onChange={(e) => setRegConfirmPassword(e.target.value)}
+                        placeholder="Re-enter password"
+                        className="block w-full pl-9 pr-10 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-colors text-slate-900"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                      >
+                        {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Remember Me */}
+                  <div className="flex items-center text-xs pt-0.5">
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={rememberMe}
+                        onChange={(e) => setRememberMe(e.target.checked)}
+                        className="w-4 h-4 rounded text-blue-600 border-slate-300 focus:ring-blue-500/20"
+                      />
+                      <span>Remember Me on this device</span>
+                    </label>
+                  </div>
+
+                  {/* Sign Up Button */}
+                  <button
+                    type="submit"
+                    disabled={loading || isVerifyingGoogle}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 shadow-sm transition-colors cursor-pointer disabled:opacity-60"
+                  >
+                    {loading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <>
+                        <UserPlus className="w-4 h-4" />
+                        <span>Create Customer Account</span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* OR Divider */}
+                  <div className="relative my-3">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-slate-200" />
+                    </div>
+                    <div className="relative flex justify-center text-[10px] uppercase tracking-wider">
+                      <span className="bg-white px-3 text-slate-400 font-bold">OR</span>
+                    </div>
+                  </div>
+
+                  {/* Continue with Google */}
+                  <button
+                    type="button"
+                    onClick={() => handleGoogleClick('popup')}
+                    disabled={loading || isVerifyingGoogle}
+                    className="w-full flex items-center justify-center gap-3 py-2 px-4 border border-slate-300 rounded-xl bg-white text-xs font-bold text-slate-700 hover:bg-slate-50 hover:border-slate-400 active:scale-[0.99] transition-all cursor-pointer disabled:opacity-60 shadow-xs"
+                  >
+                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                      <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.14z" />
+                      <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z" />
+                      <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z" />
+                      <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z" />
+                    </svg>
+                    <span>Sign up with Google</span>
+                  </button>
+
+                  <div className="text-center pt-2 border-t border-slate-100">
+                    <span className="text-xs text-slate-500">Already have an account? </span>
+                    <button
+                      type="button"
+                      onClick={() => { setMode('login'); setError(null); }}
+                      className="text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                    >
+                      Sign In
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* Hidden GIS anchor container for fallback rendering / one-tap */}
+              <div ref={googleBtnRef} className="hidden" />
             </div>
           )}
 
@@ -559,7 +913,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                 </p>
               </div>
 
-              <form onSubmit={handlePasswordLogin} className="space-y-4">
+              <form onSubmit={handleStaffLogin} className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                     Agent Username / Email
@@ -657,7 +1011,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                 </p>
               </div>
 
-              <form onSubmit={handlePasswordLogin} className="space-y-4">
+              <form onSubmit={handleStaffLogin} className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                     Admin Username / Email
@@ -739,14 +1093,14 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
           )}
 
           {/* ============================================================ */}
-          {/* 4. FORGOT PASSWORD MODE (ADMIN & AGENT ONLY)                 */}
+          {/* 4. FORGOT PASSWORD MODE                                      */}
           {/* ============================================================ */}
           {mode === 'forgot' && (
             <div>
               <div className="mb-6">
                 <h2 className="text-lg font-bold text-slate-900">Reset Password</h2>
                 <p className="text-xs text-slate-500 mt-1">
-                  Enter your registered staff email address to receive password reset instructions.
+                  Enter your registered email address to receive password reset instructions.
                 </p>
               </div>
 
@@ -757,7 +1111,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                     Instructions Dispatched
                   </div>
                   <p>
-                    If a staff account exists for {forgotEmail}, password recovery instructions have been sent.
+                    If an account exists for {forgotEmail}, password recovery instructions have been sent.
                   </p>
                   <div className="pt-2">
                     <button
@@ -772,13 +1126,13 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
               ) : (
                 <form onSubmit={handleForgotSubmit} className="space-y-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">Staff Email Address</label>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Registered Email Address</label>
                     <input
                       type="email"
                       required
                       value={forgotEmail}
                       onChange={(e) => setForgotEmail(e.target.value)}
-                      placeholder="staff@kaira"
+                      placeholder="name@company.com"
                       className="block w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 text-slate-900"
                     />
                   </div>

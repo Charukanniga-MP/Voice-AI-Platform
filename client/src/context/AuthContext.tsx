@@ -6,7 +6,7 @@ interface AuthContextType {
   user: User | null;
   token: string | null;
   isLoading: boolean;
-  login: (email: string, password: string, role?: 'admin' | 'agent') => Promise<User>;
+  login: (email: string, password: string, role?: 'admin' | 'agent' | 'customer') => Promise<User>;
   loginAdmin: (email: string, password: string) => Promise<User>;
   loginAgent: (email: string, password: string) => Promise<User>;
   register: (data: { name: string; email: string; phone?: string; password: string; confirmPassword: string }) => Promise<User>;
@@ -69,7 +69,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(false);
   }, []);
 
-  const login = async (email: string, password: string, role?: 'admin' | 'agent'): Promise<User> => {
+  const login = async (email: string, password: string, role?: 'admin' | 'agent' | 'customer'): Promise<User> => {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
