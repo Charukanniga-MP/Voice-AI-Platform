@@ -56,6 +56,16 @@ app.use('/api/tickets', ticketRoutes);
 app.use('/api/telephony', telephonyRoutes);
 app.use('/api/voice', voiceRoutes);
 
+// Dev-only Team Sync API (Never exposed in production)
+if (process.env.NODE_ENV !== 'production') {
+  try {
+    const devSyncRoutes = (await import('./routes/dev-sync.routes.js')).default;
+    app.use('/api/dev/git', devSyncRoutes);
+  } catch (err) {
+    console.warn('[DevSync] Failed to mount dev-sync routes:', err);
+  }
+}
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({

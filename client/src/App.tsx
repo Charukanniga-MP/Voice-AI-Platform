@@ -5,6 +5,7 @@ import { LoginPage } from './pages/Login.js';
 import { CustomerDashboard } from './pages/CustomerDashboard.js';
 import { AgentDashboard } from './pages/AgentDashboard.js';
 import { AdminDashboard } from './pages/AdminDashboard.js';
+import { DevSyncMonitor } from './components/DevSyncMonitor.js';
 
 const MainApp: React.FC = () => {
   const { user, isLoading } = useAuth();
@@ -40,6 +41,8 @@ const MainApp: React.FC = () => {
         {role === 'agent' && <AgentDashboard />}
         {role === 'admin' && <AdminDashboard />}
       </div>
+
+      <DevSyncMonitor />
     </div>
   );
 };
