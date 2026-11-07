@@ -228,7 +228,7 @@ export const AgentDashboard: React.FC = () => {
       setQueueCount(data.queueLength || 0);
     });
 
-    // 4. Live speech transcript relay (Multilingual)
+    // 4. Live speech transcript relay (Multilingual with deduplication)
     socket.on('call:live_transcript', (data: {
       sender: any;
       senderName: string;
@@ -237,17 +237,24 @@ export const AgentDashboard: React.FC = () => {
       language?: string;
       timestamp: string;
     }) => {
-      setLogs(prev => [
-        ...prev,
-        {
-          id: 'log_' + Date.now() + Math.random(),
-          sender: data.sender,
-          senderName: data.senderName,
-          text: data.text,
-          translation: data.translation,
-          timestamp: new Date().toLocaleTimeString()
-        }
-      ]);
+      setLogs(prev => {
+        const isDuplicate = prev.some(l =>
+          l.sender === data.sender &&
+          l.text.trim().toLowerCase() === data.text.trim().toLowerCase()
+        );
+        if (isDuplicate) return prev;
+        return [
+          ...prev,
+          {
+            id: 'log_' + Date.now() + Math.random(),
+            sender: data.sender,
+            senderName: data.senderName,
+            text: data.text,
+            translation: data.translation,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        ];
+      });
     });
 
     // 5. AI Knowledge Base Answer Suggestion
@@ -487,6 +494,78 @@ export const AgentDashboard: React.FC = () => {
         timestamp: new Date().toLocaleTimeString()
       }
     ]);
+  };
+
+  // Initiate Outbound Voice AI Call to customer's mobile phone
+  const handleStartAiCall = async (targetName: string, targetPhone: string, customerId?: string, preferredLang: string = 'en') => {
+    if (!targetPhone.trim()) {
+      alert('Please provide a valid destination mobile phone number.');
+      return;
+    }
+
+    setCallError(null);
+    setCallDuration(0);
+    setIsMuted(false);
+    setIsCallHeld(false);
+    setCallNotes('');
+
+    const callInitId = 'pstn_ai_' + Date.now();
+    setActiveCall({
+      callId: callInitId,
+      customerName: targetName,
+      customerPhone: targetPhone,
+      customerId,
+      preferredLanguage: preferredLang,
+      isIncomingSupport: false,
+      state: 'initiating',
+      statusText: `Initiating AI Voice Call to ${targetName} (${targetPhone})...`
+    });
+
+    setLogs([
+      {
+        id: 'log_0',
+        sender: 'system',
+        senderName: 'System',
+        text: `Automated KAIRA AI Voice Call initiated to ${targetName} at ${targetPhone} (Language: ${SUPPORTED_LANGUAGES[preferredLang as LanguageCode]?.name || 'English'}).`,
+        timestamp: new Date().toLocaleTimeString()
+      }
+    ]);
+
+    setActiveTab('console');
+
+    try {
+      const res = await fetch('/api/telephony/ai-call', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          customerId: customerId || null,
+          customerName: targetName,
+          customerPhone: targetPhone,
+          language: preferredLang
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to initiate AI call.');
+      }
+
+      if (data.callRecord) {
+        setActiveCall(prev => prev ? {
+          ...prev,
+          callId: data.callRecord.callId,
+          callRecordId: data.callRecord.id,
+          state: 'ringing',
+          statusText: `Ringing ${targetName}'s phone (${targetPhone})...`
+        } : null);
+      }
+    } catch (err: any) {
+      setCallError(err.message || 'Error placing AI call');
+      addLog('system', `Error: ${err.message}`);
+    }
   };
 
   // Initiate Outbound Real Telephone Call (PSTN)
@@ -925,14 +1004,27 @@ export const AgentDashboard: React.FC = () => {
                       </div>
                     </div>
 
-                    <button
-                      onClick={() => handleStartCall(c.name, c.phone || '', c.id)}
-                      disabled={!c.phone || Boolean(activeCall && activeCall.state === 'connected')}
-                      className="w-full py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
-                    >
-                      <PhoneOutgoing className="w-3.5 h-3.5" />
-                      Initiate Voice Call
-                    </button>
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <button
+                        onClick={() => handleStartCall(c.name, c.phone || '', c.id)}
+                        disabled={!c.phone || Boolean(activeCall && activeCall.state === 'connected')}
+                        className="py-2 px-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-[11px] flex items-center justify-center gap-1 shadow-xs transition-colors cursor-pointer"
+                        title="Agent speaks directly to customer phone"
+                      >
+                        <PhoneOutgoing className="w-3.5 h-3.5" />
+                        Agent Call
+                      </button>
+
+                      <button
+                        onClick={() => handleStartAiCall(c.name, c.phone || '', c.id, c.preferredLanguage || 'en')}
+                        disabled={!c.phone || Boolean(activeCall && activeCall.state === 'connected')}
+                        className="py-2 px-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold text-[11px] flex items-center justify-center gap-1 shadow-xs transition-colors cursor-pointer"
+                        title="KAIRA Voice AI automated call to customer phone"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        AI Voice Call
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1194,16 +1286,37 @@ export const AgentDashboard: React.FC = () => {
                         </div>
                       )}
 
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(copilotSuggestion.answer);
-                          alert('Copied suggestion to clipboard!');
-                        }}
-                        className="flex items-center gap-1.5 text-[11px] font-bold text-indigo-700 hover:text-indigo-900 pt-1 cursor-pointer"
-                      >
-                        <Copy className="w-3 h-3" />
-                        Copy talking point
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <button
+                          onClick={() => {
+                            voiceService.speak(copilotSuggestion.answer, undefined, copilotSuggestion.language);
+                            if (activeCall) {
+                              const socket = getSocket();
+                              socket.emit('call:live_speech', {
+                                callId: activeCall.callId,
+                                sender: 'agent',
+                                senderName: `${user?.name || 'Agent'} (AI Voice)`,
+                                text: copilotSuggestion.answer,
+                                language: copilotSuggestion.language
+                              });
+                            }
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold shadow-xs transition-colors cursor-pointer"
+                        >
+                          <Volume2 className="w-3.5 h-3.5" />
+                          Speak to Call
+                        </button>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(copilotSuggestion.answer);
+                            alert('Copied suggestion to clipboard!');
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold transition-colors cursor-pointer"
+                        >
+                          <Copy className="w-3 h-3" />
+                          Copy
+                        </button>
+                      </div>
                     </div>
                   )}
 

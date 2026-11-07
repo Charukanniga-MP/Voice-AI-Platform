@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { telephonyService } from '../services/telephony.js';
+import { translationService } from '../services/translation.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { prisma } from '../db.js';
 
@@ -135,6 +136,235 @@ router.post('/status-callback', async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error('[Telephony Webhook: Status] Error:', err);
     res.status(500).send('Error');
+  }
+});
+
+// 4A. Voice AI Outbound Telephone Call
+router.post('/ai-call', authenticate, requireRole(['agent', 'admin']), async (req: Request, res: Response) => {
+  try {
+    const { customerId, customerName, customerPhone, language } = req.body;
+    if (!customerPhone) {
+      res.status(400).json({ error: 'Customer phone number is required.' });
+      return;
+    }
+
+    const cleanPhone = customerPhone.trim();
+    const callLang = language || 'en';
+    const callId = 'pstn_ai_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+
+    const callRecord = await prisma.callRecord.create({
+      data: {
+        callId,
+        providerCallSid: callId,
+        customerId: customerId || null,
+        customerName: customerName || 'Mobile Customer',
+        customerPhone: cleanPhone,
+        agentId: req.user!.id,
+        agentName: req.user!.name,
+        type: 'ai_voice',
+        direction: 'outgoing',
+        status: 'ringing',
+        language: callLang,
+        startTime: new Date(),
+        providerName: 'twilio'
+      }
+    });
+
+    const io = req.app.get('io');
+    if (io) {
+      io.to('role:agent').to('role:admin').emit('call:status_changed', {
+        callId,
+        status: 'ringing'
+      });
+    }
+
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const result = await telephonyService.initiateOutboundAiCall(cleanPhone, customerName || 'Customer', callLang, baseUrl);
+
+    if (result.success && result.callSid) {
+      await prisma.callRecord.update({
+        where: { id: callRecord.id },
+        data: { providerCallSid: result.callSid }
+      });
+    }
+
+    res.json({
+      success: true,
+      callId,
+      callRecord,
+      telephonyResult: result
+    });
+  } catch (err: any) {
+    console.error('[AI Telephony Call Error]', err);
+    res.status(500).json({ error: err.message || 'Failed to initiate outbound AI phone call.' });
+  }
+});
+
+// 4B. Voice AI Dialogue Entry Point (TwiML)
+router.all('/ai-dialogue', async (req: Request, res: Response) => {
+  try {
+    const lang = (req.query.lang as string) || (req.body?.lang as string) || 'en';
+    const twiml = await telephonyService.generateAiGreetingTwiML(lang);
+    res.type('text/xml');
+    res.send(twiml);
+  } catch (err: any) {
+    console.error('[AI Dialogue Error]', err);
+    res.type('text/xml');
+    res.send('<Response><Say>Welcome to KAIRA Technologies. Please ask your question.</Say><Gather input="speech" action="/api/telephony/process-speech"/></Response>');
+  }
+});
+
+// 4C. Real-Time Speech Processing & Grounded Answer Webhook
+router.post('/process-speech', async (req: Request, res: Response) => {
+  try {
+    const { SpeechResult, CallSid, From, To } = req.body;
+    const queryLang = (req.query.lang as string) || 'en';
+    const speech = (SpeechResult || '').trim();
+
+    console.log(`[Telephony Speech] Received speech from ${From} (CallSid: ${CallSid}): "${speech}"`);
+
+    // Find active call record
+    let callRecord = await prisma.callRecord.findFirst({
+      where: {
+        OR: [
+          { providerCallSid: CallSid },
+          { customerPhone: From },
+          { customerPhone: To }
+        ]
+      },
+      orderBy: { startTime: 'desc' }
+    });
+
+    const callLang = callRecord?.language || queryLang || 'en';
+    const io = req.app.get('io');
+
+    if (!speech) {
+      const promptText = callLang === 'ta' ? 'தயவுசெய்து உங்கள் கேள்வியைக் கேளுங்கள்.' :
+        callLang === 'te' ? 'దయచేసి మీ ప్రశ్నను అడగండి.' :
+        callLang === 'ml' ? 'ദയവായി നിങ്ങളുടെ ചോദ്യം ചോദിക്കുക.' :
+        callLang === 'hi' ? 'कृपया अपना प्रश्न पूछें।' :
+        'Please state your question.';
+
+      const twiml = telephonyService.generateAiResponseTwiML(promptText, callLang, false);
+      res.type('text/xml');
+      res.send(twiml);
+      return;
+    }
+
+    // 1. Broadcast customer speech transcript immediately via Socket.io
+    if (callRecord) {
+      await prisma.callTranscript.create({
+        data: {
+          callRecordId: callRecord.id,
+          sender: 'customer',
+          senderName: callRecord.customerName,
+          text: speech,
+          language: callLang
+        }
+      });
+    }
+
+    if (io && callRecord) {
+      io.to(`call:${callRecord.callId}`).to('role:agent').to('role:admin').emit('call:live_transcript', {
+        callId: callRecord.callId,
+        sender: 'customer',
+        senderName: callRecord.customerName,
+        text: speech,
+        language: callLang,
+        timestamp: new Date()
+      });
+    }
+
+    // 2. Query approved Knowledge Base strictly
+    const aiResult = await translationService.getAiAnswerSuggestion(speech, callLang);
+
+    if (aiResult.isGrounded && aiResult.answer) {
+      // Grounded answer found in KB
+      if (callRecord) {
+        await prisma.callTranscript.create({
+          data: {
+            callRecordId: callRecord.id,
+            sender: 'ai',
+            senderName: 'KAIRA AI',
+            text: aiResult.answer,
+            language: aiResult.language
+          }
+        });
+      }
+
+      if (io && callRecord) {
+        io.to(`call:${callRecord.callId}`).to('role:agent').to('role:admin').emit('call:live_transcript', {
+          callId: callRecord.callId,
+          sender: 'ai',
+          senderName: 'KAIRA AI',
+          text: aiResult.answer,
+          language: aiResult.language,
+          timestamp: new Date()
+        });
+      }
+
+      // Customer hears the AI answer spoken directly through their phone
+      const twiml = telephonyService.generateAiResponseTwiML(aiResult.answer, aiResult.language, false);
+      res.type('text/xml');
+      res.send(twiml);
+    } else {
+      // Zero Hallucination: Not in KB -> trigger Admin transfer
+      console.log(`[Telephony Speech] Query not in approved KB: "${speech}". Escalating to Admin.`);
+
+      if (callRecord) {
+        await prisma.callRecord.update({
+          where: { id: callRecord.id },
+          data: {
+            transferred: true,
+            transferReason: `Unanswered: "${speech}"`,
+            customerQuestion: speech,
+            type: 'admin_transfer'
+          }
+        });
+
+        const transferReq = await prisma.callTransferRequest.create({
+          data: {
+            callRecordId: callRecord.id,
+            customerId: callRecord.customerId,
+            customerName: callRecord.customerName,
+            customerPhone: callRecord.customerPhone,
+            question: speech,
+            reason: 'Information unavailable in approved Knowledge Base',
+            status: 'ringing'
+          }
+        });
+
+        if (io) {
+          io.to('role:admin').emit('transfer:incoming', {
+            transferId: transferReq.id,
+            callId: callRecord.callId,
+            callRecordId: callRecord.id,
+            customerName: callRecord.customerName,
+            customerPhone: callRecord.customerPhone,
+            question: speech,
+            reason: 'Information unavailable in approved Knowledge Base',
+            language: callLang,
+            createdAt: transferReq.createdAt
+          });
+        }
+      }
+
+      const fallbackText = aiResult.answer || (
+        callLang === 'ta' ? 'இதைப் பற்றிய சரிபார்க்கப்பட்ட தகவல் என்னிடம் இல்லை. நிர்வாகியுடன் உங்களை இணைக்கிறேன்.' :
+        callLang === 'te' ? 'నా దగ్గర దీని గురించి ధృవీకరించబడిన సమాచారం లేదు. నేను మిమ్మల్ని అడ్మిన్‌తో కనెక్ట్ చేస్తాను.' :
+        callLang === 'ml' ? 'ഇതിനെക്കുറിച്ച് സ്ഥിരീകരിച്ച വിവരങ്ങൾ എന്റെ പക്കലില്ല. ഞാൻ നിങ്ങളെ ഒരു അഡ്മിനുമായി ബന്ധിപ്പിക്കാം.' :
+        callLang === 'hi' ? 'मेरे पास इसके बारे में सत्यापित जानकारी नहीं है। मैं आपको एडमिन से जोड़ता हूँ।' :
+        "I don't have verified information about this. Let me connect you to an Admin."
+      );
+
+      const twiml = telephonyService.generateAiResponseTwiML(fallbackText, callLang, true);
+      res.type('text/xml');
+      res.send(twiml);
+    }
+  } catch (err: any) {
+    console.error('[Telephony Speech Error]', err);
+    res.type('text/xml');
+    res.send('<Response><Say>An error occurred. Please hold while we transfer you to an administrator.</Say><Dial><Client>admin</Client></Dial></Response>');
   }
 });
 

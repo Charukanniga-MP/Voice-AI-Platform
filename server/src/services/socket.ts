@@ -660,13 +660,35 @@ export function initSocketServer(io: SocketIOServer) {
           callId: data.callId,
           greeting,
           status: 'active',
-          language: callLang
+          language: callLang,
+          audioUrl: `/api/voice/tts?text=${encodeURIComponent(greeting)}&lang=${callLang}`
         });
 
         io.to('role:admin').to('role:agent').emit('call:status_changed', { callId: data.callId, status: 'active' });
       } catch (err) {
         console.error('[Call] Error in call:start:', err);
         socket.emit('call:error', { message: 'Could not start call.' });
+      }
+    });
+
+    // 7B. Change language during active call
+    socket.on('call:change_language', async (data: { callId: string; language: string }) => {
+      try {
+        const normLang = (data.language || 'en').toLowerCase().slice(0, 2);
+        console.log(`[CallLanguage] Changing language for call ${data.callId} to: ${normLang}`);
+
+        await prisma.callRecord.updateMany({
+          where: { callId: data.callId },
+          data: { language: normLang }
+        });
+
+        io.to(`call:${data.callId}`).emit('call:language_changed', {
+          callId: data.callId,
+          language: normLang,
+          languageName: translationService.getLanguageName(normLang)
+        });
+      } catch (err) {
+        console.error('[CallLanguage] Error updating language:', err);
       }
     });
 
@@ -737,16 +759,38 @@ export function initSocketServer(io: SocketIOServer) {
             });
           }
 
-          let fallbackNotice = FALLBACK_MESSAGE;
-          if (callLang !== 'en') {
-            fallbackNotice = await translationService.translateText(fallbackNotice, callLang, 'en');
+          let fallbackNotice = response.answer || FALLBACK_MESSAGE;
+          const respLang = response.language || callLang;
+          if (respLang !== 'en' && !response.answer) {
+            fallbackNotice = await translationService.translateText(fallbackNotice, respLang, 'en');
           }
+
+          // Record fallback in DB transcript
+          await prisma.callTranscript.create({
+            data: {
+              callRecordId: call.id,
+              sender: 'ai',
+              senderName: 'KAIRA AI',
+              text: fallbackNotice,
+              language: respLang
+            }
+          });
 
           socket.emit('call:ai_response', {
             answer: fallbackNotice,
             isTransferring: true,
             transferId: transferReq.id,
-            language: callLang
+            language: respLang,
+            audioUrl: `/api/voice/tts?text=${encodeURIComponent(fallbackNotice)}&lang=${respLang}`
+          });
+
+          // Broadcast to call participants
+          io.to(`call:${data.callId}`).emit('call:live_transcript', {
+            sender: 'ai',
+            senderName: 'KAIRA AI',
+            text: fallbackNotice,
+            language: respLang,
+            timestamp: new Date()
           });
 
           // Broadcast transfer alert to admins
@@ -760,10 +804,11 @@ export function initSocketServer(io: SocketIOServer) {
             question: queryText,
             reason: 'Information unavailable in approved Knowledge Base',
             duration: data.duration || 0,
-            language: callLang,
+            language: respLang,
             createdAt: transferReq.createdAt
           });
         } else {
+          const respLang = response.language || callLang;
           const aiText = response.answer || FALLBACK_MESSAGE;
           // Record AI's response in transcript
           await prisma.callTranscript.create({
@@ -772,7 +817,7 @@ export function initSocketServer(io: SocketIOServer) {
               sender: 'ai',
               senderName: 'KAIRA AI',
               text: aiText,
-              language: callLang
+              language: respLang
             }
           });
 
@@ -780,7 +825,17 @@ export function initSocketServer(io: SocketIOServer) {
             answer: aiText,
             isTransferring: false,
             sources: response.sources,
-            language: callLang
+            language: respLang,
+            audioUrl: `/api/voice/tts?text=${encodeURIComponent(aiText)}&lang=${respLang}`
+          });
+
+          // Broadcast to call participants
+          io.to(`call:${data.callId}`).emit('call:live_transcript', {
+            sender: 'ai',
+            senderName: 'KAIRA AI',
+            text: aiText,
+            language: respLang,
+            timestamp: new Date()
           });
         }
       } catch (err) {

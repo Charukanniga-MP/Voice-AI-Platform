@@ -70,10 +70,17 @@ export const CustomerDashboard: React.FC = () => {
     voiceService.setLanguage(selectedLanguage);
   }, [selectedLanguage]);
 
-  // Sync language selection with server
+  // Sync language selection with server and active call session
   const handleLanguageChange = async (lang: LanguageCode) => {
     setSelectedLanguage(lang);
     voiceService.setLanguage(lang);
+
+    // If call is active, sync with backend call session in real-time
+    if (callId && callStatus !== 'idle') {
+      const socket = getSocket();
+      socket.emit('call:change_language', { callId, language: lang });
+    }
+
     if (token) {
       try {
         await fetch('/api/auth/preferences', {
@@ -208,25 +215,35 @@ export const CustomerDashboard: React.FC = () => {
     });
 
     // 7. AI response
-    socket.on('call:ai_response', (data: { answer: string; isTransferring: boolean; sources?: any[]; language?: string }) => {
+    socket.on('call:ai_response', (data: { answer: string; isTransferring: boolean; sources?: any[]; language?: string; audioUrl?: string }) => {
       setAiIsSpeaking(true);
       voiceService.stopListening();
 
-      setTranscripts(prev => [
-        ...prev,
-        {
-          id: 't_' + Date.now(),
-          sender: 'ai',
-          senderName: 'KAIRA AI',
-          text: data.answer,
-          timestamp: new Date().toISOString()
-        }
-      ]);
+      setTranscripts(prev => {
+        const isDuplicate = prev.some(t =>
+          t.sender === 'ai' &&
+          t.text.trim().toLowerCase() === data.answer.trim().toLowerCase() &&
+          Math.abs(Date.now() - new Date(t.timestamp).getTime()) < 4000
+        );
+        if (isDuplicate) return prev;
+        return [
+          ...prev,
+          {
+            id: 't_' + Date.now(),
+            sender: 'ai',
+            senderName: 'KAIRA AI',
+            text: data.answer,
+            language: data.language || selectedLanguage,
+            timestamp: new Date().toISOString()
+          }
+        ];
+      });
 
       if (data.isTransferring) {
         setCallStatus('transferring');
       }
 
+      // Play synthesized natural speech in customer's preferred language
       voiceService.speak(data.answer, () => {
         setAiIsSpeaking(false);
         if (!data.isTransferring) {
@@ -262,7 +279,23 @@ export const CustomerDashboard: React.FC = () => {
       }
     });
 
-    // 9. Live human speech transcript relay & translation
+    // 8B. Mid-call language change confirmation
+    socket.on('call:language_changed', (data: { callId: string; language: LanguageCode; languageName: string }) => {
+      setSelectedLanguage(data.language);
+      voiceService.setLanguage(data.language);
+      setTranscripts(prev => [
+        ...prev,
+        {
+          id: 't_' + Date.now(),
+          sender: 'system',
+          senderName: 'System',
+          text: `Conversation language set to ${data.languageName}.`,
+          timestamp: new Date().toISOString()
+        }
+      ]);
+    });
+
+    // 9. Live human speech transcript relay & translation (with deduplication)
     socket.on('call:live_transcript', (data: {
       sender: any;
       senderName: string;
@@ -271,18 +304,26 @@ export const CustomerDashboard: React.FC = () => {
       language?: string;
       timestamp: string;
     }) => {
-      setTranscripts(prev => [
-        ...prev,
-        {
-          id: 't_' + Date.now() + Math.random(),
-          sender: data.sender,
-          senderName: data.senderName,
-          text: data.text,
-          translation: data.translation,
-          language: data.language,
-          timestamp: data.timestamp
-        }
-      ]);
+      setTranscripts(prev => {
+        const isDuplicate = prev.some(t =>
+          t.sender === data.sender &&
+          t.text.trim().toLowerCase() === data.text.trim().toLowerCase() &&
+          Math.abs(Date.now() - new Date(t.timestamp).getTime()) < 4000
+        );
+        if (isDuplicate) return prev;
+        return [
+          ...prev,
+          {
+            id: 't_' + Date.now() + Math.random(),
+            sender: data.sender,
+            senderName: data.senderName,
+            text: data.text,
+            translation: data.translation,
+            language: data.language,
+            timestamp: data.timestamp || new Date().toISOString()
+          }
+        ];
+      });
     });
 
     // 10. Call held & resumed
@@ -305,6 +346,7 @@ export const CustomerDashboard: React.FC = () => {
       socket.off('call:ready');
       socket.off('call:ai_response');
       socket.off('transfer:connected');
+      socket.off('call:language_changed');
       socket.off('call:live_transcript');
       socket.off('call:held');
       socket.off('call:resumed');
@@ -312,27 +354,38 @@ export const CustomerDashboard: React.FC = () => {
     };
   }, [callId, callStatus, user, selectedLanguage]);
 
-  // Speech recognition helper
+  // Speech recognition helper with automatic interruption handling
   const startSpeechRecognition = (activeCallId: string, isHumanCall: boolean = false) => {
     voiceService.setLanguage(selectedLanguage);
     voiceService.startListening((text, isFinal) => {
+      // Interruption: If customer starts speaking, cut off AI speech and indicator
+      setAiIsSpeaking(false);
+
       if (!isFinal) {
         setInterimText(text);
       } else {
         setInterimText('');
         if (!text.trim()) return;
 
-        setTranscripts(prev => [
-          ...prev,
-          {
-            id: 't_' + Date.now(),
-            sender: 'customer',
-            senderName: user?.name || 'Customer',
-            text: text.trim(),
-            language: selectedLanguage,
-            timestamp: new Date().toISOString()
-          }
-        ]);
+        setTranscripts(prev => {
+          const isDup = prev.some(t =>
+            t.sender === 'customer' &&
+            t.text.trim().toLowerCase() === text.trim().toLowerCase() &&
+            Math.abs(Date.now() - new Date(t.timestamp).getTime()) < 3000
+          );
+          if (isDup) return prev;
+          return [
+            ...prev,
+            {
+              id: 't_' + Date.now(),
+              sender: 'customer',
+              senderName: user?.name || 'Customer',
+              text: text.trim(),
+              language: selectedLanguage,
+              timestamp: new Date().toISOString()
+            }
+          ];
+        });
 
         const socket = getSocket();
         if (isHumanCall) {
@@ -359,6 +412,7 @@ export const CustomerDashboard: React.FC = () => {
   // 1. Customer initiates Support Agent Voice Call
   const handleStartAgentCall = async () => {
     try {
+      voiceService.unlockAudio();
       setCallStatus('connecting');
       setDuration(0);
       setTranscripts([]);
@@ -367,6 +421,7 @@ export const CustomerDashboard: React.FC = () => {
 
       // Access microphone
       await webrtcManager.getMicrophoneStream();
+      voiceService.setLanguage(selectedLanguage);
 
       const newCallId = 'kaira_agent_call_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
       setCallId(newCallId);
@@ -389,6 +444,7 @@ export const CustomerDashboard: React.FC = () => {
   // 2. Customer initiates AI Voice Assistant Call
   const handleStartAiCall = async () => {
     try {
+      voiceService.unlockAudio();
       setCallStatus('connecting');
       setDuration(0);
       setTranscripts([]);
@@ -396,6 +452,7 @@ export const CustomerDashboard: React.FC = () => {
       setIsCallHeld(false);
 
       await webrtcManager.getMicrophoneStream();
+      voiceService.setLanguage(selectedLanguage);
 
       const newCallId = 'kaira_ai_call_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
       setCallId(newCallId);

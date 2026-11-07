@@ -1,5 +1,6 @@
 import twilio from 'twilio';
 import { prisma } from '../db.js';
+import { translationService } from './translation.js';
 
 export interface TelephonyStatus {
   configured: boolean;
@@ -9,6 +10,14 @@ export interface TelephonyStatus {
   hasCredentials: boolean;
   message?: string;
 }
+
+export const TWILIO_VOICE_MAP: Record<string, { voice: any; bcp47: string }> = {
+  en: { voice: 'Polly.Aditi', bcp47: 'en-IN' },
+  ta: { voice: 'Google.ta-IN-Standard-A', bcp47: 'ta-IN' },
+  te: { voice: 'Google.te-IN-Standard-A', bcp47: 'te-IN' },
+  ml: { voice: 'Google.ml-IN-Standard-A', bcp47: 'ml-IN' },
+  hi: { voice: 'Polly.Aditi', bcp47: 'hi-IN' }
+};
 
 class TelephonyService {
   private twilioClient: twilio.Twilio | null = null;
@@ -122,6 +131,131 @@ class TelephonyService {
     }, destinationNumber);
 
     return voiceResponse.toString();
+  }
+
+  // Generate Initial Voice AI Greeting & Speech Recognition Gather Loop
+  public async generateAiGreetingTwiML(language: string = 'en', actionUrl: string = '/api/telephony/process-speech'): Promise<string> {
+    const normLang = (language || 'en').toLowerCase().slice(0, 2);
+    const langConfig = TWILIO_VOICE_MAP[normLang] || TWILIO_VOICE_MAP.en;
+    const voiceResponse = new twilio.twiml.VoiceResponse();
+
+    let greeting = "Hello! Welcome to KAIRA. I am your AI voice assistant. How may I help you today?";
+    if (normLang !== 'en') {
+      greeting = await translationService.translateText(greeting, normLang, 'en');
+    }
+
+    // Voice AI Greeting spoken to customer on their mobile phone
+    voiceResponse.say({
+      voice: langConfig.voice,
+      language: langConfig.bcp47 as any
+    }, greeting);
+
+    // Continuous speech gather loop
+    const gather = voiceResponse.gather({
+      input: ['speech'],
+      action: actionUrl,
+      method: 'POST',
+      language: langConfig.bcp47 as any,
+      speechTimeout: 'auto',
+      speechModel: 'experimental_conversations'
+    });
+
+    gather.say({
+      voice: langConfig.voice,
+      language: langConfig.bcp47 as any
+    }, 'Please ask your question.');
+
+    // Fallback if no speech detected
+    voiceResponse.redirect({ method: 'POST' }, actionUrl);
+
+    return voiceResponse.toString();
+  }
+
+  // Generate Voice AI Response TwiML with Speech Synthesis & Next Turn Gather
+  public generateAiResponseTwiML(
+    speechText: string,
+    language: string = 'en',
+    isTransfer = false,
+    actionUrl: string = '/api/telephony/process-speech'
+  ): string {
+    const normLang = (language || 'en').toLowerCase().slice(0, 2);
+    const langConfig = TWILIO_VOICE_MAP[normLang] || TWILIO_VOICE_MAP.en;
+    const voiceResponse = new twilio.twiml.VoiceResponse();
+
+    // The AI Answer spoken through the phone earpiece
+    voiceResponse.say({
+      voice: langConfig.voice,
+      language: langConfig.bcp47 as any
+    }, speechText);
+
+    if (isTransfer) {
+      // Automatic live escalation to Admin / Agent
+      const callerId = process.env.TWILIO_CALLER_ID;
+      const dial = voiceResponse.dial({
+        callerId,
+        timeout: 30,
+        action: '/api/telephony/status-callback'
+      });
+      dial.client('admin');
+    } else {
+      // Continuous dialogue: Gather next customer question
+      const gather = voiceResponse.gather({
+        input: ['speech'],
+        action: actionUrl,
+        method: 'POST',
+        language: langConfig.bcp47 as any,
+        speechTimeout: 'auto',
+        speechModel: 'experimental_conversations'
+      });
+
+      gather.pause({ length: 1 });
+
+      // If customer remains silent, thank them and close
+      voiceResponse.say({
+        voice: langConfig.voice,
+        language: langConfig.bcp47 as any
+      }, 'Thank you for contacting KAIRA Technologies. Have a wonderful day!');
+      voiceResponse.hangup();
+    }
+
+    return voiceResponse.toString();
+  }
+
+  // Initiate an automated Outbound Voice AI Call to customer's mobile phone
+  public async initiateOutboundAiCall(
+    destinationNumber: string,
+    customerName: string,
+    language: string = 'en',
+    baseUrl: string = 'http://localhost:5000'
+  ): Promise<{ success: boolean; callSid?: string; error?: string }> {
+    if (!this.twilioClient) {
+      return { success: false, error: 'Twilio client credentials not configured in server/.env' };
+    }
+
+    const callerId = process.env.TWILIO_CALLER_ID;
+    if (!callerId) {
+      return { success: false, error: 'TWILIO_CALLER_ID not configured in server/.env' };
+    }
+
+    const cleanNumber = destinationNumber.replace(/[^\d+]/g, '');
+    const normLang = (language || 'en').toLowerCase().slice(0, 2);
+
+    try {
+      const call = await this.twilioClient.calls.create({
+        to: cleanNumber,
+        from: callerId,
+        url: `${baseUrl}/api/telephony/ai-dialogue?lang=${normLang}`,
+        statusCallback: `${baseUrl}/api/telephony/status-callback`,
+        statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+        statusCallbackMethod: 'POST'
+      });
+
+      console.log(`[Telephony] Outbound Voice AI call initiated to ${cleanNumber}. SID: ${call.sid}`);
+      return { success: true, callSid: call.sid };
+    } catch (err: any) {
+      console.error('[Telephony] Error initiating outbound Voice AI call:', err);
+      return { success: false, error: err.message };
+    }
   }
 
   // Handle call status webhooks from Twilio

@@ -15,7 +15,16 @@ export interface GroundedResponse {
 }
 
 // Fallback message strictly required by specification
-export const FALLBACK_MESSAGE = "I'm sorry, I couldn't find the information you're looking for. Please hold while I connect you with our Admin.";
+export const FALLBACK_MESSAGE = "I don't have verified information about this. Let me connect you to an Admin.";
+
+const STOP_WORDS = new Set([
+  'the', 'is', 'at', 'which', 'on', 'a', 'an', 'and', 'or', 'but',
+  'in', 'with', 'to', 'for', 'of', 'by', 'from', 'up', 'about',
+  'into', 'over', 'after', 'can', 'you', 'tell', 'me', 'how', 'what',
+  'when', 'where', 'who', 'why', 'does', 'did', 'do', 'will', 'would',
+  'should', 'could', 'are', 'was', 'were', 'been', 'being', 'have',
+  'has', 'had', 'i', 'we', 'they', 'he', 'she', 'it', 'there', 'their'
+]);
 
 class KnowledgeService {
   private openai: OpenAI | null = null;
@@ -26,24 +35,39 @@ class KnowledgeService {
     }
   }
 
-  // Tokenize and clean text for lexical relevance
+  // Tokenize and clean text for lexical relevance (Full Unicode support for all languages)
   private tokenize(text: string): string[] {
     return text
       .toLowerCase()
-      .replace(/[^\w\s]/g, ' ')
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
       .split(/\s+/)
-      .filter(w => w.length > 2);
+      .filter(w => w.length > 1);
+  }
+
+  // Significant tokens excluding common grammatical stopwords
+  private getSignificantTokens(tokens: string[]): string[] {
+    const filtered = tokens.filter(t => !STOP_WORDS.has(t) && t.length > 2);
+    return filtered.length > 0 ? filtered : tokens;
   }
 
   // Calculate similarity between customer query and a KB entry
   private calculateScore(query: string, entry: any): number {
-    const queryTokens = this.tokenize(query);
-    if (queryTokens.length === 0) return 0;
+    const rawTokens = this.tokenize(query);
+    if (rawTokens.length === 0) return 0;
 
+    const significantTokens = this.getSignificantTokens(rawTokens);
     const titleTokens = this.tokenize(entry.title || '');
     const questionTokens = this.tokenize(entry.question || '');
     const contentTokens = this.tokenize(entry.content || '');
     const keywordTokens = this.tokenize(entry.keywords || '');
+
+    // Strict zero-hallucination requirement: At least one significant keyword MUST match title, question, or keywords
+    const hasCoreMatch = significantTokens.some(
+      t => titleTokens.includes(t) || questionTokens.includes(t) || keywordTokens.includes(t)
+    );
+    if (!hasCoreMatch) {
+      return 0;
+    }
 
     let score = 0;
     const queryLower = query.toLowerCase();
@@ -56,16 +80,16 @@ class KnowledgeService {
       score += 0.6;
     }
 
-    // Question match weights heavily
+    // Significant tokens match weights heavily
     let qMatches = 0;
-    for (const token of queryTokens) {
+    for (const token of significantTokens) {
       if (questionTokens.includes(token)) qMatches += 2.0;
-      else if (titleTokens.includes(token)) qMatches += 1.5;
+      else if (titleTokens.includes(token)) qMatches += 1.8;
       else if (keywordTokens.includes(token)) qMatches += 1.5;
       else if (contentTokens.includes(token)) qMatches += 0.8;
     }
 
-    const maxPossible = queryTokens.length * 2.0;
+    const maxPossible = significantTokens.length * 2.0;
     const matchRatio = Math.min(1.0, qMatches / Math.max(1, maxPossible));
     score += matchRatio;
 
