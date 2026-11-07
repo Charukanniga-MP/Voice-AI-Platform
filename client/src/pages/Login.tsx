@@ -57,15 +57,15 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Google Identity Services (GIS) states (for Customer only)
-  const envClientId = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || null;
+  // Google Identity Services (GIS) configuration
+  const envClientId = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '';
   const [isGoogleConfigured, setIsGoogleConfigured] = useState<boolean>(Boolean(envClientId));
-  const [googleClientId, setGoogleClientId] = useState<string | null>(envClientId);
+  const [googleClientId, setGoogleClientId] = useState<string | null>(envClientId || null);
   const [isVerifyingGoogle, setIsVerifyingGoogle] = useState<boolean>(false);
   const [showGoogleSetup, setShowGoogleSetup] = useState<boolean>(false);
 
   // Setup modal state
-  const [setupClientId, setSetupClientId] = useState<string>('');
+  const [setupClientId, setSetupClientId] = useState<string>(envClientId || '');
   const [setupClientSecret, setSetupClientSecret] = useState<string>('');
   const [setupSaving, setSetupSaving] = useState<boolean>(false);
   const [setupSuccess, setSetupSuccess] = useState<string | null>(null);
@@ -78,14 +78,26 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
   const refreshGoogleConfig = async () => {
     try {
       const config = await getGoogleConfig();
-      setIsGoogleConfigured(config.configured);
-      setGoogleClientId(config.clientId);
-      if (config.clientId) {
+      if (config.configured && config.clientId) {
+        setIsGoogleConfigured(true);
+        setGoogleClientId(config.clientId);
         setSetupClientId(config.clientId);
+      } else if (envClientId) {
+        setIsGoogleConfigured(true);
+        setGoogleClientId(envClientId);
+        setSetupClientId(envClientId);
+      } else {
+        setIsGoogleConfigured(false);
+        setGoogleClientId(null);
       }
     } catch {
-      setIsGoogleConfigured(false);
-      setGoogleClientId(null);
+      if (envClientId) {
+        setIsGoogleConfigured(true);
+        setGoogleClientId(envClientId);
+      } else {
+        setIsGoogleConfigured(false);
+        setGoogleClientId(null);
+      }
     }
   };
 
@@ -514,7 +526,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                       <p>Google requires your local browser URL to be registered before allowing sign-in:</p>
                       <div className="pt-0.5">
                         <a
-                          href="https://console.cloud.google.com/apis/credentials/oauthclient/1018334787224-nkk8l415st631mr3isgm0kjidlhp68h0.apps.googleusercontent.com?project=ai-voice-513817"
+                          href={googleClientId ? `https://console.cloud.google.com/apis/credentials/oauthclient/${googleClientId}` : 'https://console.cloud.google.com/apis/credentials'}
                           target="_blank"
                           rel="noreferrer"
                           className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 shadow-xs"
@@ -704,6 +716,10 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                     </div>
                   ) : (
                     <div className="space-y-2.5">
+                      {/* Official Google Identity Services Iframe Button (Auto-rendered when available) */}
+                      <div ref={googleBtnRef} className="w-full flex justify-center empty:hidden" />
+
+                      {/* Official Full-Width Continue with Google Button */}
                       <button
                         type="button"
                         onClick={() => handleGoogleClick('popup')}
@@ -742,16 +758,28 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                     </button>
                   </div>
 
-                  {/* Default Customer Account Shortcut */}
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-                    <span>Demo Customer: <code className="font-mono text-blue-700 font-semibold">customer@kaira</code></span>
-                    <button
-                      type="button"
-                      onClick={() => fillCredentials('customer@kaira', 'kaira@123')}
-                      className="text-blue-600 hover:underline font-semibold cursor-pointer"
-                    >
-                      {t('auth.auto_fill')}
-                    </button>
+                  {/* Default Customer Account Shortcuts */}
+                  <div className="mt-4 pt-3 border-t border-slate-100 space-y-1.5 text-[11px] text-slate-500">
+                    <div className="flex items-center justify-between">
+                      <span>Customer Google Email: <code className="font-mono text-blue-700 font-semibold">raviarun2004@gmail.com</code></span>
+                      <button
+                        type="button"
+                        onClick={() => fillCredentials('raviarun2004@gmail.com', 'kaira@123')}
+                        className="text-blue-600 hover:underline font-semibold cursor-pointer"
+                      >
+                        {t('auth.auto_fill')}
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span>Demo Customer: <code className="font-mono text-blue-700 font-semibold">customer@kaira</code></span>
+                      <button
+                        type="button"
+                        onClick={() => fillCredentials('customer@kaira', 'kaira@123')}
+                        className="text-blue-600 hover:underline font-semibold cursor-pointer"
+                      >
+                        {t('auth.auto_fill')}
+                      </button>
+                    </div>
                   </div>
                 </form>
               )}
@@ -935,8 +963,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                 </form>
               )}
 
-              {/* Hidden GIS anchor container for fallback rendering / one-tap */}
-              <div ref={googleBtnRef} className="hidden" />
+
             </div>
           )}
 
@@ -1256,7 +1283,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-slate-800">Step 1: Open Google Cloud Console</span>
                   <a
-                    href="https://console.cloud.google.com/apis/credentials/oauthclient/1018334787224-nkk8l415st631mr3isgm0kjidlhp68h0.apps.googleusercontent.com?project=ai-voice-513817"
+                    href={googleClientId ? `https://console.cloud.google.com/apis/credentials/oauthclient/${googleClientId}` : 'https://console.cloud.google.com/apis/credentials'}
                     target="_blank"
                     rel="noreferrer"
                     className="text-blue-600 hover:underline flex items-center gap-1 font-semibold"
@@ -1333,7 +1360,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                     <label className="block text-slate-700 font-semibold mb-1">Google OAuth Client Secret (Optional for GIS ID Tokens)</label>
                     <input
                       type="password"
-                      placeholder="e.g. GOCSPX-xxxxxxxxxxxxxxxx"
+                      placeholder="Enter Client Secret from Google Cloud Console"
                       value={setupClientSecret}
                       onChange={(e) => setSetupClientSecret(e.target.value)}
                       className="block w-full px-3 py-2 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 font-mono text-xs text-slate-900"

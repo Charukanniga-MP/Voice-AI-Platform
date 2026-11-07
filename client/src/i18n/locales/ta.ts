@@ -194,3 +194,4 @@ export const ta: Record<TranslationKey, string> = {
   'ai.answering': 'KAIRA அறிவுத் தளத்திலிருந்து பதில் பெறப்படுகிறது...',
   'ai.fallback_transfer': 'உங்களுக்கு மேலும் உதவக்கூடிய நிர்வாகியுடன் உங்களை இணைக்கிறேன்.'
 };
+

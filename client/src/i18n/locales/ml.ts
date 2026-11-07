@@ -194,3 +194,4 @@ export const ml: Record<TranslationKey, string> = {
   'ai.answering': 'KAIRA നോളജ് ബേസിൽ നിന്ന് ഉത്തരം തയ്യാറാക്കുന്നു...',
   'ai.fallback_transfer': 'കൂടുതൽ വിവരങ്ങൾക്കായി നിങ്ങളെ അഡ്മിനിസ്ട്രേറ്ററുമായി ബന്ധിപ്പിക്കുന്നു.'
 };
+

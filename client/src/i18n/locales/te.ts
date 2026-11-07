@@ -194,3 +194,4 @@ export const te: Record<TranslationKey, string> = {
   'ai.answering': 'KAIRA నాలెడ్జ్ బేస్ నుండి సమాధానం రూపొందిస్తోంది...',
   'ai.fallback_transfer': 'మీకు మరింత సహాయం చేయడానికి మిమ్మల్ని ఒక అడ్మినిస్ట్రేటర్‌కు కనెక్ట్ చేస్తున్నాను.'
 };
+

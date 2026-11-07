@@ -194,3 +194,4 @@ export const hi: Record<TranslationKey, string> = {
   'ai.answering': 'KAIRA नॉलेज बेस से उत्तर तैयार किया जा रहा है...',
   'ai.fallback_transfer': 'मैं आपको एक व्यवस्थापक से जोड़ रहा हूं जो आपकी आगे सहायता कर सकते हैं।'
 };
+
