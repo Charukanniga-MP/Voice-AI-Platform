@@ -55,6 +55,50 @@ export async function seedDatabase() {
     console.log('✓ Agent account verified');
   }
 
+  // Check if Customer exists (customer@kaira & raviarun2004@gmail.com)
+  const existingCustomer = await prisma.user.findFirst({
+    where: { email: 'customer@kaira' }
+  });
+  if (!existingCustomer) {
+    await prisma.user.create({
+      data: {
+        name: 'Ravi Arun (Customer)',
+        email: 'customer@kaira',
+        phone: '+1 (555) 789-0123',
+        role: 'customer',
+        passwordHash,
+      }
+    });
+    console.log('✓ Customer account created: customer@kaira');
+  } else {
+    await prisma.user.update({
+      where: { id: existingCustomer.id },
+      data: { passwordHash, role: 'customer' }
+    });
+  }
+
+  // Ensure raviarun2004@gmail.com exists with password so the user can test with their real Google email
+  const existingRavi = await prisma.user.findFirst({
+    where: { email: 'raviarun2004@gmail.com' }
+  });
+  if (!existingRavi) {
+    await prisma.user.create({
+      data: {
+        name: 'raviarun',
+        email: 'raviarun2004@gmail.com',
+        phone: '+1 (555) 999-0001',
+        role: 'customer',
+        passwordHash,
+      }
+    });
+    console.log('✓ Customer account created: raviarun2004@gmail.com');
+  } else {
+    await prisma.user.update({
+      where: { id: existingRavi.id },
+      data: { passwordHash, role: 'customer' }
+    });
+  }
+
   // Seed sample customers if none exist
   const customerCount = await prisma.user.count({
     where: { role: 'customer' }

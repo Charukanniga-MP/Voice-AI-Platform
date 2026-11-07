@@ -11,6 +11,10 @@ interface AuthContextType {
   loginAdmin: (email: string, password: string) => Promise<User>;
   loginAgent: (email: string, password: string) => Promise<User>;
   register: (data: { name: string; email: string; phone?: string; password: string; confirmPassword: string }) => Promise<User>;
+  initiateGoogleLogin: () => Promise<void>;
+  loginWithGoogleIdToken: (idToken: string) => Promise<User>;
+  loginWithGoogleCode: (code: string, redirectUri?: string) => Promise<User>;
+  getGoogleConfig: () => Promise<{ configured: boolean; clientId: string | null }>;
   setSession: (token: string, user: User) => void;
   logout: () => void;
 }
@@ -22,8 +26,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Load session from localStorage on startup
+  // Load session or handle OAuth callback on startup
   useEffect(() => {
+    // Check if URL has OAuth callback params
+    const params = new URLSearchParams(window.location.search);
+    const callbackToken = params.get('token');
+    const callbackUser = params.get('user');
+
+    if (callbackToken && callbackUser) {
+      try {
+        const parsedUser = JSON.parse(decodeURIComponent(callbackUser));
+        setToken(callbackToken);
+        setUser(parsedUser);
+        localStorage.setItem('kaira_token', callbackToken);
+        localStorage.setItem('kaira_user', JSON.stringify(parsedUser));
+        registerSocketUser(parsedUser.id, parsedUser.role, parsedUser.name);
+
+        window.history.replaceState({}, document.title, '/');
+        setIsLoading(false);
+        return;
+      } catch (err) {
+        console.error('Failed to parse OAuth user payload:', err);
+      }
+    }
+
+    // Otherwise load from localStorage
     const savedToken = localStorage.getItem('kaira_token');
     const savedUser = localStorage.getItem('kaira_user');
 
@@ -33,7 +60,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setToken(savedToken);
         setUser(parsedUser);
         registerSocketUser(parsedUser.id, parsedUser.role, parsedUser.name);
-      } catch (err) {
+      } catch {
         localStorage.removeItem('kaira_token');
         localStorage.removeItem('kaira_user');
       }
@@ -74,13 +101,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return login(email, password, 'agent');
   };
 
-  const register = async (formData: {
-    name: string;
-    email: string;
-    phone?: string;
-    password: string;
-    confirmPassword: string;
-  }): Promise<User> => {
+  const register = async (formData: { name: string; email: string; phone?: string; password: string; confirmPassword: string }): Promise<User> => {
     const res = await fetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -99,6 +120,71 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     registerSocketUser(data.user.id, data.user.role, data.user.name);
     return data.user;
+  };
+
+  const getGoogleConfig = async (): Promise<{ configured: boolean; clientId: string | null }> => {
+    try {
+      const res = await fetch('/api/auth/google/config');
+      if (!res.ok) return { configured: false, clientId: null };
+      return await res.json();
+    } catch {
+      return { configured: false, clientId: null };
+    }
+  };
+
+  const loginWithGoogleIdToken = async (idToken: string): Promise<User> => {
+    const res = await fetch('/api/auth/google/verify-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Google authentication failed.');
+    }
+
+    setToken(data.token);
+    setUser(data.user);
+    localStorage.setItem('kaira_token', data.token);
+    localStorage.setItem('kaira_user', JSON.stringify(data.user));
+
+    registerSocketUser(data.user.id, data.user.role, data.user.name);
+    return data.user;
+  };
+
+  const loginWithGoogleCode = async (code: string, redirectUri?: string): Promise<User> => {
+    const res = await fetch('/api/auth/google/code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, redirectUri })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Google code exchange failed.');
+    }
+
+    setToken(data.token);
+    setUser(data.user);
+    localStorage.setItem('kaira_token', data.token);
+    localStorage.setItem('kaira_user', JSON.stringify(data.user));
+
+    registerSocketUser(data.user.id, data.user.role, data.user.name);
+    return data.user;
+  };
+
+  const initiateGoogleLogin = async (): Promise<void> => {
+    const res = await fetch('/api/auth/google/url');
+    const data = await res.json();
+
+    if (data.configured && data.authUrl) {
+      window.location.href = data.authUrl;
+    } else {
+      throw new Error(
+        'Google OAuth 2.0 is not configured on the backend. Please add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to server/.env.'
+      );
+    }
   };
 
   const setSession = (newToken: string, newUser: User) => {
@@ -127,6 +213,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loginAdmin,
         loginAgent,
         register,
+        initiateGoogleLogin,
+        loginWithGoogleIdToken,
+        loginWithGoogleCode,
+        getGoogleConfig,
         setSession,
         logout
       }}
