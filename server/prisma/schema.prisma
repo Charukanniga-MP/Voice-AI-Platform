@@ -127,7 +127,7 @@ model SupportTicket {
   customerEmail  String?
   subject        String
   description    String
-  priority       String   @default("normal")
+  priority       String   @default("medium")
   status         String   @default("open")
   assignedTo     String?
   followUpAt     DateTime?

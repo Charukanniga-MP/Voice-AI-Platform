@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext.js';
 import { getSocket } from '../services/socket.js';
 import { webrtcManager } from '../services/webrtc.js';
 import { voiceService } from '../services/voice.js';
-import { SupportTickets } from './SupportTickets.js';
+import { SupportTickets } from './CustomerIssueManagement.js';
 import {
   User, CallRecord, CallTranscript, CallTransferRequest,
   KnowledgeEntry, KnowledgeDocument, CallStats, LanguageCode, SUPPORTED_LANGUAGES
@@ -777,7 +777,7 @@ export const AdminDashboard: React.FC = () => {
                 }`}
             >
               <MessageSquare className="w-4 h-4" />
-              Support Tickets
+              Customer Issue Management
             </button>
 
             <button

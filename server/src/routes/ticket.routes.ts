@@ -4,7 +4,8 @@ import { authenticate, requireRole } from '../middleware/auth.js';
 
 const router = Router();
 const statuses = ['open', 'in_progress', 'waiting', 'resolved', 'closed'];
-const priorities = ['low', 'normal', 'high', 'urgent'];
+const priorities = ['low', 'medium', 'high'];
+const agents = ['Agent 1', 'Agent 2'];
 
 router.use(authenticate, requireRole(['admin', 'agent']));
 
@@ -29,6 +30,10 @@ router.post('/', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'Invalid ticket priority.' });
       return;
     }
+    if (assignedTo && !agents.includes(assignedTo.trim())) {
+      res.status(400).json({ error: 'Choose Agent 1 or Agent 2.' });
+      return;
+    }
     const ticket = await prisma.supportTicket.create({
       data: {
         customerId: customerId || null,
@@ -36,7 +41,7 @@ router.post('/', async (req: Request, res: Response) => {
         customerEmail: customerEmail?.trim() || null,
         subject: subject.trim(),
         description: description.trim(),
-        priority: priority || 'normal',
+        priority: priority || 'medium',
         assignedTo: assignedTo?.trim() || null,
         followUpAt: followUpAt ? new Date(followUpAt) : null
       }
@@ -57,6 +62,10 @@ router.patch('/:id', async (req: Request, res: Response) => {
     }
     if (priority !== undefined && !priorities.includes(priority)) {
       res.status(400).json({ error: 'Invalid ticket priority.' });
+      return;
+    }
+    if (assignedTo && !agents.includes(assignedTo.trim())) {
+      res.status(400).json({ error: 'Choose Agent 1 or Agent 2.' });
       return;
     }
     const ticket = await prisma.supportTicket.update({
