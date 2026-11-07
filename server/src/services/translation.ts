@@ -123,7 +123,7 @@ export class TranslationService {
     // 1. Handle common conversational pleasantries naturally in customer's language
     const pleasantries = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening', 'who are you', 'how are you'];
     const isEnglishPleasantry = pleasantries.some(p => trimmed.toLowerCase() === p || trimmed.toLowerCase() === p + '!');
-    
+
     // Check if query is a pleasantry in non-English
     let englishQuery = trimmed;
     if (normLang !== 'en') {

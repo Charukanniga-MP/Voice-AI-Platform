@@ -58,7 +58,7 @@ export class VoiceService {
       silentAudio.play().then(() => {
         this.audioUnlocked = true;
         console.log('[VoiceService] Mobile audio pipeline unlocked successfully.');
-      }).catch(() => {});
+      }).catch(() => { });
     } catch {
       // Ignore initial silent play
     }
@@ -156,7 +156,7 @@ export class VoiceService {
     if (this.recognition) {
       try {
         this.recognition.stop();
-      } catch {}
+      } catch { }
     }
   }
 
@@ -268,14 +268,14 @@ export class VoiceService {
         this.currentAudio.pause();
         this.currentAudio.currentTime = 0;
         this.currentAudio.src = '';
-      } catch {}
+      } catch { }
       this.currentAudio = null;
     }
 
     if (this.synth) {
       try {
         this.synth.cancel();
-      } catch {}
+      } catch { }
       this.currentUtterance = null;
     }
   }

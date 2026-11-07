@@ -1,9 +1,58 @@
+# Dependencies
 node_modules/
+*/node_modules/
+
+# Production Builds
 dist/
-uploads/
-*.db
-*.db-journal
+client/dist/
+server/dist/
+dist-ssr/
+
+# Environment Variables & Secrets (NEVER COMMIT)
 .env
 .env.*
 *.env
+server/.env
+server/.env.*
+client/.env
+client/.env.*
 !.env.example
+!server/.env.example
+!client/.env.example
+
+# Local SQLite Databases & Media Uploads
+uploads/
+*.db
+*.db-journal
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Safety Backups from Team Sync Tool
+.git-backups/
+scripts/.backups/
+
+# Editor and IDE configurations
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+
+# Test Coverage
+coverage/
+
+# Local & Temporary Files
+*.local
+*.tmp
+*.bak
+.kilocode/

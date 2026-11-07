@@ -241,9 +241,9 @@ router.post('/process-speech', async (req: Request, res: Response) => {
     if (!speech) {
       const promptText = callLang === 'ta' ? 'தயவுசெய்து உங்கள் கேள்வியைக் கேளுங்கள்.' :
         callLang === 'te' ? 'దయచేసి మీ ప్రశ్నను అడగండి.' :
-        callLang === 'ml' ? 'ദയവായി നിങ്ങളുടെ ചോദ്യം ചോദിക്കുക.' :
-        callLang === 'hi' ? 'कृपया अपना प्रश्न पूछें।' :
-        'Please state your question.';
+          callLang === 'ml' ? 'ദയവായി നിങ്ങളുടെ ചോദ്യം ചോദിക്കുക.' :
+            callLang === 'hi' ? 'कृपया अपना प्रश्न पूछें।' :
+              'Please state your question.';
 
       const twiml = telephonyService.generateAiResponseTwiML(promptText, callLang, false);
       res.type('text/xml');
@@ -351,10 +351,10 @@ router.post('/process-speech', async (req: Request, res: Response) => {
 
       const fallbackText = aiResult.answer || (
         callLang === 'ta' ? 'இதைப் பற்றிய சரிபார்க்கப்பட்ட தகவல் என்னிடம் இல்லை. நிர்வாகியுடன் உங்களை இணைக்கிறேன்.' :
-        callLang === 'te' ? 'నా దగ్గర దీని గురించి ధృవీకరించబడిన సమాచారం లేదు. నేను మిమ్మల్ని అడ్మిన్‌తో కనెక్ట్ చేస్తాను.' :
-        callLang === 'ml' ? 'ഇതിനെക്കുറിച്ച് സ്ഥിരീകരിച്ച വിവരങ്ങൾ എന്റെ പക്കലില്ല. ഞാൻ നിങ്ങളെ ഒരു അഡ്മിനുമായി ബന്ധിപ്പിക്കാം.' :
-        callLang === 'hi' ? 'मेरे पास इसके बारे में सत्यापित जानकारी नहीं है। मैं आपको एडमिन से जोड़ता हूँ।' :
-        "I don't have verified information about this. Let me connect you to an Admin."
+          callLang === 'te' ? 'నా దగ్గర దీని గురించి ధృవీకరించబడిన సమాచారం లేదు. నేను మిమ్మల్ని అడ్మిన్‌తో కనెక్ట్ చేస్తాను.' :
+            callLang === 'ml' ? 'ഇതിനെക്കുറിച്ച് സ്ഥിരീകരിച്ച വിവരങ്ങൾ എന്റെ പക്കലില്ല. ഞാൻ നിങ്ങളെ ഒരു അഡ്മിനുമായി ബന്ധിപ്പിക്കാം.' :
+              callLang === 'hi' ? 'मेरे पास इसके बारे में सत्यापित जानकारी नहीं है। मैं आपको एडमिन से जोड़ता हूँ।' :
+                "I don't have verified information about this. Let me connect you to an Admin."
       );
 
       const twiml = telephonyService.generateAiResponseTwiML(fallbackText, callLang, true);
