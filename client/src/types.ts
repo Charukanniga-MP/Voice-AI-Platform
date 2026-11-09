@@ -58,9 +58,11 @@ export interface CallRecord {
   agentId?: string | null;
   agentName?: string | null;
   adminId?: string | null;
+  adminHandled?: boolean;
   type: 'ai_voice' | 'agent_voice' | 'admin_transfer';
   direction: 'incoming' | 'outgoing';
-  status: 'queued' | 'ringing' | 'active' | 'completed' | 'missed' | 'transferred' | 'rejected';
+  callType?: 'incoming' | 'outgoing' | string;
+  status: 'queued' | 'ringing' | 'active' | 'completed' | 'missed' | 'transferred' | 'rejected' | 'disconnected' | 'failed' | string;
   language?: LanguageCode | string;
   startTime: string;
   endTime?: string | null;
@@ -75,6 +77,13 @@ export interface CallRecord {
   providerCallSid?: string | null;
   providerName?: string | null;
   failureReason?: string | null;
+  quality?: 'excellent' | 'good' | 'poor' | string | null;
+  avgLatency?: number | null;
+  packetLoss?: number | null;
+  jitter?: number | null;
+  reconnectCount?: number;
+  wasReconnected?: boolean;
+  audioQualityScore?: number | null;
   customer?: { id: string; name: string; email: string; phone?: string | null };
   agent?: { id: string; name: string };
   admin?: { id: string; name: string };
@@ -125,5 +134,30 @@ export interface CallStats {
   avgWaitTime?: number; // in seconds
   avgDuration?: number; // in seconds
   callsByLanguage?: Record<string, number>;
+  successfulCalls?: number;
+  failedCalls?: number;
+  disconnectedCalls?: number;
+  reconnectedCalls?: number;
+  avgLatency?: number;
+  avgPacketLoss?: number;
+  qualityBreakdown?: Record<string, number>;
+}
+
+export interface CallQualityStats {
+  totalCalls: number;
+  successfulCalls: number;
+  failedCalls: number;
+  disconnectedCalls: number;
+  reconnectedCalls: number;
+  avgDuration: number;
+  avgLatency: number;
+  avgPacketLoss: number;
+  avgJitter?: number;
+  qualityBreakdown: {
+    excellent: number;
+    good: number;
+    poor: number;
+  };
+  history: CallRecord[];
 }
 

@@ -6,12 +6,15 @@ import { webrtcManager } from '../services/webrtc.js';
 import { voiceService } from '../services/voice.js';
 import { ringtoneService } from '../services/ringtone.js';
 import { SupportTickets } from './SupportTickets.js';
+import { CallQualityIndicator } from '../components/CallQualityIndicator.js';
+import { AudioDeviceModal } from '../components/AudioDeviceModal.js';
+import { audioDeviceManager } from '../services/audioDevice.js';
 import { User, CallRecord, KnowledgeEntry, LanguageCode, SUPPORTED_LANGUAGES } from '../types.js';
 import {
   PhoneCall, PhoneOutgoing, PhoneOff, Mic, MicOff,
   Volume2, VolumeX, Clock, Search, BookOpen,
   Smartphone, AlertCircle, CheckCircle2, Radio, Info,
-  Globe, Sparkles, MessageSquare, Pause, Play, Send, Copy, Users
+  Globe, Sparkles, MessageSquare, Pause, Play, Send, Copy, Users, Settings
 } from 'lucide-react';
 
 interface LogEntry {
@@ -88,6 +91,7 @@ export const AgentDashboard: React.FC = () => {
   // Live logs / transcript
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [callError, setCallError] = useState<string | null>(null);
+  const [showAudioDeviceModal, setShowAudioDeviceModal] = useState(false);
 
   // Embedded Knowledge Base Copilot
   const [copilotSearch, setCopilotSearch] = useState('');
@@ -285,6 +289,46 @@ export const AgentDashboard: React.FC = () => {
       }
     });
 
+    // 7. Automatic call reconnection updates
+    socket.on('call:reconnecting', (data: { callId: string; attempt: number; maxAttempts: number }) => {
+      setLogs(prev => [
+        ...prev,
+        {
+          id: 'recon_' + Date.now(),
+          sender: 'system',
+          senderName: 'System',
+          text: `⚠️ Network connection interrupted. Attempting automatic reconnection (${data.attempt}/${data.maxAttempts})...`,
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]);
+    });
+
+    socket.on('call:reconnected', () => {
+      setLogs(prev => [
+        ...prev,
+        {
+          id: 'recon_ok_' + Date.now(),
+          sender: 'system',
+          senderName: 'System',
+          text: `✅ Network connection restored. Voice stream resumed.`,
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]);
+    });
+
+    socket.on('call:reconnect_failed', (data: { reason: string }) => {
+      setLogs(prev => [
+        ...prev,
+        {
+          id: 'recon_fail_' + Date.now(),
+          sender: 'system',
+          senderName: 'System',
+          text: `❌ Automatic reconnection failed: ${data.reason}.`,
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]);
+    });
+
     return () => {
       socket.off('agent:incoming_call');
       socket.off('agent:call_missed');
@@ -292,12 +336,52 @@ export const AgentDashboard: React.FC = () => {
       socket.off('call:live_transcript');
       socket.off('call:kb_suggestion');
       socket.off('call:ended');
+      socket.off('call:reconnecting');
+      socket.off('call:reconnected');
+      socket.off('call:reconnect_failed');
     };
   }, [incomingCall, activeCall]);
+
+  // WebRTC Manager Callback Hooks
+  useEffect(() => {
+    webrtcManager.setCallbacks({
+      onReconnecting: (attempt, max) => {
+        setLogs(prev => [
+          ...prev,
+          {
+            id: 'webrtc_recon_' + Date.now(),
+            sender: 'system',
+            senderName: 'System',
+            text: `⚠️ WebRTC audio link interrupted. Auto-reconnecting (${attempt}/${max})...`,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        ]);
+      },
+      onReconnected: () => {
+        setLogs(prev => [
+          ...prev,
+          {
+            id: 'webrtc_recon_ok_' + Date.now(),
+            sender: 'system',
+            senderName: 'System',
+            text: `✅ WebRTC audio link re-established.`,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        ]);
+      }
+    });
+  }, []);
 
   // Accept Incoming Customer Call
   const handleAcceptIncomingCall = async () => {
     if (!incomingCall) return;
+
+    // Check microphone permission before accepting
+    const hasMic = await audioDeviceManager.ensureMicrophoneAccess();
+    if (!hasMic) {
+      setShowAudioDeviceModal(true);
+      return;
+    }
 
     // Stop ringtone immediately
     ringtoneService.stop();
@@ -576,6 +660,13 @@ export const AgentDashboard: React.FC = () => {
       return;
     }
 
+    // Check microphone access before placing call
+    const hasMic = await audioDeviceManager.ensureMicrophoneAccess();
+    if (!hasMic) {
+      setShowAudioDeviceModal(true);
+      return;
+    }
+
     setCallError(null);
     setCallDuration(0);
     setIsMuted(false);
@@ -817,6 +908,16 @@ export const AgentDashboard: React.FC = () => {
                 <Users className="w-3.5 h-3.5 text-blue-600" />
                 Queue: {queueCount} Waiting
               </div>
+
+              {/* Audio Device Settings Pill */}
+              <button
+                onClick={() => setShowAudioDeviceModal(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-all cursor-pointer"
+                title="Microphone & Speaker Test / Device Selection"
+              >
+                <Settings className="w-3.5 h-3.5 text-slate-500" />
+                <span>Audio Settings</span>
+              </button>
             </div>
             <p className="text-xs text-slate-500 mt-1">
               Multilingual customer incoming voice calls, WebRTC audio, grounded KB copilot, and PSTN outbound dialer.
@@ -1075,10 +1176,25 @@ export const AgentDashboard: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Timer */}
-                    <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 border border-slate-200 rounded-2xl font-mono text-sm font-black text-slate-800">
-                      <Clock className="w-4 h-4 text-slate-400" />
-                      {formatDuration(callDuration)}
+                    <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+                      {/* Call Quality Indicator */}
+                      <CallQualityIndicator isCallActive={!!activeCall && activeCall.state !== 'ended'} />
+
+                      {/* In-call Audio Settings Button */}
+                      <button
+                        onClick={() => setShowAudioDeviceModal(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 text-slate-700 hover:text-blue-700 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                        title="Configure audio devices"
+                      >
+                        <Settings className="w-3.5 h-3.5 text-slate-500" />
+                        <span className="hidden sm:inline">Audio</span>
+                      </button>
+
+                      {/* Timer */}
+                      <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-slate-50 border border-slate-200 rounded-2xl font-mono text-sm font-black text-slate-800">
+                        <Clock className="w-4 h-4 text-slate-400" />
+                        {formatDuration(callDuration)}
+                      </div>
                     </div>
                   </div>
 
@@ -1482,6 +1598,11 @@ export const AgentDashboard: React.FC = () => {
           <SupportTickets />
         </div>
       )}
+      {/* Audio Device Settings Modal */}
+      <AudioDeviceModal
+        isOpen={showAudioDeviceModal}
+        onClose={() => setShowAudioDeviceModal(false)}
+      />
     </div>
   );
 };

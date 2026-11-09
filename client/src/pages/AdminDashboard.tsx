@@ -6,13 +6,14 @@ import { voiceService } from '../services/voice.js';
 import { SupportTickets } from './SupportTickets.js';
 import {
   User, CallRecord, CallTranscript, CallTransferRequest,
-  KnowledgeEntry, KnowledgeDocument, CallStats, LanguageCode, SUPPORTED_LANGUAGES
+  KnowledgeEntry, KnowledgeDocument, CallStats, CallQualityStats, LanguageCode, SUPPORTED_LANGUAGES
 } from '../types.js';
 import {
   Users, PhoneCall, PhoneIncoming, PhoneOutgoing, PhoneForwarded,
   PhoneOff, Mic, MicOff, Volume2, VolumeX, Clock, Search,
   BookOpen, Plus, Trash2, Edit3, Upload, CheckCircle2, MessageSquare,
-  AlertCircle, ShieldAlert, Eye, Headphones, Radio, RefreshCw, Globe
+  AlertCircle, ShieldAlert, Eye, Headphones, Radio, RefreshCw, Globe,
+  Activity, Wifi, WifiOff, Signal, Zap, AlertTriangle, XCircle, BarChart3, Sliders, ShieldCheck
 } from 'lucide-react';
 
 // Pure deduplication utility function
@@ -33,7 +34,7 @@ export const AdminDashboard: React.FC = () => {
   const { user, token } = useAuth();
 
   // Active navigation section
-  const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'agents' | 'calls' | 'transfers' | 'knowledge' | 'tickets'>('overview');
+  const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'agents' | 'calls' | 'transfers' | 'knowledge' | 'tickets' | 'quality'>('overview');
 
   // Stats state
   const [stats, setStats] = useState<CallStats>({
@@ -134,6 +135,13 @@ export const AdminDashboard: React.FC = () => {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadTitle, setUploadTitle] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+
+  // Section G: Call Quality Monitoring State
+  const [qualityStats, setQualityStats] = useState<CallQualityStats | null>(null);
+  const [loadingQuality, setLoadingQuality] = useState(false);
+  const [qualityFilter, setQualityFilter] = useState<'all' | 'excellent' | 'good' | 'poor' | 'reconnected' | 'disconnected' | 'failed'>('all');
+  const [qualitySearch, setQualitySearch] = useState('');
+  const [selectedQualityCall, setSelectedQualityCall] = useState<CallRecord | null>(null);
 
   // Auto-scroll transcript
   const transcriptEndRef = useRef<HTMLDivElement>(null);
@@ -278,6 +286,25 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  // Fetch Call Quality Stats & Telemetry
+  const fetchQualityStats = async () => {
+    if (!token) return;
+    setLoadingQuality(true);
+    try {
+      const res = await fetch('/api/calls/quality/stats', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setQualityStats(data);
+      }
+    } catch (err) {
+      console.error('Failed to load call quality stats:', err);
+    } finally {
+      setLoadingQuality(false);
+    }
+  };
+
   // Initial stats load
   useEffect(() => {
     fetchStats();
@@ -291,6 +318,7 @@ export const AdminDashboard: React.FC = () => {
     if (activeSection === 'calls') fetchCalls();
     if (activeSection === 'transfers') fetchTransfers();
     if (activeSection === 'knowledge') fetchKnowledge();
+    if (activeSection === 'quality') fetchQualityStats();
   }, [activeSection, token, customerSearch, agentSearch, callFilter, callSearch, kbCategory, kbSearch]);
 
   // Socket setup with clean teardown
@@ -752,6 +780,17 @@ export const AdminDashboard: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setActiveSection('quality')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'quality'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                }`}
+            >
+              <Activity className="w-4 h-4" />
+              Call Quality & Reliability
+            </button>
+
+            <button
               onClick={() => setActiveSection('transfers')}
               className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'transfers'
                 ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
@@ -985,7 +1024,7 @@ export const AdminDashboard: React.FC = () => {
             </div>
 
             {/* Quick Navigation Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <div
                 onClick={() => setActiveSection('transfers')}
                 className="p-6 rounded-3xl bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 cursor-pointer hover:shadow-md transition-all space-y-3"
@@ -1022,6 +1061,19 @@ export const AdminDashboard: React.FC = () => {
                 <h3 className="font-bold text-slate-900 text-sm">Agent Management</h3>
                 <p className="text-xs text-slate-600">
                   Provision and manage human Support Agents handling customer outbound and escalated voice calls.
+                </p>
+              </div>
+
+              <div
+                onClick={() => setActiveSection('quality')}
+                className="p-6 rounded-3xl bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-200 cursor-pointer hover:shadow-md transition-all space-y-3"
+              >
+                <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-bold">
+                  <Activity className="w-5 h-5" />
+                </div>
+                <h3 className="font-bold text-slate-900 text-sm">Call Quality & Reliability</h3>
+                <p className="text-xs text-slate-600">
+                  Monitor live network latency, packet loss, automatic reconnection telemetry, and audio performance.
                 </p>
               </div>
             </div>
@@ -1775,6 +1827,408 @@ export const AdminDashboard: React.FC = () => {
           </div>
         )}
 
+        {/* SECTION G: CALL QUALITY MONITORING */}
+        {activeSection === 'quality' && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                    <Activity className="w-5 h-5" />
+                  </div>
+                  <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Call Quality & Reliability Monitoring</h1>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Live WebRTC audio telemetry, round-trip latency, packet loss, jitter, automatic reconnection tracking, and voice quality performance.
+                </p>
+              </div>
+              <button
+                onClick={fetchQualityStats}
+                disabled={loadingQuality}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 shadow-2xs cursor-pointer transition-colors"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingQuality ? 'animate-spin text-emerald-600' : ''}`} />
+                {loadingQuality ? 'Refreshing...' : 'Refresh Telemetry'}
+              </button>
+            </div>
+
+            {/* 6 Key Quality Metric Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+              {/* 1. Successful Calls */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Successful Calls</span>
+                  <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <CheckCircle2 className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-2xl font-black text-slate-900">
+                  {qualityStats?.successfulCalls ?? 0}
+                </div>
+                <p className="text-[11px] text-emerald-600 font-semibold">
+                  {qualityStats?.totalCalls
+                    ? `${Math.round(((qualityStats.successfulCalls) / qualityStats.totalCalls) * 100)}% completion rate`
+                    : '100% completion rate'}
+                </p>
+              </div>
+
+              {/* 2. Failed Calls */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Failed Calls</span>
+                  <div className="w-7 h-7 rounded-lg bg-red-50 text-red-600 flex items-center justify-center">
+                    <XCircle className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-2xl font-black text-slate-900">
+                  {qualityStats?.failedCalls ?? 0}
+                </div>
+                <p className="text-[11px] text-red-500 font-semibold">Carrier / connection aborts</p>
+              </div>
+
+              {/* 3. Disconnected Calls */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Disconnected</span>
+                  <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+                    <WifiOff className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-2xl font-black text-slate-900">
+                  {qualityStats?.disconnectedCalls ?? 0}
+                </div>
+                <p className="text-[11px] text-amber-600 font-semibold">Network interruptions</p>
+              </div>
+
+              {/* 4. Reconnected Calls */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Reconnected</span>
+                  <div className="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                    <RefreshCw className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-2xl font-black text-slate-900">
+                  {qualityStats?.reconnectedCalls ?? 0}
+                </div>
+                <p className="text-[11px] text-indigo-600 font-semibold">Automatic ICE recovery</p>
+              </div>
+
+              {/* 5. Average Duration */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Avg Duration</span>
+                  <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+                    <Clock className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-2xl font-black text-slate-900 font-mono">
+                  {formatDuration(qualityStats?.avgDuration ?? 0)}
+                </div>
+                <p className="text-[11px] text-slate-400">Active talk conversation</p>
+              </div>
+
+              {/* 6. Avg Latency & Loss */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Avg Latency & Loss</span>
+                  <div className="w-7 h-7 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center">
+                    <Signal className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-2xl font-black text-slate-900">
+                  {qualityStats?.avgLatency ?? 0} <span className="text-xs font-normal text-slate-500">ms RTT</span>
+                </div>
+                <p className="text-[11px] text-slate-500 font-mono">
+                  Loss: <span className="font-bold text-slate-700">{qualityStats?.avgPacketLoss ?? 0}%</span> • Jitter: <span className="font-bold text-slate-700">{qualityStats?.avgJitter ?? 0}ms</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Quality Distribution Breakdown */}
+            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Audio Connection Quality Distribution</h3>
+                  <p className="text-xs text-slate-500">Real-time breakdown of estimated ITU-T G.107 VoIP MOS ratings across all voice sessions</p>
+                </div>
+                <div className="flex items-center gap-4 text-xs">
+                  <span className="flex items-center gap-1.5 font-semibold text-emerald-700">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                    Excellent ({qualityStats?.qualityBreakdown?.excellent ?? 0})
+                  </span>
+                  <span className="flex items-center gap-1.5 font-semibold text-blue-700">
+                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                    Good ({qualityStats?.qualityBreakdown?.good ?? 0})
+                  </span>
+                  <span className="flex items-center gap-1.5 font-semibold text-amber-700">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                    Poor ({qualityStats?.qualityBreakdown?.poor ?? 0})
+                  </span>
+                </div>
+              </div>
+
+              {/* Progress Bar */}
+              {(() => {
+                const totalBreakdown =
+                  (qualityStats?.qualityBreakdown?.excellent || 0) +
+                  (qualityStats?.qualityBreakdown?.good || 0) +
+                  (qualityStats?.qualityBreakdown?.poor || 0);
+                const excPct = totalBreakdown > 0 ? ((qualityStats?.qualityBreakdown?.excellent || 0) / totalBreakdown) * 100 : 70;
+                const goodPct = totalBreakdown > 0 ? ((qualityStats?.qualityBreakdown?.good || 0) / totalBreakdown) * 100 : 25;
+                const poorPct = totalBreakdown > 0 ? ((qualityStats?.qualityBreakdown?.poor || 0) / totalBreakdown) * 100 : 5;
+
+                return (
+                  <div className="space-y-2">
+                    <div className="h-4 w-full bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
+                      <div
+                        style={{ width: `${excPct}%` }}
+                        className="bg-emerald-500 h-full transition-all duration-500"
+                        title={`Excellent: ${Math.round(excPct)}%`}
+                      />
+                      <div
+                        style={{ width: `${goodPct}%` }}
+                        className="bg-blue-500 h-full transition-all duration-500"
+                        title={`Good: ${Math.round(goodPct)}%`}
+                      />
+                      <div
+                        style={{ width: `${poorPct}%` }}
+                        className="bg-amber-500 h-full transition-all duration-500"
+                        title={`Poor: ${Math.round(poorPct)}%`}
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 text-xs">
+                      <div className="p-3 rounded-2xl bg-emerald-50/60 border border-emerald-100">
+                        <div className="font-bold text-emerald-800">🟢 Excellent Quality (MOS ≥ 4.0)</div>
+                        <p className="text-[11px] text-emerald-700 mt-0.5">Latency &lt; 100ms, Packet Loss &lt; 1%, Jitter &lt; 20ms. Crisp, studio-clear two-way audio.</p>
+                      </div>
+                      <div className="p-3 rounded-2xl bg-blue-50/60 border border-blue-100">
+                        <div className="font-bold text-blue-800">🔵 Good Quality (MOS 3.5 - 4.0)</div>
+                        <p className="text-[11px] text-blue-700 mt-0.5">Latency 100-200ms, Packet Loss &lt; 2.5%. Normal natural dialogue with slight compression.</p>
+                      </div>
+                      <div className="p-3 rounded-2xl bg-amber-50/60 border border-amber-100">
+                        <div className="font-bold text-amber-800">🔴 Poor Quality (MOS &lt; 3.5)</div>
+                        <p className="text-[11px] text-amber-700 mt-0.5">Latency &gt; 200ms or Packet Loss &gt; 2.5%. Potential jitter buffers, audio cutouts, or auto-reconnections.</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Call Quality History Table & Filters */}
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden space-y-4 p-6">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Call Quality & Reliability History</h3>
+                  <p className="text-xs text-slate-500">Detailed historical record of live voice sessions with real-time network metrics and reconnection events</p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Search */}
+                  <div className="relative min-w-[240px]">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                    <input
+                      type="text"
+                      placeholder="Search customer, phone, or agent..."
+                      value={qualitySearch}
+                      onChange={(e) => setQualitySearch(e.target.value)}
+                      className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500/20 text-slate-900"
+                    />
+                  </div>
+
+                  {/* Filter Pills */}
+                  <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl text-xs font-semibold overflow-x-auto">
+                    {(['all', 'excellent', 'good', 'poor', 'reconnected', 'disconnected', 'failed'] as const).map((filterKey) => (
+                      <button
+                        key={filterKey}
+                        onClick={() => setQualityFilter(filterKey)}
+                        className={`px-3 py-1 rounded-lg capitalize transition-all cursor-pointer ${qualityFilter === filterKey
+                            ? 'bg-white text-slate-900 font-bold shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                      >
+                        {filterKey}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Table */}
+              {(() => {
+                const historyList = (qualityStats?.history || []).filter(call => {
+                  if (qualityFilter === 'excellent' && call.quality !== 'excellent') return false;
+                  if (qualityFilter === 'good' && call.quality !== 'good') return false;
+                  if (qualityFilter === 'poor' && call.quality !== 'poor') return false;
+                  if (qualityFilter === 'reconnected' && !call.wasReconnected && (!call.reconnectCount || call.reconnectCount === 0)) return false;
+                  if (qualityFilter === 'disconnected' && call.status !== 'disconnected') return false;
+                  if (qualityFilter === 'failed' && call.status !== 'failed') return false;
+
+                  if (qualitySearch.trim()) {
+                    const q = qualitySearch.toLowerCase();
+                    const matchName = (call.customerName || '').toLowerCase().includes(q);
+                    const matchPhone = (call.customerPhone || '').toLowerCase().includes(q);
+                    const matchAgent = (call.agentName || '').toLowerCase().includes(q);
+                    const matchId = (call.callId || call.id || '').toLowerCase().includes(q);
+                    return matchName || matchPhone || matchAgent || matchId;
+                  }
+                  return true;
+                });
+
+                if (loadingQuality) {
+                  return <div className="py-12 text-center text-xs text-slate-500">Loading call quality records...</div>;
+                }
+
+                if (historyList.length === 0) {
+                  return (
+                    <div className="py-12 text-center space-y-2">
+                      <Activity className="w-8 h-8 text-slate-300 mx-auto" />
+                      <p className="text-xs text-slate-400">No call quality records match the selected filter.</p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-slate-400 font-semibold bg-slate-50/70">
+                          <th className="py-3 px-4">Customer & Call</th>
+                          <th className="py-3 px-4">Agent / Handler</th>
+                          <th className="py-3 px-4">Date & Duration</th>
+                          <th className="py-3 px-4">Quality Rating</th>
+                          <th className="py-3 px-4">Latency (RTT)</th>
+                          <th className="py-3 px-4">Packet Loss & Jitter</th>
+                          <th className="py-3 px-4">Reconnections</th>
+                          <th className="py-3 px-4">Call Status</th>
+                          <th className="py-3 px-4 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        {historyList.map((call) => {
+                          const isExcellent = call.quality === 'excellent';
+                          const isGood = call.quality === 'good';
+                          const isPoor = call.quality === 'poor';
+
+                          return (
+                            <tr key={call.id} className="hover:bg-slate-50/80 transition-colors">
+                              {/* Customer & Call */}
+                              <td className="py-3 px-4">
+                                <div className="font-bold text-slate-900">{call.customerName || 'Registered Customer'}</div>
+                                <div className="text-[11px] text-slate-500 font-mono">{call.customerPhone || 'WebRTC Call'}</div>
+                                <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-600">
+                                  {call.direction === 'outgoing' || call.callType === 'outgoing' ? 'PSTN Outbound' : call.direction === 'incoming' || call.callType === 'incoming' ? 'Incoming Support' : 'Voice Session'}
+                                </span>
+                              </td>
+
+                              {/* Agent */}
+                              <td className="py-3 px-4">
+                                <div className="font-semibold text-slate-800">{call.agentName || (call.adminId || call.adminHandled ? 'Admin Specialist' : 'KAIRA AI')}</div>
+                                <div className="text-[10px] text-slate-400">{call.language ? `Lang: ${call.language.toUpperCase()}` : 'Default'}</div>
+                              </td>
+
+                              {/* Date & Duration */}
+                              <td className="py-3 px-4 font-mono text-[11px]">
+                                <div>{new Date(call.startTime).toLocaleDateString()}</div>
+                                <div className="text-slate-400">{new Date(call.startTime).toLocaleTimeString()}</div>
+                                <div className="font-bold text-slate-700 mt-0.5">{formatDuration(call.duration)}</div>
+                              </td>
+
+                              {/* Quality Rating */}
+                              <td className="py-3 px-4">
+                                <span
+                                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${isExcellent
+                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                      : isGood
+                                        ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                        : isPoor
+                                          ? 'bg-red-50 text-red-700 border-red-200'
+                                          : 'bg-slate-50 text-slate-700 border-slate-200'
+                                    }`}
+                                >
+                                  <span
+                                    className={`w-1.5 h-1.5 rounded-full ${isExcellent ? 'bg-emerald-500' : isGood ? 'bg-blue-500' : isPoor ? 'bg-red-500' : 'bg-slate-400'
+                                      }`}
+                                  />
+                                  {isExcellent ? 'Excellent' : isGood ? 'Good' : isPoor ? 'Poor' : 'Normal'}
+                                  {call.audioQualityScore ? ` (${call.audioQualityScore.toFixed(1)})` : ''}
+                                </span>
+                              </td>
+
+                              {/* Latency (RTT) */}
+                              <td className="py-3 px-4 font-mono">
+                                <span
+                                  className={`font-bold ${call.avgLatency && call.avgLatency > 200
+                                      ? 'text-red-600'
+                                      : call.avgLatency && call.avgLatency > 100
+                                        ? 'text-amber-600'
+                                        : 'text-emerald-700'
+                                    }`}
+                                >
+                                  {call.avgLatency ? `${Math.round(call.avgLatency)} ms` : '< 50 ms'}
+                                </span>
+                              </td>
+
+                              {/* Packet Loss & Jitter */}
+                              <td className="py-3 px-4 font-mono text-[11px]">
+                                <div>Loss: <span className="font-bold text-slate-800">{call.packetLoss ? `${call.packetLoss.toFixed(1)}%` : '0%'}</span></div>
+                                <div className="text-slate-400">Jitter: {call.jitter ? `${Math.round(call.jitter)}ms` : '0ms'}</div>
+                              </td>
+
+                              {/* Reconnection Status */}
+                              <td className="py-3 px-4">
+                                {call.wasReconnected || (call.reconnectCount && call.reconnectCount > 0) ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                    <RefreshCw className="w-3 h-3 text-indigo-500" />
+                                    Reconnected ({call.reconnectCount || 1}x)
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                                    Stable
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* Status */}
+                              <td className="py-3 px-4">
+                                <span
+                                  className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${call.status === 'completed'
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      : call.status === 'disconnected'
+                                        ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                        : call.status === 'failed'
+                                          ? 'bg-red-50 text-red-700 border border-red-200'
+                                          : 'bg-slate-100 text-slate-700'
+                                    }`}
+                                >
+                                  {call.status}
+                                </span>
+                              </td>
+
+                              {/* Actions */}
+                              <td className="py-3 px-4 text-right">
+                                <button
+                                  onClick={() => setSelectedCallDetails(call)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-50 hover:bg-purple-50 text-slate-700 hover:text-purple-700 rounded-lg border border-slate-200 transition-colors font-medium text-[11px] cursor-pointer"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  Details
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
       </main>
 
       {/* 3. INCOMING TRANSFER NOTIFICATION MODAL */}
@@ -2129,6 +2583,48 @@ export const AdminDashboard: React.FC = () => {
                 </div>
               )}
             </div>
+
+            {/* Call Quality & Telemetry Metadata */}
+            {(selectedCallDetails.quality || selectedCallDetails.avgLatency != null || selectedCallDetails.wasReconnected) && (
+              <div className="p-3 bg-emerald-50/50 rounded-2xl border border-emerald-100 space-y-1.5 text-[11px]">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-emerald-950 flex items-center gap-1.5">
+                    <Activity className="w-3.5 h-3.5 text-emerald-600" />
+                    Network & Quality Telemetry
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                    selectedCallDetails.quality === 'excellent'
+                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                      : selectedCallDetails.quality === 'good'
+                        ? 'bg-blue-100 text-blue-800 border-blue-300'
+                        : 'bg-amber-100 text-amber-800 border-amber-300'
+                  }`}>
+                    {selectedCallDetails.quality ? selectedCallDetails.quality.toUpperCase() : 'NORMAL'}
+                    {selectedCallDetails.audioQualityScore ? ` • MOS ${selectedCallDetails.audioQualityScore.toFixed(1)}` : ''}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 font-mono text-[10px] pt-1">
+                  <div>
+                    <span className="text-slate-500 block">Latency (RTT)</span>
+                    <span className="font-bold text-slate-800">
+                      {selectedCallDetails.avgLatency ? `${Math.round(selectedCallDetails.avgLatency)} ms` : '< 50 ms'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Packet Loss</span>
+                    <span className="font-bold text-slate-800">
+                      {selectedCallDetails.packetLoss ? `${selectedCallDetails.packetLoss.toFixed(1)}%` : '0%'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Reconnections</span>
+                    <span className={`font-bold ${selectedCallDetails.wasReconnected ? 'text-indigo-600' : 'text-slate-800'}`}>
+                      {selectedCallDetails.reconnectCount ? `${selectedCallDetails.reconnectCount}x (Auto-restored)` : 'None (Stable)'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="max-h-80 overflow-y-auto space-y-3 p-2">
               <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Conversation Transcript</h4>

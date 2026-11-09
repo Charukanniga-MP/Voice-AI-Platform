@@ -1170,6 +1170,49 @@ export function initSocketServer(io: SocketIOServer) {
       }
     });
 
+    // 16b. Live Call Reconnection & Reliability Events
+    socket.on('call:reconnecting', (data: { callId: string; attempt?: number; reason?: string }) => {
+      console.log(`[CallReconnect] Call ${data.callId} reconnecting: attempt ${data.attempt || 1} (${data.reason || 'network'})`);
+      socket.to(`call:${data.callId}`).emit('call:reconnecting', data);
+      io.to('role:admin').emit('call:reconnecting', data);
+    });
+
+    socket.on('call:reconnected', async (data: { callId: string }) => {
+      console.log(`[CallReconnect] Call ${data.callId} reconnected successfully!`);
+      socket.to(`call:${data.callId}`).emit('call:reconnected', data);
+      io.to('role:admin').emit('call:reconnected', data);
+
+      try {
+        await prisma.callRecord.updateMany({
+          where: { callId: data.callId },
+          data: {
+            wasReconnected: true,
+            reconnectCount: { increment: 1 }
+          }
+        });
+      } catch (e) {
+        console.error('[CallReconnect] Failed to update reconnectCount:', e);
+      }
+    });
+
+    socket.on('call:reconnect_failed', async (data: { callId: string; reason?: string }) => {
+      console.log(`[CallReconnect] Call ${data.callId} reconnection failed: ${data.reason}`);
+      socket.to(`call:${data.callId}`).emit('call:reconnect_failed', data);
+
+      try {
+        await prisma.callRecord.updateMany({
+          where: { callId: data.callId },
+          data: {
+            status: 'disconnected',
+            endedBy: 'network',
+            failureReason: data.reason || 'Network connection lost. Reconnection timed out.'
+          }
+        });
+      } catch (e) {
+        console.error('[CallReconnect] Failed to update disconnected status:', e);
+      }
+    });
+
     // 17. End Call (No hardcoded duration timeouts)
     socket.on('call:end', async (data: {
       callId: string;
@@ -1245,6 +1288,18 @@ export function initSocketServer(io: SocketIOServer) {
       const user = connectedUsers.get(socket.id);
       if (user) {
         console.log(`[Socket] User disconnected: ${user.name} (${user.role})`);
+
+        // If user had active calls, inform peers that reconnection is pending
+        if (user.activeCalls.size > 0) {
+          for (const activeCallId of user.activeCalls) {
+            io.to(`call:${activeCallId}`).emit('call:reconnecting', {
+              callId: activeCallId,
+              attempt: 1,
+              reason: `${user.name} lost connection. Attempting automatic reconnection...`
+            });
+          }
+        }
+
         connectedUsers.delete(socket.id);
       }
       // If customer in queue disconnected, remove them

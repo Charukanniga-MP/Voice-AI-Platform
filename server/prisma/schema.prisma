@@ -58,6 +58,16 @@ model CallRecord {
   providerCallSid  String?               @unique
   providerName     String?               @default("twilio")
   failureReason    String?
+
+  // Call Quality & Reliability metrics
+  quality          String?               @default("good") // "excellent" | "good" | "poor"
+  avgLatency       Float?                // milliseconds (RTT)
+  packetLoss       Float?                // percentage (0 - 100%)
+  jitter           Float?                // milliseconds
+  reconnectCount   Int                   @default(0)
+  wasReconnected   Boolean               @default(false)
+  audioQualityScore Float?               // estimated MOS score (1.0 - 5.0)
+
   createdAt        DateTime              @default(now())
 
   transcripts      CallTranscript[]

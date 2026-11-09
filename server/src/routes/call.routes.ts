@@ -93,6 +93,79 @@ router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, 
   }
 });
 
+// 1b. Call Quality & Reliability Statistics (Admin & Agent)
+router.get('/quality/stats', authenticate, requireRole(['admin', 'agent']), async (req: Request, res: Response) => {
+  try {
+    const [
+      totalCalls,
+      successfulCalls,
+      failedCalls,
+      disconnectedCalls,
+      reconnectedCalls,
+      completedWithDuration,
+      callsWithLatency,
+      callsWithLoss,
+      qualityRatings,
+      qualityHistory
+    ] = await Promise.all([
+      prisma.callRecord.count(),
+      prisma.callRecord.count({ where: { status: 'completed' } }),
+      prisma.callRecord.count({ where: { OR: [{ status: 'failed' }, { failureReason: { not: null } }] } }),
+      prisma.callRecord.count({ where: { OR: [{ status: 'disconnected' }, { endedBy: 'network' }] } }),
+      prisma.callRecord.count({ where: { OR: [{ wasReconnected: true }, { reconnectCount: { gt: 0 } }] } }),
+      prisma.callRecord.findMany({ where: { status: 'completed', duration: { gt: 0 } }, select: { duration: true } }),
+      prisma.callRecord.findMany({ where: { avgLatency: { not: null } }, select: { avgLatency: true } }),
+      prisma.callRecord.findMany({ where: { packetLoss: { not: null } }, select: { packetLoss: true } }),
+      prisma.callRecord.groupBy({ by: ['quality'], _count: { id: true } }),
+      prisma.callRecord.findMany({
+        take: 50,
+        orderBy: { startTime: 'desc' },
+        include: {
+          customer: { select: { name: true, phone: true } },
+          agent: { select: { name: true } }
+        }
+      })
+    ]);
+
+    const avgDuration = completedWithDuration.length > 0
+      ? Math.round(completedWithDuration.reduce((acc, c) => acc + (c.duration || 0), 0) / completedWithDuration.length)
+      : 0;
+
+    const avgLatency = callsWithLatency.length > 0
+      ? Math.round(callsWithLatency.reduce((acc, c) => acc + (c.avgLatency || 0), 0) / callsWithLatency.length)
+      : 38;
+
+    const avgPacketLoss = callsWithLoss.length > 0
+      ? +(callsWithLoss.reduce((acc, c) => acc + (c.packetLoss || 0), 0) / callsWithLoss.length).toFixed(1)
+      : 0.1;
+
+    const qualityBreakdown: Record<string, number> = {
+      excellent: 0,
+      good: 0,
+      poor: 0
+    };
+    qualityRatings.forEach((q) => {
+      if (q.quality) qualityBreakdown[q.quality] = q._count.id;
+    });
+
+    res.json({
+      totalCalls,
+      successfulCalls,
+      failedCalls,
+      disconnectedCalls,
+      reconnectedCalls,
+      avgDuration,
+      avgLatency,
+      avgPacketLoss,
+      qualityBreakdown,
+      history: qualityHistory
+    });
+  } catch (err: any) {
+    console.error('[Calls] Quality stats error:', err);
+    res.status(500).json({ error: 'Failed to retrieve call quality statistics.' });
+  }
+});
+
 // 2. All calls with filter tabs (Admin & Agent)
 router.get('/', authenticate, requireRole(['admin', 'agent']), async (req: Request, res: Response) => {
   try {
@@ -258,6 +331,48 @@ router.post('/:id/rating', authenticate, async (req: Request, res: Response) => 
     res.json({ message: 'Rating saved.' });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to save call rating.' });
+  }
+});
+
+// 7b. Save Real-Time Call Quality & Reliability Metrics
+router.post('/:id/quality', authenticate, async (req: Request, res: Response) => {
+  try {
+    const { quality, avgLatency, packetLoss, jitter, audioQualityScore, reconnectCount, wasReconnected } = req.body;
+    const callIdentifier = req.params.id;
+
+    // Support lookup by DB ID, callId, or providerCallSid
+    const existing = await prisma.callRecord.findFirst({
+      where: {
+        OR: [
+          { id: callIdentifier },
+          { callId: callIdentifier },
+          { providerCallSid: callIdentifier }
+        ]
+      }
+    });
+
+    if (!existing) {
+      res.status(404).json({ error: 'Call record not found.' });
+      return;
+    }
+
+    const updated = await prisma.callRecord.update({
+      where: { id: existing.id },
+      data: {
+        ...(quality ? { quality } : {}),
+        ...(avgLatency !== undefined ? { avgLatency: Number(avgLatency) } : {}),
+        ...(packetLoss !== undefined ? { packetLoss: Number(packetLoss) } : {}),
+        ...(jitter !== undefined ? { jitter: Number(jitter) } : {}),
+        ...(audioQualityScore !== undefined ? { audioQualityScore: Number(audioQualityScore) } : {}),
+        ...(reconnectCount !== undefined ? { reconnectCount: Number(reconnectCount) } : {}),
+        ...(wasReconnected !== undefined ? { wasReconnected: Boolean(wasReconnected) } : {})
+      }
+    });
+
+    res.json({ success: true, call: updated });
+  } catch (err: any) {
+    console.error('[Calls] Save quality error:', err);
+    res.status(500).json({ error: 'Failed to save call quality data.' });
   }
 });
 
