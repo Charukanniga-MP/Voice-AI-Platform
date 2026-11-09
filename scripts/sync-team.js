@@ -336,11 +336,11 @@ export async function runPostSyncTriggers(updatedFiles = []) {
   if (hasPrismaSchema) {
     console.log(`\n${c.cyan}🗄️ Detected Prisma schema changes. Regenerating Prisma client...${c.reset}`);
     try {
-      execSync('npx prisma generate --schema=server/prisma/schema.prisma', { stdio: 'inherit' });
+      execSync('npm run prisma:generate --prefix server', { stdio: 'inherit' });
       console.log(`${c.green}✓ Prisma client regenerated successfully.${c.reset}`);
 
       console.log(`${c.cyan}Pushing database migrations...${c.reset}`);
-      execSync('npx prisma db push --schema=server/prisma/schema.prisma --skip-generate', { stdio: 'inherit' });
+      execSync('npm run prisma:push --prefix server', { stdio: 'inherit' });
       console.log(`${c.green}✓ Database schema pushed successfully.${c.reset}`);
     } catch (err) {
       console.warn(`${c.yellow}Warning: Prisma synchronization encountered an issue: ${err.message}${c.reset}`);

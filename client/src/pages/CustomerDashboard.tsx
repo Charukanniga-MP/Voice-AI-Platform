@@ -14,7 +14,7 @@ import {
 
 export const CustomerDashboard: React.FC = () => {
   const { user, token } = useAuth();
-  const { language: selectedLanguage, setLanguage: handleLanguageChange, t } = useLanguage();
+  const { language: selectedLanguage, setLanguage: setSelectedLanguage, t } = useLanguage();
 
   // Call status: 'idle' | 'connecting' | 'ringing' | 'queued' | 'active_agent' | 'active_ai' | 'transferring' | 'active_admin' | 'ended'
   const [callStatus, setCallStatus] = useState<

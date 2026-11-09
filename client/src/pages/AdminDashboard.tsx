@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext.js';
 import { getSocket } from '../services/socket.js';
 import { webrtcManager } from '../services/webrtc.js';
 import { voiceService } from '../services/voice.js';
-import { SupportTickets } from './CustomerIssueManagement.js';
+import { SupportTickets } from './SupportTickets.js';
 import {
   User, CallRecord, CallTranscript, CallTransferRequest,
   KnowledgeEntry, KnowledgeDocument, CallStats, LanguageCode, SUPPORTED_LANGUAGES
@@ -772,8 +772,8 @@ export const AdminDashboard: React.FC = () => {
             <button
               onClick={() => setActiveSection('tickets')}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'tickets'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
-                  : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
                 }`}
             >
               <MessageSquare className="w-4 h-4" />
