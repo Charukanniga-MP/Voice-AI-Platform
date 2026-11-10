@@ -84,6 +84,8 @@ export interface CallRecord {
   reconnectCount?: number;
   wasReconnected?: boolean;
   audioQualityScore?: number | null;
+  intelligence?: CallIntelligence | null;
+  followUpTasks?: FollowUpTask[];
   customer?: { id: string; name: string; email: string; phone?: string | null };
   agent?: { id: string; name: string };
   admin?: { id: string; name: string };
@@ -159,5 +161,138 @@ export interface CallQualityStats {
     poor: number;
   };
   history: CallRecord[];
+}
+
+export interface CallIntelligence {
+  id: string;
+  callRecordId: string;
+  customerId?: string | null;
+  customerName: string;
+  agentId?: string | null;
+  agentName?: string | null;
+  duration: number;
+  language: string;
+  callReason: string;
+  customerQuestions: string; // JSON string or array
+  solutionsProvided: string; // JSON string or array
+  kbSourcesUsed?: string | null;
+  resolutionStatus: 'resolved' | 'partially_resolved' | 'unresolved' | 'escalated_admin';
+  resolutionExplanation: string;
+  unresolvedQuestions?: string | null;
+  actionItems?: string | null;
+  overallSummary: string;
+  sentiment?: 'positive' | 'neutral' | 'negative' | null;
+  processingStatus: 'pending' | 'processing' | 'completed' | 'failed';
+  errorMessage?: string | null;
+  retryCount: number;
+  createdAt: string;
+}
+
+export interface FollowUpTask {
+  id: string;
+  callRecordId: string;
+  customerId?: string | null;
+  customerName: string;
+  customerPhone?: string | null;
+  customerEmail?: string | null;
+  assignedAgentId?: string | null;
+  assignedAgentName?: string | null;
+  title: string;
+  unresolvedQuestion: string;
+  previousSummary: string;
+  actionRequired: string;
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  language?: string | null;
+  notes?: string | null;
+  resolutionNotes?: string | null;
+  resolvedAt?: string | null;
+  resolvedBy?: string | null;
+  dueDate?: string | null;
+  createdAt: string;
+  updatedAt?: string;
+  callRecord?: {
+    id: string;
+    callId: string;
+    startTime: string;
+    duration: number;
+    language?: string;
+    direction?: string;
+    transcripts?: CallTranscript[];
+    intelligence?: CallIntelligence | null;
+  };
+  assignedAgent?: { id: string; name: string; email: string };
+}
+
+export interface KnowledgeGap {
+  id: string;
+  question: string;
+  normalizedQuestion: string;
+  language: string;
+  frequency: number;
+  topic: string;
+  sampleCallId?: string | null;
+  status: 'open' | 'in_review' | 'added_to_kb' | 'dismissed';
+  lastAskedAt: string;
+  createdAt: string;
+}
+
+export interface CallIntelligenceStats {
+  totalCallsAnalyzed: number;
+  resolvedCalls: number;
+  partiallyResolvedCalls: number;
+  unresolvedCalls: number;
+  escalatedCalls: number;
+  pendingFollowUpTasks: number;
+  completedFollowUpTasks: number;
+  frequentlyAskedQuestions: Array<{ question: string; count: number; category: string }>;
+  kbGaps: KnowledgeGap[];
+  agentResolutionStats: Array<{
+    agentId: string;
+    agentName: string;
+    email: string;
+    totalCallsHandled: number;
+    resolvedCount: number;
+    resolutionRate: number;
+  }>;
+  recentIntelligence: Array<{
+    id: string;
+    callRecordId: string;
+    customerName: string;
+    agentName?: string | null;
+    resolutionStatus: string;
+    customerQuestions: string;
+    sentiment?: string | null;
+    createdAt: string;
+  }>;
+}
+
+export interface CustomerInteractionHistory {
+  customer: {
+    id: string;
+    name: string;
+    email: string;
+    phone?: string | null;
+    preferredLanguage: string;
+    createdAt: string;
+    lastInteraction: string;
+  };
+  calls: Array<{
+    id: string;
+    callId: string;
+    startTime: string;
+    duration: number;
+    type: string;
+    direction: string;
+    status: string;
+    agentName?: string | null;
+    language?: string | null;
+    intelligence?: CallIntelligence | null;
+    transcripts?: CallTranscript[];
+  }>;
+  followUpTasks: FollowUpTask[];
+  questionsAsked: Array<{ callId: string; date: string; question: string }>;
+  solutionsProvided: Array<{ callId: string; date: string; solution: string }>;
+  unresolvedIssues: Array<{ callId: string; date: string; issue: string; status: string }>;
 }
 

@@ -14,6 +14,8 @@ import knowledgeRoutes from './routes/knowledge.routes.js';
 import ticketRoutes from './routes/ticket.routes.js';
 import telephonyRoutes from './routes/telephony.routes.js';
 import voiceRoutes from './routes/voice.routes.js';
+import followUpRoutes from './routes/followUp.routes.js';
+import knowledgeGapRoutes from './routes/knowledgeGap.routes.js';
 import { initSocketServer } from './services/socket.js';
 import { seedDatabase } from './seed.js';
 
@@ -55,6 +57,8 @@ app.use('/api/knowledge', knowledgeRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/telephony', telephonyRoutes);
 app.use('/api/voice', voiceRoutes);
+app.use('/api/follow-up-tasks', followUpRoutes);
+app.use('/api/knowledge-gaps', knowledgeGapRoutes);
 
 // Dev-only Team Sync API (Never exposed in production)
 if (process.env.NODE_ENV !== 'production') {

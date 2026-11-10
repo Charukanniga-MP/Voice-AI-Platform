@@ -6,6 +6,9 @@ import { webrtcManager } from '../services/webrtc.js';
 import { voiceService } from '../services/voice.js';
 import { ringtoneService } from '../services/ringtone.js';
 import { SupportTickets } from './SupportTickets.js';
+import { FollowUpTasksManager } from '../components/FollowUpTasksManager.js';
+import { CustomerProfileModal } from '../components/CustomerProfileModal.js';
+import { CallIntelligenceModal } from '../components/CallIntelligenceModal.js';
 import { CallQualityIndicator } from '../components/CallQualityIndicator.js';
 import { AudioDeviceModal } from '../components/AudioDeviceModal.js';
 import { audioDeviceManager } from '../services/audioDevice.js';
@@ -14,7 +17,7 @@ import {
   PhoneCall, PhoneOutgoing, PhoneOff, Mic, MicOff,
   Volume2, VolumeX, Clock, Search, BookOpen,
   Smartphone, AlertCircle, CheckCircle2, Radio, Info,
-  Globe, Sparkles, MessageSquare, Pause, Play, Send, Copy, Users, Settings
+  Globe, Sparkles, MessageSquare, Pause, Play, Send, Copy, Users, Settings, ListTodo
 } from 'lucide-react';
 
 interface LogEntry {
@@ -41,8 +44,12 @@ interface IncomingCall {
 export const AgentDashboard: React.FC = () => {
   const { user, token } = useAuth();
 
-  // Navigation tab: 'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets'
-  const [activeTab, setActiveTab] = useState<'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets'>('outgoing');
+  // Navigation tab: 'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets' | 'tasks'
+  const [activeTab, setActiveTab] = useState<'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets' | 'tasks'>('outgoing');
+
+  // Customer Profile & Call Intelligence modals
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [selectedCallIdForIntel, setSelectedCallIdForIntel] = useState<string | null>(null);
 
   // Agent Availability & Supported Languages
   const [agentStatus, setAgentStatus] = useState<'available' | 'busy'>(
@@ -967,6 +974,15 @@ export const AgentDashboard: React.FC = () => {
               <MessageSquare className="w-3.5 h-3.5 text-purple-600" />
               Support Tickets
             </button>
+            <button
+              onClick={() => setActiveTab('tasks')}
+              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'tasks' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <ListTodo className="w-3.5 h-3.5 text-amber-600" />
+              Follow-Up Tasks
+            </button>
           </div>
         </div>
 
@@ -1496,6 +1512,7 @@ export const AgentDashboard: React.FC = () => {
                     <th className="py-3 px-4">Type</th>
                     <th className="py-3 px-4">Status</th>
                     <th className="py-3 px-4">Notes</th>
+                    <th className="py-3 px-4 text-right">Intelligence</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -1529,6 +1546,26 @@ export const AgentDashboard: React.FC = () => {
                       </td>
                       <td className="py-3 px-4 text-slate-600 max-w-xs truncate">
                         {c.callNotes || '-'}
+                      </td>
+                      <td className="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
+                        <button
+                          onClick={() => setSelectedCallIdForIntel(c.id)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold rounded-lg border border-purple-200 transition-colors cursor-pointer text-[11px]"
+                          title="View post-call AI intelligence, summary, and resolution analysis"
+                        >
+                          <Sparkles className="w-3 h-3" />
+                          AI Summary
+                        </button>
+                        {c.customerId && (
+                          <button
+                            onClick={() => setSelectedCustomerId(c.customerId!)}
+                            className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-[11px] cursor-pointer"
+                            title="View customer interaction history"
+                          >
+                            <Users className="w-3 h-3" />
+                            Profile
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -1598,6 +1635,31 @@ export const AgentDashboard: React.FC = () => {
           <SupportTickets />
         </div>
       )}
+
+      {/* 6. FOLLOW-UP TASKS TAB */}
+      {activeTab === 'tasks' && (
+        <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 space-y-6 shadow-xs">
+          <FollowUpTasksManager token={token} currentUserId={user?.id} isAgent={true} />
+        </div>
+      )}
+
+      {/* Customer Profile Modal */}
+      <CustomerProfileModal
+        customerId={selectedCustomerId}
+        isOpen={!!selectedCustomerId}
+        onClose={() => setSelectedCustomerId(null)}
+        token={token}
+      />
+
+      {/* Call Intelligence Modal */}
+      <CallIntelligenceModal
+        callId={selectedCallIdForIntel}
+        isOpen={!!selectedCallIdForIntel}
+        onClose={() => setSelectedCallIdForIntel(null)}
+        token={token}
+        onIntelligenceUpdated={fetchHistory}
+      />
+
       {/* Audio Device Settings Modal */}
       <AudioDeviceModal
         isOpen={showAudioDeviceModal}

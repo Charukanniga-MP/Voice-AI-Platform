@@ -3,6 +3,7 @@ import { telephonyService } from '../services/telephony.js';
 import { translationService } from '../services/translation.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { prisma } from '../db.js';
+import { callIntelligenceService } from '../services/callIntelligence.js';
 
 const router = Router();
 
@@ -482,6 +483,13 @@ router.post('/end-call', authenticate, requireRole(['agent', 'admin']), async (r
           text: `Call ended. Total duration: ${parsedDuration} seconds.`
         }
       });
+
+      // Asynchronously trigger post-call AI intelligence analysis
+      setTimeout(() => {
+        callIntelligenceService.processCall(call.id).catch(err => {
+          console.error('[Telephony] Background call intelligence error:', err);
+        });
+      }, 300);
 
       const io = req.app.get('io');
       if (io) {

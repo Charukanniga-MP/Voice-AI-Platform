@@ -1,6 +1,7 @@
 import twilio from 'twilio';
 import { prisma } from '../db.js';
 import { translationService } from './translation.js';
+import { callIntelligenceService } from './callIntelligence.js';
 
 export interface TelephonyStatus {
   configured: boolean;
@@ -342,6 +343,14 @@ class TelephonyService {
         callId: updated.callId,
         status: mappedStatus
       });
+    }
+
+    if (CallStatus === 'completed' || mappedStatus === 'completed') {
+      setTimeout(() => {
+        callIntelligenceService.processCall(updated.id).catch(err => {
+          console.error('[Telephony Webhook] Background call intelligence error:', err);
+        });
+      }, 300);
     }
 
     return updated;

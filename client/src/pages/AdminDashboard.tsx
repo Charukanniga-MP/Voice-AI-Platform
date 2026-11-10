@@ -6,14 +6,19 @@ import { voiceService } from '../services/voice.js';
 import { SupportTickets } from './SupportTickets.js';
 import {
   User, CallRecord, CallTranscript, CallTransferRequest,
-  KnowledgeEntry, KnowledgeDocument, CallStats, CallQualityStats, LanguageCode, SUPPORTED_LANGUAGES
+  KnowledgeEntry, KnowledgeDocument, CallStats, CallQualityStats, LanguageCode, SUPPORTED_LANGUAGES,
+  CallIntelligenceStats, KnowledgeGap, FollowUpTask
 } from '../types.js';
+import { CustomerProfileModal } from '../components/CustomerProfileModal.js';
+import { CallIntelligenceModal } from '../components/CallIntelligenceModal.js';
+import { FollowUpTasksManager } from '../components/FollowUpTasksManager.js';
 import {
   Users, PhoneCall, PhoneIncoming, PhoneOutgoing, PhoneForwarded,
   PhoneOff, Mic, MicOff, Volume2, VolumeX, Clock, Search,
   BookOpen, Plus, Trash2, Edit3, Upload, CheckCircle2, MessageSquare,
   AlertCircle, ShieldAlert, Eye, Headphones, Radio, RefreshCw, Globe,
-  Activity, Wifi, WifiOff, Signal, Zap, AlertTriangle, XCircle, BarChart3, Sliders, ShieldCheck
+  Activity, Wifi, WifiOff, Signal, Zap, AlertTriangle, XCircle, BarChart3, Sliders, ShieldCheck,
+  Sparkles, ListTodo
 } from 'lucide-react';
 
 // Pure deduplication utility function
@@ -34,7 +39,7 @@ export const AdminDashboard: React.FC = () => {
   const { user, token } = useAuth();
 
   // Active navigation section
-  const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'agents' | 'calls' | 'transfers' | 'knowledge' | 'tickets' | 'quality'>('overview');
+  const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'agents' | 'calls' | 'intelligence' | 'tasks' | 'transfers' | 'knowledge' | 'tickets' | 'quality'>('overview');
 
   // Stats state
   const [stats, setStats] = useState<CallStats>({
@@ -142,6 +147,21 @@ export const AdminDashboard: React.FC = () => {
   const [qualityFilter, setQualityFilter] = useState<'all' | 'excellent' | 'good' | 'poor' | 'reconnected' | 'disconnected' | 'failed'>('all');
   const [qualitySearch, setQualitySearch] = useState('');
   const [selectedQualityCall, setSelectedQualityCall] = useState<CallRecord | null>(null);
+
+  // Section H: Call Intelligence & Follow-Up State
+  const [intelligenceStats, setIntelligenceStats] = useState<CallIntelligenceStats | null>(null);
+  const [loadingIntelligence, setLoadingIntelligence] = useState(false);
+  const [gapSearch, setGapSearch] = useState('');
+  const [gapLangFilter, setGapLangFilter] = useState('all');
+  const [selectedIntelligenceCallId, setSelectedIntelligenceCallId] = useState<string | null>(null);
+  const [selectedProfileCustomerId, setSelectedProfileCustomerId] = useState<string | null>(null);
+
+  // Knowledge Gap Approval Modal State
+  const [approvingGap, setApprovingGap] = useState<KnowledgeGap | null>(null);
+  const [gapTitle, setGapTitle] = useState('');
+  const [gapAnswer, setGapAnswer] = useState('');
+  const [gapCategory, setGapCategory] = useState('general');
+  const [savingGap, setSavingGap] = useState(false);
 
   // Auto-scroll transcript
   const transcriptEndRef = useRef<HTMLDivElement>(null);
@@ -305,9 +325,69 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  // Fetch AI Post-Call Intelligence Statistics & Knowledge Gaps
+  const fetchIntelligenceStats = async () => {
+    if (!token) return;
+    setLoadingIntelligence(true);
+    try {
+      const res = await fetch('/api/calls/intelligence/stats', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setIntelligenceStats(data);
+      }
+    } catch (err) {
+      console.error('Failed to load intelligence stats:', err);
+    } finally {
+      setLoadingIntelligence(false);
+    }
+  };
+
+  const handleOpenApproveGap = (gap: KnowledgeGap) => {
+    setApprovingGap(gap);
+    setGapTitle(gap.topic || 'General Inquiry');
+    setGapAnswer('');
+    setGapCategory('general');
+  };
+
+  const handleSaveApproveGap = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!approvingGap || !token) return;
+    setSavingGap(true);
+    try {
+      const res = await fetch(`/api/knowledge-gaps/${approvingGap.id}/approve-to-kb`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          title: gapTitle,
+          answer: gapAnswer,
+          category: gapCategory
+        })
+      });
+      if (res.ok) {
+        setApprovingGap(null);
+        fetchIntelligenceStats();
+        fetchKnowledge();
+      } else {
+        const err = await res.json();
+        alert(err.message || 'Failed to approve knowledge gap');
+      }
+    } catch (err) {
+      console.error('Error approving knowledge gap:', err);
+      alert('Network error approving gap');
+    } finally {
+      setSavingGap(false);
+    }
+  };
+
   // Initial stats load
   useEffect(() => {
     fetchStats();
+    fetchIntelligenceStats();
   }, [token]);
 
   // Section-specific data fetching
@@ -319,6 +399,7 @@ export const AdminDashboard: React.FC = () => {
     if (activeSection === 'transfers') fetchTransfers();
     if (activeSection === 'knowledge') fetchKnowledge();
     if (activeSection === 'quality') fetchQualityStats();
+    if (activeSection === 'intelligence') fetchIntelligenceStats();
   }, [activeSection, token, customerSearch, agentSearch, callFilter, callSearch, kbCategory, kbSearch]);
 
   // Socket setup with clean teardown
@@ -780,6 +861,35 @@ export const AdminDashboard: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setActiveSection('intelligence')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'intelligence'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                }`}
+            >
+              <Sparkles className="w-4 h-4" />
+              AI Call Intelligence
+            </button>
+
+            <button
+              onClick={() => setActiveSection('tasks')}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'tasks'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                }`}
+            >
+              <div className="flex items-center gap-3">
+                <ListTodo className="w-4 h-4" />
+                Follow-Up Tasks
+              </div>
+              {(intelligenceStats?.pendingFollowUpTasks ?? 0) > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                  {intelligenceStats?.pendingFollowUpTasks}
+                </span>
+              )}
+            </button>
+
+            <button
               onClick={() => setActiveSection('quality')}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'quality'
                 ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
@@ -1153,6 +1263,14 @@ export const AdminDashboard: React.FC = () => {
                           </td>
                           <td className="py-3.5 px-4 text-right space-x-2">
                             <button
+                              onClick={() => setSelectedProfileCustomerId(c.id)}
+                              className="px-2.5 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg font-medium transition-colors cursor-pointer inline-flex items-center gap-1"
+                              title="Customer Intelligence & Interaction History"
+                            >
+                              <Sparkles className="w-3 h-3 text-purple-600" />
+                              Profile
+                            </button>
+                            <button
                               onClick={() => {
                                 fetch(`/api/customers/${c.id}`, { headers: { Authorization: `Bearer ${token}` } })
                                   .then(r => r.json())
@@ -1414,10 +1532,18 @@ export const AdminDashboard: React.FC = () => {
                               <span className="text-slate-400">No</span>
                             )}
                           </td>
-                          <td className="py-3.5 px-4 text-right">
+                          <td className="py-3.5 px-4 text-right space-x-1.5 whitespace-nowrap">
+                            <button
+                              onClick={() => setSelectedIntelligenceCallId(call.id)}
+                              className="px-2.5 py-1 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded-lg font-semibold transition-colors cursor-pointer text-xs inline-flex items-center gap-1"
+                              title="AI Call Summary & Intelligence"
+                            >
+                              <Sparkles className="w-3 h-3 text-purple-600" />
+                              AI Summary
+                            </button>
                             <button
                               onClick={() => setSelectedCallDetails(call)}
-                              className="px-3 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg font-semibold transition-colors cursor-pointer text-xs"
+                              className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-semibold transition-colors cursor-pointer text-xs"
                             >
                               Details
                             </button>
@@ -2229,6 +2355,361 @@ export const AdminDashboard: React.FC = () => {
           </div>
         )}
 
+        {/* SECTION H: CALL INTELLIGENCE & ANALYTICS */}
+        {activeSection === 'intelligence' && (
+          <div className="space-y-6">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="w-9 h-9 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">AI Call Intelligence & Follow-Up Analytics</h1>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Automated post-call summarization, conversation resolution classification, Knowledge Base gap identification, and agent resolution metrics.
+                </p>
+              </div>
+              <button
+                onClick={fetchIntelligenceStats}
+                disabled={loadingIntelligence}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 shadow-2xs cursor-pointer transition-colors"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingIntelligence ? 'animate-spin text-purple-600' : ''}`} />
+                {loadingIntelligence ? 'Refreshing...' : 'Refresh Intelligence'}
+              </button>
+            </div>
+
+            {/* 7 Key Intelligence Metric Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3">
+              {/* 1. Analyzed Calls */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Calls Analyzed</span>
+                  <Sparkles className="w-4 h-4 text-purple-500" />
+                </div>
+                <div className="text-xl font-black text-slate-900">{intelligenceStats?.totalCallsAnalyzed ?? 0}</div>
+                <p className="text-[10px] text-slate-400">Structured summaries</p>
+              </div>
+
+              {/* 2. Resolved Calls */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Resolved</span>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                </div>
+                <div className="text-xl font-black text-slate-900">{intelligenceStats?.resolvedCalls ?? 0}</div>
+                <p className="text-[10px] text-emerald-600 font-bold">
+                  {intelligenceStats?.totalCallsAnalyzed
+                    ? `${Math.round(((intelligenceStats.resolvedCalls) / intelligenceStats.totalCallsAnalyzed) * 100)}% resolution rate`
+                    : '100% rate'}
+                </p>
+              </div>
+
+              {/* 3. Partially Resolved */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Partially Resolved</span>
+                  <Clock className="w-4 h-4 text-blue-500" />
+                </div>
+                <div className="text-xl font-black text-slate-900">{intelligenceStats?.partiallyResolvedCalls ?? 0}</div>
+                <p className="text-[10px] text-blue-600 font-semibold">Follow-up needed</p>
+              </div>
+
+              {/* 4. Unresolved Calls */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Unresolved</span>
+                  <AlertTriangle className="w-4 h-4 text-amber-500" />
+                </div>
+                <div className="text-xl font-black text-slate-900">{intelligenceStats?.unresolvedCalls ?? 0}</div>
+                <p className="text-[10px] text-amber-600 font-semibold">Requires attention</p>
+              </div>
+
+              {/* 5. Escalated Calls */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Escalated</span>
+                  <PhoneForwarded className="w-4 h-4 text-fuchsia-500" />
+                </div>
+                <div className="text-xl font-black text-slate-900">{intelligenceStats?.escalatedCalls ?? 0}</div>
+                <p className="text-[10px] text-fuchsia-600 font-semibold">Admin transfers</p>
+              </div>
+
+              {/* 6. Pending Follow-Ups */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Pending Tasks</span>
+                  <ListTodo className="w-4 h-4 text-orange-500" />
+                </div>
+                <div className="text-xl font-black text-slate-900">{intelligenceStats?.pendingFollowUpTasks ?? 0}</div>
+                <p className="text-[10px] text-orange-600 font-semibold">Open agent tasks</p>
+              </div>
+
+              {/* 7. Completed Tasks */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Tasks Completed</span>
+                  <CheckCircle2 className="w-4 h-4 text-teal-500" />
+                </div>
+                <div className="text-xl font-black text-slate-900">{intelligenceStats?.completedFollowUpTasks ?? 0}</div>
+                <p className="text-[10px] text-teal-600 font-semibold">Confirmed resolved</p>
+              </div>
+            </div>
+
+            {/* AI Issue Resolution Distribution Progress Bar */}
+            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">AI Issue Resolution Classification Distribution</h3>
+                  <p className="text-xs text-slate-500">
+                    Classified based strictly on dialogue confirmation, agent answers, and customer sentiment — never marked resolved merely because the call ended.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 text-xs">
+                  <span className="flex items-center gap-1.5 font-semibold text-emerald-700">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                    Resolved ({intelligenceStats?.resolvedCalls ?? 0})
+                  </span>
+                  <span className="flex items-center gap-1.5 font-semibold text-blue-700">
+                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                    Partially Resolved ({intelligenceStats?.partiallyResolvedCalls ?? 0})
+                  </span>
+                  <span className="flex items-center gap-1.5 font-semibold text-amber-700">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                    Unresolved ({intelligenceStats?.unresolvedCalls ?? 0})
+                  </span>
+                  <span className="flex items-center gap-1.5 font-semibold text-purple-700">
+                    <span className="w-2.5 h-2.5 rounded-full bg-purple-500" />
+                    Escalated ({intelligenceStats?.escalatedCalls ?? 0})
+                  </span>
+                </div>
+              </div>
+
+              {/* Progress Bar */}
+              {(() => {
+                const total = intelligenceStats?.totalCallsAnalyzed || 0;
+                const resPct = total > 0 ? ((intelligenceStats?.resolvedCalls || 0) / total) * 100 : 70;
+                const partPct = total > 0 ? ((intelligenceStats?.partiallyResolvedCalls || 0) / total) * 100 : 15;
+                const unresPct = total > 0 ? ((intelligenceStats?.unresolvedCalls || 0) / total) * 100 : 10;
+                const escPct = total > 0 ? ((intelligenceStats?.escalatedCalls || 0) / total) * 100 : 5;
+
+                return (
+                  <div className="space-y-3">
+                    <div className="h-4 w-full bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
+                      <div style={{ width: `${resPct}%` }} className="bg-emerald-500 h-full transition-all duration-500" title={`Resolved: ${Math.round(resPct)}%`} />
+                      <div style={{ width: `${partPct}%` }} className="bg-blue-500 h-full transition-all duration-500" title={`Partially Resolved: ${Math.round(partPct)}%`} />
+                      <div style={{ width: `${unresPct}%` }} className="bg-amber-500 h-full transition-all duration-500" title={`Unresolved: ${Math.round(unresPct)}%`} />
+                      <div style={{ width: `${escPct}%` }} className="bg-purple-500 h-full transition-all duration-500" title={`Escalated: ${Math.round(escPct)}%`} />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
+                      <div className="p-3 rounded-2xl bg-emerald-50/60 border border-emerald-100">
+                        <span className="font-bold text-emerald-800 block">Resolved</span>
+                        <p className="text-[11px] text-emerald-700 mt-0.5">Explicit customer confirmation, verified KB solutions provided, zero pending questions.</p>
+                      </div>
+                      <div className="p-3 rounded-2xl bg-blue-50/60 border border-blue-100">
+                        <span className="font-bold text-blue-800 block">Partially Resolved</span>
+                        <p className="text-[11px] text-blue-700 mt-0.5">Primary topic addressed but secondary inquiries remain open or follow-up requested.</p>
+                      </div>
+                      <div className="p-3 rounded-2xl bg-amber-50/60 border border-amber-100">
+                        <span className="font-bold text-amber-800 block">Unresolved</span>
+                        <p className="text-[11px] text-amber-700 mt-0.5">Customer issue not resolved; auto-creates a follow-up task for responsible agent.</p>
+                      </div>
+                      <div className="p-3 rounded-2xl bg-purple-50/60 border border-purple-100">
+                        <span className="font-bold text-purple-800 block">Escalated to Admin</span>
+                        <p className="text-[11px] text-purple-700 mt-0.5">Ungrounded queries or specialized requests transferred directly to human admin staff.</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Knowledge Base Gap Report & Unanswered Questions */}
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 space-y-4">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-extrabold text-slate-900">Knowledge Base Intelligence & Gaps Report</h3>
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                      {intelligenceStats?.kbGaps?.length ?? 0} Identified Gaps
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Unanswered and repeated customer questions where official KB content is missing. Admins can review, approve, and publish verified answers.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="relative min-w-[200px]">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                    <input
+                      type="text"
+                      placeholder="Search questions or topics..."
+                      value={gapSearch}
+                      onChange={(e) => setGapSearch(e.target.value)}
+                      className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white text-slate-900"
+                    />
+                  </div>
+
+                  {/* Language filter */}
+                  <select
+                    value={gapLangFilter}
+                    onChange={(e) => setGapLangFilter(e.target.value)}
+                    className="p-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-700 font-semibold"
+                  >
+                    <option value="all">All Languages</option>
+                    <option value="en">English</option>
+                    <option value="ta">Tamil (தமிழ்)</option>
+                    <option value="te">Telugu (తెలుగు)</option>
+                    <option value="ml">Malayalam (മലയാളം)</option>
+                    <option value="hi">Hindi (हिन्दी)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Gaps Table */}
+              {(() => {
+                const gaps = (intelligenceStats?.kbGaps || []).filter(g => {
+                  if (gapLangFilter !== 'all' && g.language !== gapLangFilter) return false;
+                  if (gapSearch.trim()) {
+                    const q = gapSearch.toLowerCase();
+                    return g.question.toLowerCase().includes(q) || g.topic.toLowerCase().includes(q);
+                  }
+                  return true;
+                });
+
+                if (gaps.length === 0) {
+                  return (
+                    <div className="py-8 text-center text-xs text-slate-400">
+                      No unresolved Knowledge Base gaps detected. All answered questions are grounded!
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-slate-400 font-semibold bg-slate-50/70">
+                          <th className="py-3 px-4">Repeated Unanswered Question</th>
+                          <th className="py-3 px-4">Inferred Topic</th>
+                          <th className="py-3 px-4">Language</th>
+                          <th className="py-3 px-4">Frequency</th>
+                          <th className="py-3 px-4">Status</th>
+                          <th className="py-3 px-4 text-right">Admin Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        {gaps.map((gap) => (
+                          <tr key={gap.id} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="py-3 px-4 font-bold text-slate-900 max-w-md">
+                              "{gap.question}"
+                            </td>
+                            <td className="py-3 px-4">
+                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                {gap.topic}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4">
+                              <span className="font-semibold text-slate-600">
+                                {SUPPORTED_LANGUAGES[gap.language as LanguageCode]?.name || gap.language.toUpperCase()}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 font-mono font-bold text-purple-700">
+                              {gap.frequency}x
+                            </td>
+                            <td className="py-3 px-4">
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                gap.status === 'added_to_kb'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}>
+                                {gap.status === 'added_to_kb' ? 'Added to KB' : 'Open Gap'}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              {gap.status !== 'added_to_kb' ? (
+                                <button
+                                  onClick={() => handleOpenApproveGap(gap)}
+                                  className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl text-[11px] shadow-xs cursor-pointer transition-all flex items-center gap-1 ml-auto"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  Approve & Add to KB
+                                </button>
+                              ) : (
+                                <span className="text-emerald-600 text-[11px] font-semibold flex items-center gap-1 justify-end">
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  Published
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Agent Resolution Statistics Leaderboard */}
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 space-y-4">
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900">Agent Resolution Performance & Resolution Rates</h3>
+                <p className="text-xs text-slate-500">Individual support agent metrics computed from real post-call conversation analyses</p>
+              </div>
+
+              {(!intelligenceStats?.agentResolutionStats || intelligenceStats.agentResolutionStats.length === 0) ? (
+                <p className="text-xs text-slate-400 py-4">No agent resolution records available yet.</p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {intelligenceStats.agentResolutionStats.map((a) => (
+                    <div key={a.agentId} className="p-4 rounded-2xl border border-slate-200 bg-slate-50/50 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="font-bold text-slate-900 text-xs">{a.agentName}</div>
+                        <span className="font-mono text-xs font-black text-emerald-600">{a.resolutionRate}% Rate</span>
+                      </div>
+                      <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                        <div style={{ width: `${a.resolutionRate}%` }} className="bg-emerald-500 h-full" />
+                      </div>
+                      <div className="flex justify-between text-[11px] text-slate-500 font-mono">
+                        <span>Calls: {a.totalCallsHandled}</span>
+                        <span>Resolved: {a.resolvedCount}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Frequently Asked Questions (FAQ) Aggregation */}
+            {intelligenceStats?.frequentlyAskedQuestions && intelligenceStats.frequentlyAskedQuestions.length > 0 && (
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 space-y-3">
+                <h3 className="text-sm font-bold text-slate-900">Frequently Asked Customer Questions (Aggregated)</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                  {intelligenceStats.frequentlyAskedQuestions.map((faq, idx) => (
+                    <div key={idx} className="p-3 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between">
+                      <span className="font-medium text-slate-800">"{faq.question}"</span>
+                      <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 font-bold font-mono text-[10px]">
+                        {faq.count} {faq.count === 1 ? 'call' : 'calls'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* SECTION I: FOLLOW-UP TASKS (Admin View) */}
+        {activeSection === 'tasks' && (
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 space-y-6 shadow-xs">
+            <FollowUpTasksManager token={token} currentUserId={user?.id} isAgent={false} />
+          </div>
+        )}
+
       </main>
 
       {/* 3. INCOMING TRANSFER NOTIFICATION MODAL */}
@@ -2788,6 +3269,123 @@ export const AdminDashboard: React.FC = () => {
                 Confirm Delete
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOMER INTERACTION PROFILE MODAL */}
+      {selectedProfileCustomerId && (
+        <CustomerProfileModal
+          customerId={selectedProfileCustomerId}
+          isOpen={!!selectedProfileCustomerId}
+          token={token}
+          onClose={() => setSelectedProfileCustomerId(null)}
+          onOpenIntelligence={(callId: string) => {
+            setSelectedProfileCustomerId(null);
+            setSelectedIntelligenceCallId(callId);
+          }}
+        />
+      )}
+
+      {/* CALL INTELLIGENCE INSPECTION MODAL */}
+      {selectedIntelligenceCallId && (
+        <CallIntelligenceModal
+          callId={selectedIntelligenceCallId}
+          isOpen={!!selectedIntelligenceCallId}
+          token={token}
+          onClose={() => setSelectedIntelligenceCallId(null)}
+          onOpenCustomerProfile={(customerId: string) => {
+            setSelectedIntelligenceCallId(null);
+            setSelectedProfileCustomerId(customerId);
+          }}
+        />
+      )}
+
+      {/* APPROVE KNOWLEDGE GAP TO OFFICIAL KB MODAL */}
+      {approvingGap && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-purple-200 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2 text-purple-700">
+                <Sparkles className="w-5 h-5" />
+                <h3 className="font-extrabold text-slate-900 text-sm">Approve & Add Knowledge Base Content</h3>
+              </div>
+              <button
+                onClick={() => setApprovingGap(null)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer p-1 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-2xl text-xs space-y-1">
+              <span className="font-bold text-amber-800">Customer Inquiry:</span>
+              <p className="text-slate-800 font-semibold italic">"{approvingGap.question}"</p>
+              <div className="flex gap-4 pt-1 text-[11px] text-amber-700">
+                <span>Language: <strong>{SUPPORTED_LANGUAGES[approvingGap.language as LanguageCode]?.name || approvingGap.language}</strong></span>
+                <span>Repeated: <strong>{approvingGap.frequency} times</strong></span>
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveApproveGap} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Knowledge Title</label>
+                <input
+                  type="text"
+                  required
+                  value={gapTitle}
+                  onChange={(e) => setGapTitle(e.target.value)}
+                  placeholder="e.g. Refund Policy and Processing Times"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Category</label>
+                <select
+                  value={gapCategory}
+                  onChange={(e) => setGapCategory(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+                >
+                  <option value="general">General</option>
+                  <option value="pricing">Pricing & Plans</option>
+                  <option value="technical">Technical Support</option>
+                  <option value="billing">Billing & Refunds</option>
+                  <option value="account">Account Management</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Official Verified Answer (Spoken by AI & Multilingual Handlers)
+                </label>
+                <textarea
+                  rows={4}
+                  required
+                  value={gapAnswer}
+                  onChange={(e) => setGapAnswer(e.target.value)}
+                  placeholder="Enter the official company response. This will be converted to speech and provided whenever customers ask this question."
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setApprovingGap(null)}
+                  className="flex-1 py-2 font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingGap || !gapAnswer.trim()}
+                  className="flex-1 py-2 font-semibold text-white bg-purple-600 hover:bg-purple-700 rounded-xl shadow-xs cursor-pointer disabled:opacity-50"
+                >
+                  {savingGap ? 'Publishing to KB...' : 'Approve & Publish to KB'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

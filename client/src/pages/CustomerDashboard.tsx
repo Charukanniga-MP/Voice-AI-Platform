@@ -1102,16 +1102,31 @@ export const CustomerDashboard: React.FC = () => {
                         )}
                       </td>
                       <td className="py-3 px-4">
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${call.status === 'completed'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : call.status === 'active'
-                              ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                              : 'bg-red-50 text-red-700 border border-red-200'
-                            }`}
-                        >
-                          {call.status}
-                        </span>
+                        {call.intelligence ? (
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${call.intelligence.resolutionStatus === 'resolved'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : call.intelligence.resolutionStatus === 'partially_resolved'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : call.intelligence.resolutionStatus === 'escalated_admin'
+                                  ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                                  : 'bg-amber-50 text-amber-700 border border-amber-200'
+                              }`}
+                          >
+                            {call.intelligence.resolutionStatus.replace('_', ' ')}
+                          </span>
+                        ) : (
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${call.status === 'completed'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : call.status === 'active'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : 'bg-red-50 text-red-700 border border-red-200'
+                              }`}
+                          >
+                            {call.status}
+                          </span>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-slate-700">
                         {call.transferred ? (
@@ -1166,6 +1181,43 @@ export const CustomerDashboard: React.FC = () => {
                 ✕ {t('history.modal_close')}
               </button>
             </div>
+
+            {/* AI Call Intelligence Summary if generated */}
+            {selectedHistoryCall.intelligence && (
+              <div className="p-3.5 bg-gradient-to-r from-purple-50/80 to-indigo-50/80 border border-purple-100 rounded-2xl space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 font-bold text-purple-900">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                    AI Call Summary
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${
+                    selectedHistoryCall.intelligence.resolutionStatus === 'resolved'
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : selectedHistoryCall.intelligence.resolutionStatus === 'partially_resolved'
+                        ? 'bg-blue-100 text-blue-800'
+                        : selectedHistoryCall.intelligence.resolutionStatus === 'escalated_admin'
+                          ? 'bg-purple-100 text-purple-800'
+                          : 'bg-amber-100 text-amber-800'
+                  }`}>
+                    {selectedHistoryCall.intelligence.resolutionStatus.replace('_', ' ')}
+                  </span>
+                </div>
+                <p className="text-slate-700 leading-relaxed font-medium">
+                  {selectedHistoryCall.intelligence.overallSummary}
+                </p>
+                {selectedHistoryCall.intelligence.solutionsProvided && (
+                  <div className="text-[11px] text-slate-600 bg-white/70 p-2 rounded-xl border border-purple-100">
+                    <strong className="text-purple-800 block">Solutions Provided:</strong>
+                    {selectedHistoryCall.intelligence.solutionsProvided}
+                  </div>
+                )}
+                {selectedHistoryCall.intelligence.actionItems && (
+                  <div className="text-[11px] text-amber-800 bg-amber-50/80 p-2 rounded-xl border border-amber-200 font-semibold">
+                    Follow-Up Action: {selectedHistoryCall.intelligence.actionItems}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="max-h-80 overflow-y-auto space-y-3 p-2">
               {(!selectedHistoryCall.transcripts || selectedHistoryCall.transcripts.length === 0) ? (

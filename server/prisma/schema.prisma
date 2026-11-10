@@ -27,6 +27,8 @@ model User {
   callsAsAgent     CallRecord[]          @relation("AgentCalls")
   callsAsAdmin     CallRecord[]          @relation("AdminCalls")
   transferRequests CallTransferRequest[]
+  assignedTasks    FollowUpTask[]        @relation("AssignedFollowUpTasks")
+  customerTasks    FollowUpTask[]        @relation("CustomerFollowUpTasks")
 }
 
 model CallRecord {
@@ -72,6 +74,8 @@ model CallRecord {
 
   transcripts      CallTranscript[]
   transferRequests CallTransferRequest[]
+  intelligence     CallIntelligence?
+  followUpTasks    FollowUpTask[]
 }
 
 model CallTranscript {
@@ -143,5 +147,76 @@ model SupportTicket {
   followUpAt     DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+}
+
+model CallIntelligence {
+  id                    String      @id @default(cuid())
+  callRecordId          String      @unique
+  callRecord            CallRecord  @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  customerId            String?
+  customerName          String
+  agentId               String?
+  agentName             String?
+  duration              Int         @default(0) // in seconds
+  language              String      @default("en")
+  callReason            String      // Main reason for calling
+  customerQuestions     String      // JSON array of strings
+  solutionsProvided     String      // JSON array of strings
+  kbSourcesUsed         String?     // JSON array of sources
+  resolutionStatus      String      // "resolved" | "partially_resolved" | "unresolved" | "escalated_admin"
+  resolutionExplanation String      // Supporting explanation for classification
+  unresolvedQuestions   String?     // JSON array of strings
+  actionItems           String?     // JSON array of required follow-up actions
+  overallSummary        String      // English structured summary
+  sentiment             String?     @default("neutral") // "positive" | "neutral" | "negative"
+  processingStatus      String      @default("completed") // "pending" | "processing" | "completed" | "failed"
+  errorMessage          String?
+  retryCount            Int         @default(0)
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+}
+
+model FollowUpTask {
+  id                 String      @id @default(cuid())
+  callRecordId       String
+  callRecord         CallRecord  @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  customerId         String?
+  customer           User?       @relation("CustomerFollowUpTasks", fields: [customerId], references: [id], onDelete: SetNull)
+  customerName       String
+  customerPhone      String?
+  customerEmail      String?
+  assignedAgentId    String?
+  assignedAgent      User?       @relation("AssignedFollowUpTasks", fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  assignedAgentName  String?
+  title              String
+  unresolvedQuestion String
+  previousSummary    String
+  actionRequired     String
+  priority           String      @default("medium") // "low" | "medium" | "high" | "urgent"
+  status             String      @default("pending") // "pending" | "in_progress" | "completed" | "cancelled"
+  language           String?     @default("en")
+  notes              String?
+  resolutionNotes    String?
+  resolvedAt         DateTime?
+  resolvedBy         String?
+  dueDate            DateTime?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  @@unique([callRecordId, unresolvedQuestion])
+}
+
+model KnowledgeGap {
+  id                 String      @id @default(cuid())
+  question           String
+  normalizedQuestion String      @unique
+  language           String      @default("en")
+  frequency          Int         @default(1)
+  topic              String      @default("General")
+  sampleCallId       String?
+  status             String      @default("open") // "open" | "in_review" | "added_to_kb" | "dismissed"
+  lastAskedAt        DateTime    @default(now())
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
 }
 

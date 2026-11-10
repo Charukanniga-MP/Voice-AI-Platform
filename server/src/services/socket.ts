@@ -2,6 +2,7 @@ import { Server as SocketIOServer, Socket } from 'socket.io';
 import { prisma } from '../db.js';
 import { knowledgeService, FALLBACK_MESSAGE } from './knowledge.js';
 import { translationService, SUPPORTED_LANGUAGES } from './translation.js';
+import { callIntelligenceService } from './callIntelligence.js';
 
 interface ConnectedUser {
   socketId: string;
@@ -1253,6 +1254,13 @@ export function initSocketServer(io: SocketIOServer) {
               text: `Call ended. Duration: ${duration}s. Ended by: ${data.endedBy || 'user'}.`
             }
           });
+
+          // Asynchronously trigger post-call AI intelligence analysis without delaying termination
+          setTimeout(() => {
+            callIntelligenceService.processCall(call.id).catch(err => {
+              console.error('[Socket] Asynchronous call intelligence error:', err);
+            });
+          }, 300);
         }
 
         io.to(`call:${data.callId}`).emit('call:ended', {
