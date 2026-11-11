@@ -1,4 +1,6 @@
 import { Device, Call } from '@twilio/voice-sdk';
+import { callQualityMonitor } from './callQuality.js';
+import { audioDeviceManager } from './audioDevice.js';
 
 export type TelephonyCallState =
   | 'idle'
@@ -46,20 +48,8 @@ class TelephonyVoiceManager {
 
   // Request browser microphone permission
   public async requestMicrophonePermission(): Promise<MediaStream> {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        },
-        video: false
-      });
-      return stream;
-    } catch (err: any) {
-      console.error('[TelephonyVoice] Microphone permission denied:', err);
-      throw new Error('Microphone permission is required to speak with customers over the telephone.');
-    }
+    const micId = audioDeviceManager.getPreferredMicrophoneId();
+    return await audioDeviceManager.requestMicrophoneAccess(micId);
   }
 
   // Initialize or fetch Twilio Voice Device
@@ -164,12 +154,40 @@ class TelephonyVoiceManager {
         console.log('[TelephonyVoice] Customer answered! Audio stream connected.');
         callbacks.onStateChange('connected', `Connected with ${customerName}. Live two-way audio active.`);
         this.startDurationTimer();
+
+        // Start call quality monitoring
+        const callSid = (call.parameters as any)?.CallSid || `call_${Date.now()}`;
+        callQualityMonitor.start(null, callSid, agentAuthToken);
+      });
+
+      // Live audio quality sample stream
+      call.on('sample', (sample: any) => {
+        callQualityMonitor.reportSample({
+          rtt: sample.rtt,
+          jitter: sample.jitter,
+          packetsLost: sample.packetsLost,
+          packetsReceived: sample.packetsReceived
+        });
+      });
+
+      // Network quality warnings
+      call.on('warning', (name: string) => {
+        console.warn('[TelephonyVoice] Network degradation warning:', name);
+        if (name.includes('rtt') || name.includes('loss') || name.includes('jitter')) {
+          callQualityMonitor.setConnectionState('reconnecting', 1);
+        }
+      });
+
+      call.on('warning-cleared', () => {
+        callQualityMonitor.setConnectionState('connected', 0);
       });
 
       // Customer or Agent hung up
       call.on('disconnect', () => {
         console.log('[TelephonyVoice] Call disconnected.');
         this.stopDurationTimer();
+        callQualityMonitor.syncWithBackend(0);
+        callQualityMonitor.stop();
         this.activeCall = null;
         callbacks.onStateChange('ended', 'Call ended.');
       });

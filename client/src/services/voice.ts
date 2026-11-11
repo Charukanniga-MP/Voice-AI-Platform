@@ -19,9 +19,10 @@ export class VoiceService {
   private isListening: boolean = false;
   private synth: SpeechSynthesis | null = null;
   private currentUtterance: SpeechSynthesisUtterance | null = null;
+  private currentAudio: HTMLAudioElement | null = null;
   private currentLang: string = 'en-US';
-  private onResultCallback: ((text: string, isFinal: boolean) => void) | null = null;
-  private onErrorCallback: ((err: any) => void) | null = null;
+  private currentVolume: number = 1.0;
+  private audioUnlocked: boolean = false;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -36,13 +37,39 @@ export class VoiceService {
       if ('speechSynthesis' in window) {
         this.synth = window.speechSynthesis;
       }
+
+      // Unlock mobile audio on first user touch / click
+      const unlock = () => {
+        this.unlockAudio();
+        window.removeEventListener('click', unlock);
+        window.removeEventListener('touchstart', unlock);
+      };
+      window.addEventListener('click', unlock, { once: true });
+      window.addEventListener('touchstart', unlock, { once: true });
+    }
+  }
+
+  // Pre-unlock audio element for mobile devices (iOS / Android)
+  public unlockAudio() {
+    if (this.audioUnlocked) return;
+    try {
+      const silentAudio = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA');
+      silentAudio.volume = 0.01;
+      silentAudio.play().then(() => {
+        this.audioUnlocked = true;
+        console.log('[VoiceService] Mobile audio pipeline unlocked successfully.');
+      }).catch(() => { });
+    } catch {
+      // Ignore initial silent play
     }
   }
 
   // Set active language for Speech Recognition and Synthesis
   public setLanguage(langCode: string) {
-    const bcp47 = LANGUAGE_BCP47[langCode] || langCode || 'en-US';
+    const raw = (langCode || 'en').toLowerCase().slice(0, 2);
+    const bcp47 = LANGUAGE_BCP47[raw] || LANGUAGE_BCP47.en;
     this.currentLang = bcp47;
+
     if (this.recognition) {
       const wasListening = this.isListening;
       if (wasListening) {
@@ -57,22 +84,18 @@ export class VoiceService {
     return this.currentLang;
   }
 
-  public getIsListening(): boolean {
-    return this.isListening;
+  public setVolume(volume: number) {
+    this.currentVolume = Math.max(0, Math.min(1, volume));
+    if (this.currentAudio) {
+      this.currentAudio.volume = this.currentVolume;
+    }
   }
 
-  public isSpeaking(): boolean {
-    return !!(this.currentUtterance || (this.synth && this.synth.speaking));
-  }
-
-  // Start speech recognition
+  // Start speech recognition with automatic customer interruption support
   public startListening(
     onResult: (text: string, isFinal: boolean) => void,
     onError?: (err: any) => void
   ) {
-    this.onResultCallback = onResult;
-    if (onError) this.onErrorCallback = onError;
-
     if (!this.recognition) {
       console.warn('Speech recognition not supported in this browser.');
       return;
@@ -81,29 +104,34 @@ export class VoiceService {
     if (this.isListening) return;
 
     this.recognition.onresult = (event: any) => {
+      // Customer interruption: If customer speaks while AI is speaking, cut off AI speech immediately!
+      this.cancelSpeech();
+
       let interim = '';
       for (let i = event.resultIndex; i < event.results.length; ++i) {
         const transcript = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          if (this.onResultCallback) {
-            this.onResultCallback(transcript.trim(), true);
-          }
+          onResult(transcript.trim(), true);
         } else {
           interim += transcript;
         }
       }
-      if (interim && this.onResultCallback) {
-        this.onResultCallback(interim.trim(), false);
+      if (interim) {
+        onResult(interim.trim(), false);
       }
     };
 
     this.recognition.onerror = (event: any) => {
+      // Avoid breaking continuous dialogue on no-speech or aborted events
+      if (event.error === 'no-speech' || event.error === 'aborted') {
+        return;
+      }
       console.warn('[VoiceService] Recognition error:', event.error);
-      if (this.onErrorCallback) this.onErrorCallback(event);
+      if (onError) onError(event);
     };
 
     this.recognition.onend = () => {
-      // If we are still supposed to be listening, automatically restart
+      // If still supposed to be listening, automatically restart to maintain continuous dialogue
       if (this.isListening) {
         try {
           this.recognition.start();
@@ -125,17 +153,65 @@ export class VoiceService {
   // Stop speech recognition
   public stopListening() {
     this.isListening = false;
-    this.onResultCallback = null;
-    this.onErrorCallback = null;
     if (this.recognition) {
       try {
         this.recognition.stop();
-      } catch {}
+      } catch { }
     }
   }
 
-  // Speak text using natural TTS in the target language
+  // Speak text using High-Fidelity Audio Stream with seamless fallback to SpeechSynthesis
   public speak(text: string, onEnd?: () => void, langCode?: string): Promise<void> {
+    return new Promise((resolve) => {
+      const cleanText = (text || '').trim();
+      if (!cleanText) {
+        if (onEnd) onEnd();
+        resolve();
+        return;
+      }
+
+      // Customer interruption / cleanup previous speech
+      this.cancelSpeech();
+
+      const rawLang = (langCode || this.currentLang.slice(0, 2) || 'en').toLowerCase().slice(0, 2);
+      const targetLang = LANGUAGE_BCP47[rawLang] ? rawLang : 'en';
+
+      // 1. Primary: High-fidelity Server-generated Audio Stream (MP3)
+      const audioUrl = `/api/voice/tts?text=${encodeURIComponent(cleanText)}&lang=${targetLang}`;
+      const audio = new Audio(audioUrl);
+      this.currentAudio = audio;
+      audio.volume = this.currentVolume;
+
+      let hasResolved = false;
+      const finish = () => {
+        if (!hasResolved) {
+          hasResolved = true;
+          this.currentAudio = null;
+          if (onEnd) onEnd();
+          resolve();
+        }
+      };
+
+      audio.onended = () => {
+        finish();
+      };
+
+      audio.onerror = (err) => {
+        console.warn('[VoiceService] Server TTS error, falling back to Web SpeechSynthesis:', err);
+        this.currentAudio = null;
+        this.speakWithSpeechSynthesis(cleanText, onEnd, targetLang).then(resolve);
+      };
+
+      audio.play().catch((playErr) => {
+        console.warn('[VoiceService] HTML5 Audio autoplay policy error, falling back to Web SpeechSynthesis:', playErr);
+        this.currentAudio = null;
+        this.speakWithSpeechSynthesis(cleanText, onEnd, targetLang).then(resolve);
+      });
+    });
+  }
+
+  // Fallback: Web Speech API SpeechSynthesis
+  private speakWithSpeechSynthesis(text: string, onEnd?: () => void, langCode?: string): Promise<void> {
     return new Promise((resolve) => {
       if (!this.synth) {
         if (onEnd) onEnd();
@@ -148,13 +224,14 @@ export class VoiceService {
       const utterance = new SpeechSynthesisUtterance(text);
       this.currentUtterance = utterance;
 
-      const targetBcp47 = (langCode && LANGUAGE_BCP47[langCode]) || (langCode && langCode.includes('-') ? langCode : this.currentLang);
+      const rawLang = (langCode || this.currentLang.slice(0, 2) || 'en').toLowerCase().slice(0, 2);
+      const targetBcp47 = LANGUAGE_BCP47[rawLang] || 'en-US';
       utterance.lang = targetBcp47;
 
       const voices = this.synth.getVoices();
       const langPrefix = targetBcp47.split('-')[0];
 
-      // Find voice matching the target language
+      // Find matching voice
       const matchingVoice = voices.find(v => v.lang.toLowerCase() === targetBcp47.toLowerCase()) ||
         voices.find(v => v.lang.toLowerCase().startsWith(langPrefix)) ||
         voices.find(v => v.name.includes('Google') && v.lang.startsWith('en')) ||
@@ -166,6 +243,7 @@ export class VoiceService {
 
       utterance.rate = 1.0;
       utterance.pitch = 1.0;
+      utterance.volume = this.currentVolume;
 
       utterance.onend = () => {
         this.currentUtterance = null;
@@ -183,17 +261,27 @@ export class VoiceService {
     });
   }
 
+  // Cancel any currently playing speech immediately (Interruption support)
   public cancelSpeech() {
+    if (this.currentAudio) {
+      try {
+        this.currentAudio.pause();
+        this.currentAudio.currentTime = 0;
+        this.currentAudio.src = '';
+      } catch { }
+      this.currentAudio = null;
+    }
+
     if (this.synth) {
       try {
         this.synth.cancel();
-      } catch {}
+      } catch { }
       this.currentUtterance = null;
     }
   }
 
   public isSpeechSupported(): boolean {
-    return !!(this.recognition && this.synth);
+    return !!(this.recognition || typeof window !== 'undefined');
   }
 }
 

@@ -156,6 +156,101 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
   }
 });
 
+// 3b. Customer Full Interaction History (Customer can only view own, Admin & Agent can view any)
+router.get('/:id/interaction-history', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const customerId = req.params.id;
+
+    if (user.role === 'customer' && user.id !== customerId) {
+      res.status(403).json({ error: 'Access denied: customers may only view their own interaction history.' });
+      return;
+    }
+
+    const customer = await prisma.user.findUnique({
+      where: { id: customerId },
+      include: {
+        callsAsCustomer: {
+          include: {
+            intelligence: true,
+            followUpTasks: true,
+            transcripts: { orderBy: { timestamp: 'asc' } }
+          },
+          orderBy: { startTime: 'desc' }
+        },
+        customerTasks: {
+          orderBy: { createdAt: 'desc' }
+        }
+      }
+    });
+
+    if (!customer) {
+      res.status(404).json({ error: 'Customer not found.' });
+      return;
+    }
+
+    const calls = customer.callsAsCustomer || [];
+    const lastInteraction = calls.length > 0 ? calls[0].startTime : customer.createdAt;
+
+    // Aggregate interaction intelligence
+    const allQuestions: Array<{ callId: string; date: string; question: string }> = [];
+    const allSolutions: Array<{ callId: string; date: string; solution: string }> = [];
+    const allUnresolvedIssues: Array<{ callId: string; date: string; issue: string; status: string }> = [];
+
+    for (const call of calls) {
+      if (call.intelligence) {
+        try {
+          const qs: string[] = JSON.parse(call.intelligence.customerQuestions || '[]');
+          qs.forEach(q => allQuestions.push({ callId: call.id, date: call.startTime.toISOString(), question: q }));
+
+          const sols: string[] = JSON.parse(call.intelligence.solutionsProvided || '[]');
+          sols.forEach(s => allSolutions.push({ callId: call.id, date: call.startTime.toISOString(), solution: s }));
+
+          const unres: string[] = JSON.parse(call.intelligence.unresolvedQuestions || '[]');
+          unres.forEach(u => allUnresolvedIssues.push({
+            callId: call.id,
+            date: call.startTime.toISOString(),
+            issue: u,
+            status: call.intelligence?.resolutionStatus || 'unresolved'
+          }));
+        } catch (e) {}
+      }
+    }
+
+    res.json({
+      customer: {
+        id: customer.id,
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone,
+        preferredLanguage: customer.preferredLanguage || 'en',
+        createdAt: customer.createdAt,
+        lastInteraction
+      },
+      calls: calls.map(c => ({
+        id: c.id,
+        callId: c.callId,
+        startTime: c.startTime,
+        duration: c.duration,
+        type: c.type,
+        direction: c.direction,
+        status: c.status,
+        agentName: c.agentName,
+        language: c.language,
+        intelligence: c.intelligence,
+        transcripts: c.transcripts
+      })),
+      followUpTasks: customer.customerTasks,
+      questionsAsked: allQuestions,
+      solutionsProvided: allSolutions,
+      unresolvedIssues: allUnresolvedIssues
+    });
+  } catch (err: any) {
+    console.error('[Customers] Interaction history error:', err);
+    res.status(500).json({ error: 'Failed to retrieve interaction history.' });
+  }
+});
+
 // 4. Update customer information (Admin only)
 router.put('/:id', authenticate, requireRole(['admin']), validate(customerUpdateSchema), async (req: Request, res: Response) => {
   try {

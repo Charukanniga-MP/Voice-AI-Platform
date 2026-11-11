@@ -4,6 +4,7 @@ import { LanguageProvider } from './context/LanguageContext.js';
 import { Navbar } from './components/Navbar.js';
 import { LoginPage } from './pages/Login.js';
 import { ResetPasswordPage } from './pages/ResetPassword.js';
+import { DevSyncMonitor } from './components/DevSyncMonitor.js';
 
 // Lazy-loaded role dashboards for optimal initial bundle loading speed and memory efficiency
 const CustomerDashboard = lazy(() =>
@@ -101,6 +102,8 @@ const MainApp: React.FC = () => {
           {role === 'admin' && <AdminDashboard />}
         </Suspense>
       </div>
+
+      <DevSyncMonitor />
     </div>
   );
 };

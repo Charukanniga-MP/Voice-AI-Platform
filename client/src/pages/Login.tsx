@@ -259,7 +259,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
           scope: 'openid email profile',
           ux_mode: 'popup',
           select_account: true,
-          callback: async (response) => {
+          callback: async (response: any) => {
             if (response.error) {
               if (response.error === 'popup_closed_by_user') {
                 setError(
@@ -285,7 +285,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
               setIsVerifyingGoogle(false);
             }
           },
-          error_callback: (err) => {
+          error_callback: (err: any) => {
             console.warn('[Google OAuth] Popup closed or error:', err);
             setError(
               'Google sign-in window encountered an issue. If Google showed "no registered origin (Error 401)", please ensure http://localhost:5173 is added to Authorized JavaScript origins in Google Cloud Console.'

@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { knowledgeService, FALLBACK_MESSAGE } from './knowledge.js';
 import { translationService, SUPPORTED_LANGUAGES } from './translation.js';
 import { sentimentService } from './sentiment.js';
+import { callIntelligenceService } from './callIntelligence.js';
 
 interface ConnectedUser {
   socketId: string;
@@ -48,13 +49,25 @@ export function initSocketServer(io: SocketIOServer) {
 
     if (agents.length === 0) return null;
 
-    // 1. First priority: agents supporting customer's preferred language directly
-    const directLangMatch = agents.find(a =>
+    // 1. First priority: dedicated support agents directly matching customer language
+    const directAgentMatch = agents.find(a =>
+      a.role === 'agent' && a.supportedLanguages.includes(preferredLang)
+    );
+    if (directAgentMatch) return directAgentMatch;
+
+    // 2. Second priority: any staff directly matching customer language
+    const directAnyMatch = agents.find(a =>
       a.supportedLanguages.includes(preferredLang)
     );
-    if (directLangMatch) return directLangMatch;
+    if (directAnyMatch) return directAnyMatch;
 
-    // 2. Second priority: any available agent with lowest active call load
+    // 3. Third priority: dedicated support agents with lowest call load
+    const dedicatedAgents = agents.filter(a => a.role === 'agent');
+    if (dedicatedAgents.length > 0) {
+      return dedicatedAgents.sort((a, b) => a.activeCalls.size - b.activeCalls.size)[0];
+    }
+
+    // 4. Fallback: administrators if no support agents are online
     return agents.sort((a, b) => a.activeCalls.size - b.activeCalls.size)[0] || null;
   };
 
@@ -661,13 +674,35 @@ export function initSocketServer(io: SocketIOServer) {
           callId: data.callId,
           greeting,
           status: 'active',
-          language: callLang
+          language: callLang,
+          audioUrl: `/api/voice/tts?text=${encodeURIComponent(greeting)}&lang=${callLang}`
         });
 
         io.to('role:admin').to('role:agent').emit('call:status_changed', { callId: data.callId, status: 'active' });
       } catch (err) {
         console.error('[Call] Error in call:start:', err);
         socket.emit('call:error', { message: 'Could not start call.' });
+      }
+    });
+
+    // 7B. Change language during active call
+    socket.on('call:change_language', async (data: { callId: string; language: string }) => {
+      try {
+        const normLang = (data.language || 'en').toLowerCase().slice(0, 2);
+        console.log(`[CallLanguage] Changing language for call ${data.callId} to: ${normLang}`);
+
+        await prisma.callRecord.updateMany({
+          where: { callId: data.callId },
+          data: { language: normLang }
+        });
+
+        io.to(`call:${data.callId}`).emit('call:language_changed', {
+          callId: data.callId,
+          language: normLang,
+          languageName: translationService.getLanguageName(normLang)
+        });
+      } catch (err) {
+        console.error('[CallLanguage] Error updating language:', err);
       }
     });
 
@@ -783,16 +818,38 @@ export function initSocketServer(io: SocketIOServer) {
             });
           }
 
-          let fallbackNotice = FALLBACK_MESSAGE;
-          if (callLang !== 'en') {
-            fallbackNotice = await translationService.translateText(fallbackNotice, callLang, 'en');
+          let fallbackNotice = response.answer || FALLBACK_MESSAGE;
+          const respLang = response.language || callLang;
+          if (respLang !== 'en' && !response.answer) {
+            fallbackNotice = await translationService.translateText(fallbackNotice, respLang, 'en');
           }
+
+          // Record fallback in DB transcript
+          await prisma.callTranscript.create({
+            data: {
+              callRecordId: call.id,
+              sender: 'ai',
+              senderName: 'KAIRA AI',
+              text: fallbackNotice,
+              language: respLang
+            }
+          });
 
           socket.emit('call:ai_response', {
             answer: fallbackNotice,
             isTransferring: true,
             transferId: transferReq.id,
-            language: callLang
+            language: respLang,
+            audioUrl: `/api/voice/tts?text=${encodeURIComponent(fallbackNotice)}&lang=${respLang}`
+          });
+
+          // Broadcast to call participants
+          io.to(`call:${data.callId}`).emit('call:live_transcript', {
+            sender: 'ai',
+            senderName: 'KAIRA AI',
+            text: fallbackNotice,
+            language: respLang,
+            timestamp: new Date()
           });
 
           // Broadcast transfer alert to admins
@@ -806,10 +863,11 @@ export function initSocketServer(io: SocketIOServer) {
             question: queryText,
             reason: 'Information unavailable in approved Knowledge Base',
             duration: data.duration || 0,
-            language: callLang,
+            language: respLang,
             createdAt: transferReq.createdAt
           });
         } else {
+          const respLang = response.language || callLang;
           const aiText = response.answer || FALLBACK_MESSAGE;
           // Record AI's response in transcript
           await prisma.callTranscript.create({
@@ -818,7 +876,7 @@ export function initSocketServer(io: SocketIOServer) {
               sender: 'ai',
               senderName: 'KAIRA AI',
               text: aiText,
-              language: callLang
+              language: respLang
             }
           });
 
@@ -826,7 +884,17 @@ export function initSocketServer(io: SocketIOServer) {
             answer: aiText,
             isTransferring: false,
             sources: response.sources,
-            language: callLang
+            language: respLang,
+            audioUrl: `/api/voice/tts?text=${encodeURIComponent(aiText)}&lang=${respLang}`
+          });
+
+          // Broadcast to call participants
+          io.to(`call:${data.callId}`).emit('call:live_transcript', {
+            sender: 'ai',
+            senderName: 'KAIRA AI',
+            text: aiText,
+            language: respLang,
+            timestamp: new Date()
           });
         }
       } catch (err) {
@@ -1207,6 +1275,49 @@ export function initSocketServer(io: SocketIOServer) {
       }
     });
 
+    // 16b. Live Call Reconnection & Reliability Events
+    socket.on('call:reconnecting', (data: { callId: string; attempt?: number; reason?: string }) => {
+      console.log(`[CallReconnect] Call ${data.callId} reconnecting: attempt ${data.attempt || 1} (${data.reason || 'network'})`);
+      socket.to(`call:${data.callId}`).emit('call:reconnecting', data);
+      io.to('role:admin').emit('call:reconnecting', data);
+    });
+
+    socket.on('call:reconnected', async (data: { callId: string }) => {
+      console.log(`[CallReconnect] Call ${data.callId} reconnected successfully!`);
+      socket.to(`call:${data.callId}`).emit('call:reconnected', data);
+      io.to('role:admin').emit('call:reconnected', data);
+
+      try {
+        await prisma.callRecord.updateMany({
+          where: { callId: data.callId },
+          data: {
+            wasReconnected: true,
+            reconnectCount: { increment: 1 }
+          }
+        });
+      } catch (e) {
+        console.error('[CallReconnect] Failed to update reconnectCount:', e);
+      }
+    });
+
+    socket.on('call:reconnect_failed', async (data: { callId: string; reason?: string }) => {
+      console.log(`[CallReconnect] Call ${data.callId} reconnection failed: ${data.reason}`);
+      socket.to(`call:${data.callId}`).emit('call:reconnect_failed', data);
+
+      try {
+        await prisma.callRecord.updateMany({
+          where: { callId: data.callId },
+          data: {
+            status: 'disconnected',
+            endedBy: 'network',
+            failureReason: data.reason || 'Network connection lost. Reconnection timed out.'
+          }
+        });
+      } catch (e) {
+        console.error('[CallReconnect] Failed to update disconnected status:', e);
+      }
+    });
+
     // 17. End Call (No hardcoded duration timeouts)
     socket.on('call:end', async (data: {
       callId: string;
@@ -1247,6 +1358,13 @@ export function initSocketServer(io: SocketIOServer) {
               text: `Call ended. Duration: ${duration}s. Ended by: ${data.endedBy || 'user'}.`
             }
           });
+
+          // Asynchronously trigger post-call AI intelligence analysis without delaying termination
+          setTimeout(() => {
+            callIntelligenceService.processCall(call.id).catch(err => {
+              console.error('[Socket] Asynchronous call intelligence error:', err);
+            });
+          }, 300);
         }
 
         io.to(`call:${data.callId}`).emit('call:ended', {
@@ -1310,6 +1428,18 @@ export function initSocketServer(io: SocketIOServer) {
       const user = connectedUsers.get(socket.id);
       if (user) {
         console.log(`[Socket] User disconnected: ${user.name} (${user.role})`);
+
+        // If user had active calls, inform peers that reconnection is pending
+        if (user.activeCalls.size > 0) {
+          for (const activeCallId of user.activeCalls) {
+            io.to(`call:${activeCallId}`).emit('call:reconnecting', {
+              callId: activeCallId,
+              attempt: 1,
+              reason: `${user.name} lost connection. Attempting automatic reconnection...`
+            });
+          }
+        }
+
         connectedUsers.delete(socket.id);
       }
       // If customer in queue disconnected, remove them

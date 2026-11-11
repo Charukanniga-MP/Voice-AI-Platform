@@ -5,12 +5,15 @@ import { getSocket } from '../services/socket.js';
 import { voiceService } from '../services/voice.js';
 import { webrtcManager } from '../services/webrtc.js';
 import { SupportTickets } from './SupportTickets.js';
+import { CallQualityIndicator } from '../components/CallQualityIndicator.js';
+import { AudioDeviceModal } from '../components/AudioDeviceModal.js';
+import { audioDeviceManager } from '../services/audioDevice.js';
 import { CallRecord, CallTranscript, LanguageCode, SUPPORTED_LANGUAGES } from '../types.js';
 import {
   PhoneCall, PhoneOff, Mic, MicOff, Volume2, VolumeX,
   Clock, ShieldAlert, Sparkles, MessageSquare, History, User as UserIcon,
-  Headphones, Globe, Star, Users, CheckCircle2, RefreshCw, Send, Download, Lightbulb,
-  KeyRound, HeartPulse, Flame
+  Headphones, Globe, Star, Users, CheckCircle2, RefreshCw, Settings,
+  Send, Download, Lightbulb, KeyRound, HeartPulse, Flame
 } from 'lucide-react';
 import { navigateToResetPassword } from '../utils/navigation.js';
 import { SentimentBadge } from '../components/SentimentBadge.js';
@@ -29,7 +32,7 @@ const SUGGESTED_QUESTIONS = [
 
 export const CustomerDashboard: React.FC = () => {
   const { user, token } = useAuth();
-  const { language: selectedLanguage, setLanguage: handleLanguageChange, t } = useLanguage();
+  const { language: selectedLanguage, setLanguage: setSelectedLanguage, t } = useLanguage();
 
   // Call status: 'idle' | 'connecting' | 'ringing' | 'queued' | 'active_agent' | 'active_ai' | 'transferring' | 'active_admin' | 'ended'
   const [callStatus, setCallStatus] = useState<
@@ -41,10 +44,6 @@ export const CustomerDashboard: React.FC = () => {
   const [transcripts, setTranscripts] = useState<CallTranscript[]>([]);
   const [interimText, setInterimText] = useState('');
   const [aiIsSpeaking, setAiIsSpeaking] = useState(false);
-  const aiIsSpeakingRef = useRef(false);
-  const [wasInterrupted, setWasInterrupted] = useState(false);
-  const currentAiSpeechTextRef = useRef('');
-  const [textInput, setTextInput] = useState('');
 
   // Agent/Admin details
   const [activePartner, setActivePartner] = useState<{
@@ -74,6 +73,7 @@ export const CustomerDashboard: React.FC = () => {
   const [history, setHistory] = useState<CallRecord[]>([]);
   const [selectedHistoryCall, setSelectedHistoryCall] = useState<CallRecord | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [showAudioDeviceModal, setShowAudioDeviceModal] = useState(false);
 
   // Live Sentiment Telemetry State
   const [liveSentiment, setLiveSentiment] = useState<{
@@ -87,10 +87,84 @@ export const CustomerDashboard: React.FC = () => {
   // Auto-scroll transcript
   const transcriptEndRef = useRef<HTMLDivElement>(null);
 
+  // Listen to WebRTC automatic reconnection events
+  useEffect(() => {
+    webrtcManager.setCallbacks({
+      onReconnecting: (attempt, max) => {
+        setTranscripts(prev => [
+          ...prev,
+          {
+            id: 'reconnect_' + Date.now(),
+            sender: 'system',
+            senderName: 'System',
+            text: `⚠️ Network connection interrupted. Attempting automatic reconnection... (${attempt}/${max})`,
+            timestamp: new Date().toISOString()
+          }
+        ]);
+      },
+      onReconnected: () => {
+        setTranscripts(prev => [
+          ...prev,
+          {
+            id: 'reconnect_' + Date.now(),
+            sender: 'system',
+            senderName: 'System',
+            text: `✓ Connection restored! Live two-way voice resumed.`,
+            timestamp: new Date().toISOString()
+          }
+        ]);
+      },
+      onReconnectFailed: (msg) => {
+        setCallStatus('ended');
+        setTranscripts(prev => [
+          ...prev,
+          {
+            id: 'reconnect_fail_' + Date.now(),
+            sender: 'system',
+            senderName: 'System',
+            text: `❌ ${msg}`,
+            timestamp: new Date().toISOString()
+          }
+        ]);
+      }
+    });
+  }, []);
+
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transcripts, interimText]);
 
+  // Set voice recognition language on mount and when language changes
+  useEffect(() => {
+    voiceService.setLanguage(selectedLanguage);
+  }, [selectedLanguage]);
+
+  // Sync language selection with server and active call session
+  const handleLanguageChange = async (lang: LanguageCode) => {
+    setSelectedLanguage(lang);
+    voiceService.setLanguage(lang);
+
+    // If call is active, sync with backend call session in real-time
+    if (callId && callStatus !== 'idle') {
+      const socket = getSocket();
+      socket.emit('call:change_language', { callId, language: lang });
+    }
+
+    if (token) {
+      try {
+        await fetch('/api/auth/preferences', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ preferredLanguage: lang })
+        });
+      } catch (err) {
+        console.warn('Could not save language preference:', err);
+      }
+    }
+  };
   // Duration timer: runs continuously without artificial limit
   useEffect(() => {
     let timer: any;
@@ -202,48 +276,47 @@ export const CustomerDashboard: React.FC = () => {
       ]);
 
       setAiIsSpeaking(true);
-      aiIsSpeakingRef.current = true;
-      currentAiSpeechTextRef.current = data.greeting;
-      // Keep listening immediately so customer can barge-in and interrupt greeting
-      startSpeechRecognition(data.callId, false);
-
       voiceService.speak(data.greeting, () => {
         setAiIsSpeaking(false);
-        aiIsSpeakingRef.current = false;
-        currentAiSpeechTextRef.current = '';
+        startSpeechRecognition(data.callId, false);
       }, data.language);
     });
 
-    // 7. AI response (Supports continuous barge-in)
-    socket.on('call:ai_response', (data: { answer: string; isTransferring: boolean; sources?: any[]; language?: string }) => {
+    // 7. AI response
+    socket.on('call:ai_response', (data: { answer: string; isTransferring: boolean; sources?: any[]; language?: string; audioUrl?: string }) => {
       setAiIsSpeaking(true);
-      aiIsSpeakingRef.current = true;
-      currentAiSpeechTextRef.current = data.answer;
+      voiceService.stopListening();
 
-      setTranscripts(prev => [
-        ...prev,
-        {
-          id: 't_' + Date.now(),
-          sender: 'ai',
-          senderName: 'KAIRA AI',
-          text: data.answer,
-          timestamp: new Date().toISOString()
-        }
-      ]);
+      setTranscripts(prev => {
+        const isDuplicate = prev.some(t =>
+          t.sender === 'ai' &&
+          t.text.trim().toLowerCase() === data.answer.trim().toLowerCase() &&
+          Math.abs(Date.now() - new Date(t.timestamp).getTime()) < 4000
+        );
+        if (isDuplicate) return prev;
+        return [
+          ...prev,
+          {
+            id: 't_' + Date.now(),
+            sender: 'ai',
+            senderName: 'KAIRA AI',
+            text: data.answer,
+            language: data.language || selectedLanguage,
+            timestamp: new Date().toISOString()
+          }
+        ];
+      });
 
       if (data.isTransferring) {
         setCallStatus('transferring');
       }
 
-      // Keep speech recognition continuously active so customer can interrupt mid-sentence
-      if (!data.isTransferring) {
-        startSpeechRecognition(callId || '', false);
-      }
-
+      // Play synthesized natural speech in customer's preferred language
       voiceService.speak(data.answer, () => {
         setAiIsSpeaking(false);
-        aiIsSpeakingRef.current = false;
-        currentAiSpeechTextRef.current = '';
+        if (!data.isTransferring) {
+          startSpeechRecognition(callId || '', false);
+        }
       }, data.language || selectedLanguage);
     });
 
@@ -274,7 +347,23 @@ export const CustomerDashboard: React.FC = () => {
       }
     });
 
-    // 9. Live human speech transcript relay & translation
+    // 8B. Mid-call language change confirmation
+    socket.on('call:language_changed', (data: { callId: string; language: LanguageCode; languageName: string }) => {
+      setSelectedLanguage(data.language);
+      voiceService.setLanguage(data.language);
+      setTranscripts(prev => [
+        ...prev,
+        {
+          id: 't_' + Date.now(),
+          sender: 'system',
+          senderName: 'System',
+          text: `Conversation language set to ${data.languageName}.`,
+          timestamp: new Date().toISOString()
+        }
+      ]);
+    });
+
+    // 9. Live human speech transcript relay & translation (with deduplication)
     socket.on('call:live_transcript', (data: {
       sender: any;
       senderName: string;
@@ -283,18 +372,26 @@ export const CustomerDashboard: React.FC = () => {
       language?: string;
       timestamp: string;
     }) => {
-      setTranscripts(prev => [
-        ...prev,
-        {
-          id: 't_' + Date.now() + Math.random(),
-          sender: data.sender,
-          senderName: data.senderName,
-          text: data.text,
-          translation: data.translation,
-          language: data.language,
-          timestamp: data.timestamp
-        }
-      ]);
+      setTranscripts(prev => {
+        const isDuplicate = prev.some(t =>
+          t.sender === data.sender &&
+          t.text.trim().toLowerCase() === data.text.trim().toLowerCase() &&
+          Math.abs(Date.now() - new Date(t.timestamp).getTime()) < 4000
+        );
+        if (isDuplicate) return prev;
+        return [
+          ...prev,
+          {
+            id: 't_' + Date.now() + Math.random(),
+            sender: data.sender,
+            senderName: data.senderName,
+            text: data.text,
+            translation: data.translation,
+            language: data.language,
+            timestamp: data.timestamp || new Date().toISOString()
+          }
+        ];
+      });
     });
 
     // 10. Call held & resumed
@@ -323,6 +420,7 @@ export const CustomerDashboard: React.FC = () => {
       socket.off('call:ready');
       socket.off('call:ai_response');
       socket.off('transfer:connected');
+      socket.off('call:language_changed');
       socket.off('call:live_transcript');
       socket.off('call:held');
       socket.off('call:resumed');
@@ -331,53 +429,59 @@ export const CustomerDashboard: React.FC = () => {
     };
   }, [callId, callStatus, user, selectedLanguage]);
 
-  // Unified customer query handler (usable by voice recognition, suggestion chips, and text input)
-  const handleSendCustomerQuery = (
-    queryText: string,
-    isHumanCall: boolean = false,
-    activeCallId: string = callId || ''
-  ) => {
-    const trimmed = queryText.trim();
-    if (!trimmed || !activeCallId) return;
-
-    // Interrupt AI if currently speaking
-    if (!isHumanCall && (aiIsSpeakingRef.current || voiceService.isSpeaking())) {
-      voiceService.cancelSpeech();
+  // Speech recognition helper with automatic interruption handling
+  const startSpeechRecognition = (activeCallId: string, isHumanCall: boolean = false) => {
+    voiceService.setLanguage(selectedLanguage);
+    voiceService.startListening((text, isFinal) => {
+      // Interruption: If customer starts speaking, cut off AI speech and indicator
       setAiIsSpeaking(false);
-      aiIsSpeakingRef.current = false;
-      currentAiSpeechTextRef.current = '';
-    }
 
-    setTranscripts(prev => [
-      ...prev,
-      {
-        id: 't_' + Date.now(),
-        sender: 'customer',
-        senderName: user?.name || 'Customer',
-        text: trimmed,
-        language: selectedLanguage,
-        timestamp: new Date().toISOString()
+      if (!isFinal) {
+        setInterimText(text);
+      } else {
+        setInterimText('');
+        if (!text.trim()) return;
+
+        setTranscripts(prev => {
+          const isDup = prev.some(t =>
+            t.sender === 'customer' &&
+            t.text.trim().toLowerCase() === text.trim().toLowerCase() &&
+            Math.abs(Date.now() - new Date(t.timestamp).getTime()) < 3000
+          );
+          if (isDup) return prev;
+          return [
+            ...prev,
+            {
+              id: 't_' + Date.now(),
+              sender: 'customer',
+              senderName: user?.name || 'Customer',
+              text: text.trim(),
+              language: selectedLanguage,
+              timestamp: new Date().toISOString()
+            }
+          ];
+        });
+
+        const socket = getSocket();
+        if (isHumanCall) {
+          socket.emit('call:live_speech', {
+            callId: activeCallId,
+            sender: 'customer',
+            senderName: user?.name || 'Customer',
+            text: text.trim(),
+            language: selectedLanguage
+          });
+        } else {
+          socket.emit('call:query', {
+            callId: activeCallId,
+            query: text.trim(),
+            customerId: user?.id,
+            duration,
+            language: selectedLanguage
+          });
+        }
       }
-    ]);
-
-    const socket = getSocket();
-    if (isHumanCall) {
-      socket.emit('call:live_speech', {
-        callId: activeCallId,
-        sender: 'customer',
-        senderName: user?.name || 'Customer',
-        text: trimmed,
-        language: selectedLanguage
-      });
-    } else {
-      socket.emit('call:query', {
-        callId: activeCallId,
-        query: trimmed,
-        customerId: user?.id,
-        duration,
-        language: selectedLanguage
-      });
-    }
+    });
   };
 
   // Export transcript as clean text document
@@ -392,58 +496,26 @@ export const CustomerDashboard: React.FC = () => {
 
     const blob = new Blob([header + body], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${title}-${new Date().toISOString().slice(0, 10)}.txt`;
-    link.click();
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title}-${new Date().toISOString().slice(0, 10)}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  };
-
-  // Speech recognition helper with Natural Voice Interruption (Barge-In) & Echo Guard
-  const startSpeechRecognition = (activeCallId: string, isHumanCall: boolean = false) => {
-    voiceService.setLanguage(selectedLanguage);
-    voiceService.startListening((text, isFinal) => {
-      const trimmed = text.trim();
-
-      // --- NATURAL VOICE INTERRUPTION (BARGE-IN) ---
-      // If the AI is currently speaking and user speaks, immediately silence the AI
-      if (!isHumanCall && trimmed.length > 0 && (aiIsSpeakingRef.current || voiceService.isSpeaking())) {
-        const isAiEcho = currentAiSpeechTextRef.current &&
-          currentAiSpeechTextRef.current.toLowerCase().trim().startsWith(trimmed.toLowerCase()) &&
-          trimmed.length < 6;
-
-        if (!isAiEcho) {
-          console.log('[BargeIn] User interrupted AI speech with:', trimmed);
-          voiceService.cancelSpeech();
-          setAiIsSpeaking(false);
-          aiIsSpeakingRef.current = false;
-          currentAiSpeechTextRef.current = '';
-          setWasInterrupted(true);
-          setTimeout(() => setWasInterrupted(false), 3000);
-        }
-      }
-
-      if (!isFinal) {
-        setInterimText(text);
-      } else {
-        setInterimText('');
-        if (!trimmed) return;
-
-        // --- ECHO SUPPRESSION GUARD ---
-        // Discard speech recognition events that occur while the AI itself was playing through speakers
-        if (!isHumanCall && (aiIsSpeakingRef.current || voiceService.isSpeaking())) {
-          console.log('[EchoGuard] Discarded speech recognition trigger while AI was speaking:', trimmed);
-          return;
-        }
-
-        handleSendCustomerQuery(trimmed, isHumanCall, activeCallId);
-      }
-    });
   };
 
   // 1. Customer initiates Support Agent Voice Call
   const handleStartAgentCall = async () => {
     try {
+      // Check microphone permission first
+      const perm = await audioDeviceManager.checkMicrophonePermission();
+      if (perm.state === 'denied') {
+        setShowAudioDeviceModal(true);
+        return;
+      }
+
+      voiceService.unlockAudio();
       setCallStatus('connecting');
       setDuration(0);
       setTranscripts([]);
@@ -452,6 +524,7 @@ export const CustomerDashboard: React.FC = () => {
 
       // Access microphone
       await webrtcManager.getMicrophoneStream();
+      voiceService.setLanguage(selectedLanguage);
 
       const newCallId = 'kaira_agent_call_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
       setCallId(newCallId);
@@ -467,13 +540,21 @@ export const CustomerDashboard: React.FC = () => {
     } catch (err) {
       console.error('Microphone access denied:', err);
       setCallStatus('idle');
-      alert('Microphone access is required for voice calling. Please allow microphone permissions in your browser.');
+      setShowAudioDeviceModal(true);
     }
   };
 
   // 2. Customer initiates AI Voice Assistant Call
   const handleStartAiCall = async () => {
     try {
+      // Check microphone permission first
+      const perm = await audioDeviceManager.checkMicrophonePermission();
+      if (perm.state === 'denied') {
+        setShowAudioDeviceModal(true);
+        return;
+      }
+
+      voiceService.unlockAudio();
       setCallStatus('connecting');
       setDuration(0);
       setTranscripts([]);
@@ -481,6 +562,7 @@ export const CustomerDashboard: React.FC = () => {
       setIsCallHeld(false);
 
       await webrtcManager.getMicrophoneStream();
+      voiceService.setLanguage(selectedLanguage);
 
       const newCallId = 'kaira_ai_call_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
       setCallId(newCallId);
@@ -496,7 +578,7 @@ export const CustomerDashboard: React.FC = () => {
     } catch (err) {
       console.error('Microphone access denied:', err);
       setCallStatus('idle');
-      alert('Microphone access is required for voice calling. Please allow microphone permissions in your browser.');
+      setShowAudioDeviceModal(true);
     }
   };
 
@@ -524,9 +606,6 @@ export const CustomerDashboard: React.FC = () => {
     setCallStatus('idle');
     setCallId(null);
     setAiIsSpeaking(false);
-    aiIsSpeakingRef.current = false;
-    currentAiSpeechTextRef.current = '';
-    setWasInterrupted(false);
     setInterimText('');
     setIsCallHeld(false);
     setQueueInfo(null);
@@ -617,8 +696,8 @@ export const CustomerDashboard: React.FC = () => {
                     disabled={isCallActive}
                     onClick={() => handleLanguageChange(code)}
                     className={`px-3 py-2.5 rounded-2xl text-left border transition-all cursor-pointer ${isSelected
-                        ? 'bg-white text-indigo-900 border-white shadow-md font-bold scale-[1.02]'
-                        : 'bg-white/10 text-white border-white/20 hover:bg-white/20 hover:border-white/40'
+                      ? 'bg-white text-indigo-900 border-white shadow-md font-bold scale-[1.02]'
+                      : 'bg-white/10 text-white border-white/20 hover:bg-white/20 hover:border-white/40'
                       } ${isCallActive ? 'opacity-60 cursor-not-allowed' : ''}`}
                   >
                     <div className="text-sm font-extrabold leading-tight">{meta.nativeName}</div>
@@ -667,12 +746,12 @@ export const CustomerDashboard: React.FC = () => {
           <div className="flex items-center gap-3">
             <div
               className={`w-3.5 h-3.5 rounded-full ${callStatus === 'idle'
-                  ? 'bg-slate-300'
-                  : callStatus === 'queued'
-                    ? 'bg-amber-500 animate-pulse'
-                    : callStatus === 'ringing'
-                      ? 'bg-indigo-500 animate-ping'
-                      : 'bg-emerald-500 animate-pulse'
+                ? 'bg-slate-300'
+                : callStatus === 'queued'
+                  ? 'bg-amber-500 animate-pulse'
+                  : callStatus === 'ringing'
+                    ? 'bg-indigo-500 animate-ping'
+                    : 'bg-emerald-500 animate-pulse'
                 }`}
             />
             <div>
@@ -683,28 +762,27 @@ export const CustomerDashboard: React.FC = () => {
                 {callStatus === 'ringing' && t('call.status_ringing', { name: activePartner?.name || 'Agent' })}
                 {callStatus === 'queued' && t('call.status_queued', { position: queueInfo?.position || 1 })}
                 {callStatus === 'active_agent' && t('call.status_active_agent', { name: activePartner?.name || '', language: SUPPORTED_LANGUAGES[selectedLanguage]?.name })}
-                {callStatus === 'active_ai' && (
-                  <span className="inline-flex items-center gap-1.5 flex-wrap">
-                    <span>{aiIsSpeaking ? t('call.status_ai_speaking') : t('call.status_ai_listening')}</span>
-                    {aiIsSpeaking && (
-                      <span className="text-[10px] bg-indigo-100 border border-indigo-200 text-indigo-700 font-medium px-2 py-0.5 rounded-full animate-pulse">
-                        Speak anytime to interrupt
-                      </span>
-                    )}
-                    {wasInterrupted && (
-                      <span className="text-[10px] bg-amber-100 border border-amber-200 text-amber-800 font-semibold px-2 py-0.5 rounded-full flex items-center gap-1">
-                        <Sparkles className="w-2.5 h-2.5 text-amber-600" /> Interrupted & listening
-                      </span>
-                    )}
-                  </span>
-                )}
+                {callStatus === 'active_ai' && (aiIsSpeaking ? t('call.status_ai_speaking') : t('call.status_ai_listening'))}
                 {callStatus === 'transferring' && t('call.status_transferring')}
                 {callStatus === 'active_admin' && t('call.status_active_admin', { name: activePartner?.name || '' })}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+            {/* Live Call Quality Indicator */}
+            <CallQualityIndicator isCallActive={isCallActive} />
+
+            {/* Audio Device Settings Button */}
+            <button
+              onClick={() => setShowAudioDeviceModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50 text-slate-700 hover:text-blue-700 rounded-xl text-xs font-semibold shadow-2xs transition-all cursor-pointer"
+              title="Audio & Microphone Settings"
+            >
+              <Settings className="w-3.5 h-3.5 text-slate-500" />
+              <span className="hidden sm:inline">Audio Settings</span>
+            </button>
+
             {/* Live Timer */}
             <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-700 shadow-2xs">
               <Clock className="w-3.5 h-3.5 text-slate-400" />
@@ -911,54 +989,6 @@ export const CustomerDashboard: React.FC = () => {
                   />
                 </div>
               </div>
-
-              {/* Question Suggestions for AI Voice Call */}
-              {callStatus === 'active_ai' && (
-                <div className="w-full pt-4 space-y-2 border-t border-slate-100">
-                  <div className="flex items-center justify-center gap-1.5 text-[11px] font-semibold text-slate-500">
-                    <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
-                    <span>Suggested questions (click or speak aloud):</span>
-                  </div>
-                  <div className="flex flex-wrap justify-center gap-2">
-                    {SUGGESTED_QUESTIONS.map((q) => (
-                      <button
-                        key={q}
-                        onClick={() => handleSendCustomerQuery(q, false, callId || '')}
-                        className="px-3 py-1.5 text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 rounded-xl transition-all cursor-pointer font-medium"
-                      >
-                        "{q}"
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Text Input Fallback */}
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      if (!textInput.trim()) return;
-                      handleSendCustomerQuery(textInput, false, callId || '');
-                      setTextInput('');
-                    }}
-                    className="flex items-center gap-2 max-w-md mx-auto pt-2"
-                  >
-                    <input
-                      type="text"
-                      value={textInput}
-                      onChange={(e) => setTextInput(e.target.value)}
-                      placeholder="Or type a question for the AI..."
-                      className="flex-1 px-3.5 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900 focus:outline-indigo-500 shadow-2xs"
-                    />
-                    <button
-                      type="submit"
-                      disabled={!textInput.trim()}
-                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center gap-1.5 cursor-pointer transition-colors"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      Send
-                    </button>
-                  </form>
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -1004,9 +1034,27 @@ export const CustomerDashboard: React.FC = () => {
 
           <div className="bg-white rounded-2xl border border-slate-200 p-4 h-72 overflow-y-auto space-y-3.5 shadow-2xs">
             {transcripts.length === 0 && !interimText && (
-              <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs text-center p-4">
-                <MessageSquare className="w-8 h-8 text-slate-300 mb-2 stroke-1" />
-                <p>{t('transcript.empty_notice')}</p>
+              <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs text-center p-4 space-y-3">
+                <div>
+                  <MessageSquare className="w-8 h-8 text-slate-300 mx-auto mb-2 stroke-1" />
+                  <p>{t('transcript.empty_notice')}</p>
+                </div>
+                <div className="space-y-1.5 max-w-md pt-2">
+                  <div className="flex items-center justify-center gap-1.5 text-[11px] font-semibold text-slate-500">
+                    <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Suggested questions (click or speak aloud):</span>
+                  </div>
+                  <div className="flex flex-wrap justify-center gap-1.5">
+                    {SUGGESTED_QUESTIONS.map((q) => (
+                      <span
+                        key={q}
+                        className="px-2.5 py-1 text-[11px] bg-indigo-50 text-indigo-700 border border-indigo-200/80 rounded-lg font-medium"
+                      >
+                        "{q}"
+                      </span>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -1014,10 +1062,10 @@ export const CustomerDashboard: React.FC = () => {
               <div
                 key={tItem.id}
                 className={`flex flex-col ${tItem.sender === 'customer'
-                    ? 'items-end'
-                    : tItem.sender === 'system'
-                      ? 'items-center'
-                      : 'items-start'
+                  ? 'items-end'
+                  : tItem.sender === 'system'
+                    ? 'items-center'
+                    : 'items-start'
                   }`}
               >
                 {tItem.sender === 'system' ? (
@@ -1031,10 +1079,10 @@ export const CustomerDashboard: React.FC = () => {
                     </span>
                     <div
                       className={`px-4 py-2.5 rounded-2xl text-xs leading-relaxed ${tItem.sender === 'customer'
-                          ? 'bg-blue-600 text-white rounded-tr-xs shadow-xs'
-                          : tItem.sender === 'ai'
-                            ? 'bg-slate-100 text-slate-800 rounded-tl-xs border border-slate-200'
-                            : 'bg-emerald-50 text-emerald-950 border border-emerald-200 rounded-tl-xs'
+                        ? 'bg-blue-600 text-white rounded-tr-xs shadow-xs'
+                        : tItem.sender === 'ai'
+                          ? 'bg-slate-100 text-slate-800 rounded-tl-xs border border-slate-200'
+                          : 'bg-emerald-50 text-emerald-950 border border-emerald-200 rounded-tl-xs'
                         }`}
                     >
                       <div>{tItem.text}</div>
@@ -1178,16 +1226,31 @@ export const CustomerDashboard: React.FC = () => {
                         )}
                       </td>
                       <td className="py-3 px-4">
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${call.status === 'completed'
+                        {call.intelligence ? (
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${call.intelligence.resolutionStatus === 'resolved'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : call.intelligence.resolutionStatus === 'partially_resolved'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : call.intelligence.resolutionStatus === 'escalated_admin'
+                                  ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                                  : 'bg-amber-50 text-amber-700 border border-amber-200'
+                              }`}
+                          >
+                            {call.intelligence.resolutionStatus.replace('_', ' ')}
+                          </span>
+                        ) : (
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${call.status === 'completed'
                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                               : call.status === 'active'
                                 ? 'bg-blue-50 text-blue-700 border border-blue-200'
                                 : 'bg-red-50 text-red-700 border border-red-200'
-                            }`}
-                        >
-                          {call.status}
-                        </span>
+                              }`}
+                          >
+                            {call.status}
+                          </span>
+                        )}
                       </td>
                       <td className="py-3 px-4">
                         <SentimentBadge
@@ -1271,6 +1334,43 @@ export const CustomerDashboard: React.FC = () => {
               assistanceReason={selectedHistoryCall.assistanceReason}
             />
 
+            {/* AI Call Intelligence Summary if generated */}
+            {selectedHistoryCall.intelligence && (
+              <div className="p-3.5 bg-gradient-to-r from-purple-50/80 to-indigo-50/80 border border-purple-100 rounded-2xl space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 font-bold text-purple-900">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                    AI Call Summary
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${
+                    selectedHistoryCall.intelligence.resolutionStatus === 'resolved'
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : selectedHistoryCall.intelligence.resolutionStatus === 'partially_resolved'
+                        ? 'bg-blue-100 text-blue-800'
+                        : selectedHistoryCall.intelligence.resolutionStatus === 'escalated_admin'
+                          ? 'bg-purple-100 text-purple-800'
+                          : 'bg-amber-100 text-amber-800'
+                  }`}>
+                    {selectedHistoryCall.intelligence.resolutionStatus.replace('_', ' ')}
+                  </span>
+                </div>
+                <p className="text-slate-700 leading-relaxed font-medium">
+                  {selectedHistoryCall.intelligence.overallSummary}
+                </p>
+                {selectedHistoryCall.intelligence.solutionsProvided && (
+                  <div className="text-[11px] text-slate-600 bg-white/70 p-2 rounded-xl border border-purple-100">
+                    <strong className="text-purple-800 block">Solutions Provided:</strong>
+                    {selectedHistoryCall.intelligence.solutionsProvided}
+                  </div>
+                )}
+                {selectedHistoryCall.intelligence.actionItems && (
+                  <div className="text-[11px] text-amber-800 bg-amber-50/80 p-2 rounded-xl border border-amber-200 font-semibold">
+                    Follow-Up Action: {selectedHistoryCall.intelligence.actionItems}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="max-h-80 overflow-y-auto space-y-3 p-2">
               {(!selectedHistoryCall.transcripts || selectedHistoryCall.transcripts.length === 0) ? (
                 <p className="text-xs text-slate-400 text-center py-4">{t('history.no_entries')}</p>
@@ -1302,6 +1402,11 @@ export const CustomerDashboard: React.FC = () => {
           </div>
         </div>
       )}
+      {/* Audio Device Settings Modal */}
+      <AudioDeviceModal
+        isOpen={showAudioDeviceModal}
+        onClose={() => setShowAudioDeviceModal(false)}
+      />
     </div>
   );
 };

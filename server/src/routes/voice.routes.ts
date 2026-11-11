@@ -50,11 +50,11 @@ function splitIntoChunks(text: string, maxChunkLength = 160): string[] {
   return chunks.length > 0 ? chunks : [clean.slice(0, maxChunkLength)];
 }
 
-// 1. High-fidelity Speech Synthesis Audio Stream (MP3)
-router.get('/tts', async (req: Request, res: Response) => {
+// 1. High-fidelity Speech Synthesis Audio Stream (MP3) - Supports both GET and POST
+router.all('/tts', async (req: Request, res: Response) => {
   try {
-    const text = ((req.query.text as string) || '').trim();
-    const rawLang = ((req.query.lang as string) || 'en').toLowerCase().slice(0, 2);
+    const text = ((req.query.text as string) || (req.body?.text as string) || '').trim();
+    const rawLang = ((req.query.lang as string) || (req.body?.language as string) || (req.body?.lang as string) || 'en').toLowerCase().slice(0, 2);
     const lang = SUPPORTED_LANGUAGES[rawLang] ? rawLang : 'en';
 
     if (!text) {
