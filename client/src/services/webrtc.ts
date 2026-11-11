@@ -42,6 +42,23 @@ export class WebRTCManager {
   constructor() {
     this.setupSocketListeners();
     this.setupNetworkListeners();
+    this.loadIceServers();
+  }
+
+  // Load configured ICE/TURN servers from backend
+  private async loadIceServers(): Promise<void> {
+    try {
+      const res = await fetch('/api/telephony/ice-servers');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.iceServers && Array.isArray(data.iceServers) && data.iceServers.length > 0) {
+          this.rtcConfig.iceServers = data.iceServers;
+          console.log(`[WebRTC] ICE servers loaded (${data.provider}, TURN: ${data.turnAvailable})`);
+        }
+      }
+    } catch (err) {
+      // Fallback silently to default STUN servers
+    }
   }
 
   public setCallbacks(callbacks: WebRTCCallbacks) {

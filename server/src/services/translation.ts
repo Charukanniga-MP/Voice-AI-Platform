@@ -42,12 +42,39 @@ export class TranslationService {
     return 'en';
   }
 
-  // High-accuracy translation using Google Translate GTX engine with retry
+  // High-accuracy multi-tier translation engine with automated fallback
   private async translateWithGtx(text: string, target: string, source: string = 'auto'): Promise<string> {
     const clean = (text || '').trim();
     if (!clean) return '';
 
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // Tier 1: Chrome Extension translation endpoint (high-speed, generous quota, no CAPTCHA)
+    try {
+      const url = `https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=${encodeURIComponent(source)}&tl=${encodeURIComponent(target)}&q=${encodeURIComponent(clean)}`;
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          if (Array.isArray(data[0]) && typeof data[0][0] === 'string') {
+            const out = data[0][0].trim();
+            if (out) return out;
+          } else if (typeof data[0] === 'string') {
+            const out = data[0].trim();
+            if (out) return out;
+          }
+        } else if (typeof data === 'string' && data.trim()) {
+          return data.trim();
+        }
+      }
+    } catch {
+      // Proceed to Tier 2
+    }
+
+    // Tier 2: Standard Google GTX endpoint
+    for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${encodeURIComponent(source)}&tl=${encodeURIComponent(target)}&dt=t&q=${encodeURIComponent(clean)}`;
         const res = await fetch(url, {
@@ -64,12 +91,28 @@ export class TranslationService {
             }
           }
         }
-      } catch (err: any) {
-        if (attempt < 2) {
-          await new Promise(r => setTimeout(r, 150));
+      } catch {
+        if (attempt < 1) {
+          await new Promise(r => setTimeout(r, 100));
         }
       }
     }
+
+    // Tier 3: MyMemory API fallback
+    try {
+      const srcPair = source === 'auto' ? 'autodetect' : source;
+      const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(clean)}&langpair=${encodeURIComponent(srcPair)}|${encodeURIComponent(target)}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.responseData?.translatedText && !data.responseData.translatedText.includes('MYMEMORY WARNING')) {
+          return data.responseData.translatedText.trim();
+        }
+      }
+    } catch {
+      // Fall through to clean
+    }
+
     return clean;
   }
 

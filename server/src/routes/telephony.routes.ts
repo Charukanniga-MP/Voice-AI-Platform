@@ -96,6 +96,54 @@ router.get('/status', (req: Request, res: Response) => {
   res.json(status);
 });
 
+// 1b. Retrieve Dynamic WebRTC ICE / TURN Servers
+router.get('/ice-servers', async (req: Request, res: Response) => {
+  const customTurn = process.env.TURN_SERVER_URL;
+
+  const defaultStunServers = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' }
+  ];
+
+  // 1. If Twilio client is configured, generate dynamic Twilio Network Traversal (TURN) credentials
+  if (telephonyService.isConfigured() && (telephonyService as any).twilioClient) {
+    try {
+      const token = await (telephonyService as any).twilioClient.tokens.create();
+      if (token && token.iceServers) {
+        return res.json({
+          iceServers: token.iceServers,
+          turnAvailable: true,
+          provider: 'twilio_nts'
+        });
+      }
+    } catch (err: any) {
+      console.warn('[WebRTC] Failed to generate Twilio NTS ICE servers:', err.message);
+    }
+  }
+
+  // 2. If custom TURN server is specified in environment
+  if (customTurn) {
+    const turnEntry: any = { urls: customTurn };
+    if (process.env.TURN_USERNAME) turnEntry.username = process.env.TURN_USERNAME;
+    if (process.env.TURN_CREDENTIAL) turnEntry.credential = process.env.TURN_CREDENTIAL;
+
+    return res.json({
+      iceServers: [...defaultStunServers, turnEntry],
+      turnAvailable: true,
+      provider: 'custom_turn'
+    });
+  }
+
+  // 3. Fallback: Google STUN servers only
+  res.json({
+    iceServers: defaultStunServers,
+    turnAvailable: false,
+    provider: 'stun_only',
+    message: 'STUN-only active. Behind Symmetric NAT or strict mobile cellular networks, a TURN relay is required.'
+  });
+});
+
 // 2. Generate Twilio Voice SDK Access Token for Browser Client
 router.get('/token', authenticate, requireRole(['agent', 'admin']), (req: Request, res: Response) => {
   try {

@@ -43,6 +43,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
   // Forgot password state
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSent, setForgotSent] = useState(false);
+  const [forgotResult, setForgotResult] = useState<{ emailConfigured: boolean; message: string } | null>(null);
 
   // Loading & error/success messages
   const [loading, setLoading] = useState(false);
@@ -172,6 +173,10 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to send reset instructions.');
+      setForgotResult({
+        emailConfigured: Boolean(data.emailConfigured),
+        message: data.message
+      });
       setForgotSent(true);
     } catch (err: any) {
       setError(err.message || 'Error processing forgot password request.');
@@ -562,19 +567,45 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
             <div className="space-y-4">
               {forgotSent ? (
                 <div className="text-center py-4 space-y-3">
-                  <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
-                    <CheckCircle2 className="w-6 h-6" />
-                  </div>
-                  <h3 className="font-extrabold text-slate-900 text-sm">Instructions Sent</h3>
-                  <p className="text-xs text-slate-500 leading-relaxed">
-                    If an account is associated with <span className="font-semibold text-slate-700">{forgotEmail}</span>, password reset instructions have been dispatched.
-                  </p>
+                  {forgotResult?.emailConfigured ? (
+                    <>
+                      <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
+                        <CheckCircle2 className="w-6 h-6" />
+                      </div>
+                      <h3 className="font-extrabold text-slate-900 text-sm">Instructions Sent</h3>
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        If an account is associated with <span className="font-semibold text-slate-700">{forgotEmail}</span>, password reset instructions have been dispatched.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mx-auto">
+                        <AlertCircle className="w-6 h-6" />
+                      </div>
+                      <h3 className="font-extrabold text-slate-900 text-sm">Admin-Assisted Password Reset</h3>
+                      <div className="p-3 bg-amber-50/80 rounded-xl border border-amber-200 text-left text-xs text-amber-900 space-y-1.5 leading-relaxed">
+                        <p className="font-semibold text-amber-950">
+                          Automated email delivery is not configured on this server.
+                        </p>
+                        <p className="text-[11px] text-amber-800">
+                          To reset credentials for <span className="font-bold underline">{forgotEmail}</span>, please contact your KAIRA System Administrator directly:
+                        </p>
+                        <p className="font-mono text-[11px] bg-white px-2 py-1 rounded border border-amber-300 font-bold text-slate-800">
+                          admin@kaira
+                        </p>
+                        <p className="text-[10px] text-amber-700 pt-0.5">
+                          The administrator can verify your identity and update your password in the Administrator Console.
+                        </p>
+                      </div>
+                    </>
+                  )}
                   <button
                     type="button"
                     onClick={() => {
                       setMode('login');
                       setForgotSent(false);
                       setForgotEmail('');
+                      setForgotResult(null);
                       setError(null);
                     }}
                     className="w-full py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"

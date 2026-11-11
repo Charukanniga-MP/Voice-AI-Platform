@@ -20,11 +20,31 @@ export const FALLBACK_MESSAGE = "I don't have verified information about this. L
 const STOP_WORDS = new Set([
   'the', 'is', 'at', 'which', 'on', 'a', 'an', 'and', 'or', 'but',
   'in', 'with', 'to', 'for', 'of', 'by', 'from', 'up', 'about',
-  'into', 'over', 'after', 'can', 'you', 'tell', 'me', 'how', 'what',
+  'into', 'over', 'after', 'can', 'you', 'your', 'yours', 'our', 'ours',
+  'my', 'mine', 'us', 'me', 'tell', 'how', 'what',
   'when', 'where', 'who', 'why', 'does', 'did', 'do', 'will', 'would',
   'should', 'could', 'are', 'was', 'were', 'been', 'being', 'have',
   'has', 'had', 'i', 'we', 'they', 'he', 'she', 'it', 'there', 'their'
 ]);
+
+const STEM = (w: string) => w.toLowerCase().replace(/(ies|es|s|ing|ed)$/, '');
+
+const SYNONYMS: Record<string, string[]> = {
+  service: ['product', 'capabilit', 'offer', 'solution'],
+  services: ['product', 'capabilit', 'offer', 'solution'],
+  product: ['service', 'capabilit', 'offer', 'solution'],
+  products: ['service', 'capabilit', 'offer', 'solution'],
+  cost: ['price', 'pricing', 'plan', 'rate', 'fee'],
+  price: ['cost', 'pricing', 'plan', 'rate', 'fee'],
+  pricing: ['cost', 'price', 'plan', 'rate', 'fee'],
+  hour: ['schedule', 'time', 'availability', 'support'],
+  hours: ['schedule', 'time', 'availability', 'support'],
+  support: ['help', 'assist', 'contact', 'availability'],
+  help: ['support', 'assist', 'contact'],
+  security: ['safety', 'privacy', 'complianc'],
+  cancel: ['refund', 'cancellation'],
+  refund: ['cancel', 'cancellation']
+};
 
 class KnowledgeService {
   private openai: OpenAI | null = null;
@@ -50,6 +70,18 @@ class KnowledgeService {
     return filtered.length > 0 ? filtered : tokens;
   }
 
+  // Helper to match token or its stem or domain synonyms
+  private matchToken(t: string, targets: string[]): boolean {
+    if (targets.includes(t)) return true;
+    const stemmedT = STEM(t);
+    if (targets.some(target => STEM(target) === stemmedT)) return true;
+    const syns = SYNONYMS[t] || SYNONYMS[stemmedT] || [];
+    return targets.some(target => {
+      const s = STEM(target);
+      return syns.some(syn => s === syn || target.includes(syn));
+    });
+  }
+
   // Calculate similarity between customer query and a KB entry
   private calculateScore(query: string, entry: any): number {
     const rawTokens = this.tokenize(query);
@@ -63,7 +95,7 @@ class KnowledgeService {
 
     // Strict zero-hallucination requirement: At least one significant keyword MUST match title, question, or keywords
     const hasCoreMatch = significantTokens.some(
-      t => titleTokens.includes(t) || questionTokens.includes(t) || keywordTokens.includes(t)
+      t => this.matchToken(t, titleTokens) || this.matchToken(t, questionTokens) || this.matchToken(t, keywordTokens)
     );
     if (!hasCoreMatch) {
       return 0;
@@ -83,10 +115,10 @@ class KnowledgeService {
     // Significant tokens match weights heavily
     let qMatches = 0;
     for (const token of significantTokens) {
-      if (questionTokens.includes(token)) qMatches += 2.0;
-      else if (titleTokens.includes(token)) qMatches += 1.8;
-      else if (keywordTokens.includes(token)) qMatches += 1.5;
-      else if (contentTokens.includes(token)) qMatches += 0.8;
+      if (this.matchToken(token, questionTokens)) qMatches += 2.0;
+      else if (this.matchToken(token, titleTokens)) qMatches += 1.8;
+      else if (this.matchToken(token, keywordTokens)) qMatches += 1.5;
+      else if (this.matchToken(token, contentTokens)) qMatches += 0.8;
     }
 
     const maxPossible = significantTokens.length * 2.0;

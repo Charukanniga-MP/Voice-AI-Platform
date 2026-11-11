@@ -312,7 +312,7 @@ router.put('/preferences', authenticate, async (req: Request, res: Response) => 
   }
 });
 
-// 5. Forgot Password
+// 5. Forgot Password (Truthful handling of configured email provider vs Admin-assisted reset)
 router.post('/forgot-password', async (req: Request, res: Response) => {
   try {
     const { email } = req.body;
@@ -326,12 +326,25 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
       where: { email: cleanEmail }
     });
 
+    const isEmailConfigured = Boolean(process.env.SMTP_HOST || process.env.RESEND_API_KEY);
+
+    if (!isEmailConfigured) {
+      console.log(`[Auth] Password reset requested for: ${cleanEmail}. Email provider not configured, advising Admin assistance.`);
+      res.json({
+        emailConfigured: false,
+        userFound: Boolean(user),
+        message: 'Automated email delivery is not configured on this server. To reset your password, please contact your KAIRA System Administrator (admin@kaira) who can reset your credentials directly in the Admin Console.',
+        adminContact: 'admin@kaira'
+      });
+      return;
+    }
+
     if (user) {
-      // In production, send email with reset link or token
-      console.log(`[Auth] Password reset requested for: ${cleanEmail}`);
+      console.log(`[Auth] Password reset email would be dispatched to: ${cleanEmail}`);
     }
 
     res.json({
+      emailConfigured: true,
       message: 'If an account exists with this email address, password reset instructions have been sent.'
     });
   } catch (err: any) {
