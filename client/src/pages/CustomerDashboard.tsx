@@ -12,8 +12,18 @@ import { CallRecord, CallTranscript, LanguageCode, SUPPORTED_LANGUAGES } from '.
 import {
   PhoneCall, PhoneOff, Mic, MicOff, Volume2, VolumeX,
   Clock, ShieldAlert, Sparkles, MessageSquare, History, User as UserIcon,
-  Headphones, Globe, Star, Users, CheckCircle2, RefreshCw, Settings
+  Headphones, Globe, Star, Users, CheckCircle2, RefreshCw, Settings,
+  Send, Download, Lightbulb
 } from 'lucide-react';
+
+const SUGGESTED_QUESTIONS = [
+  'What are your pricing plans?',
+  'What products does KAIRA offer?',
+  'Where is your office located?',
+  'What is your refund policy?',
+  'What are your business hours?',
+  'Connect me to an Admin'
+];
 
 export const CustomerDashboard: React.FC = () => {
   const { user, token } = useAuth();
@@ -451,6 +461,27 @@ export const CustomerDashboard: React.FC = () => {
         }
       }
     });
+  };
+
+  // Export transcript as clean text document
+  const handleDownloadTranscript = (transcriptList: CallTranscript[], title: string = 'KAIRA-Call-Transcript') => {
+    if (transcriptList.length === 0) return;
+    const header = `=================================================\nKAIRA Voice Platform - Call Transcript\nDate: ${new Date().toLocaleString()}\nLanguage: ${selectedLanguage}\n=================================================\n\n`;
+    const body = transcriptList.map(tItem => {
+      const time = tItem.timestamp ? new Date(tItem.timestamp).toLocaleTimeString() : '';
+      const speaker = tItem.senderName || (tItem.sender === 'customer' ? 'Customer' : tItem.sender === 'ai' ? 'KAIRA AI' : 'Agent');
+      return `[${time}] ${speaker}:\n${tItem.text}${tItem.translation ? `\n(Translation: ${tItem.translation})` : ''}\n`;
+    }).join('\n');
+
+    const blob = new Blob([header + body], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title}-${new Date().toISOString().slice(0, 10)}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   // 1. Customer initiates Support Agent Voice Call
@@ -922,16 +953,46 @@ export const CustomerDashboard: React.FC = () => {
                 {t('transcript.title')}
               </h3>
             </div>
-            <span className="text-[11px] text-slate-400">
-              {t('transcript.exchanges_recorded', { count: transcripts.length })}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-[11px] text-slate-400">
+                {t('transcript.exchanges_recorded', { count: transcripts.length })}
+              </span>
+              {transcripts.length > 0 && (
+                <button
+                  onClick={() => handleDownloadTranscript(transcripts, `KAIRA-LiveCall-${callId || 'active'}`)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg text-[11px] font-semibold text-slate-600 cursor-pointer shadow-2xs transition-colors"
+                  title="Export call transcript as text file"
+                >
+                  <Download className="w-3.5 h-3.5 text-slate-500" />
+                  Export .txt
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="bg-white rounded-2xl border border-slate-200 p-4 h-72 overflow-y-auto space-y-3.5 shadow-2xs">
             {transcripts.length === 0 && !interimText && (
-              <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs text-center p-4">
-                <MessageSquare className="w-8 h-8 text-slate-300 mb-2 stroke-1" />
-                <p>{t('transcript.empty_notice')}</p>
+              <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs text-center p-4 space-y-3">
+                <div>
+                  <MessageSquare className="w-8 h-8 text-slate-300 mx-auto mb-2 stroke-1" />
+                  <p>{t('transcript.empty_notice')}</p>
+                </div>
+                <div className="space-y-1.5 max-w-md pt-2">
+                  <div className="flex items-center justify-center gap-1.5 text-[11px] font-semibold text-slate-500">
+                    <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Suggested questions (click or speak aloud):</span>
+                  </div>
+                  <div className="flex flex-wrap justify-center gap-1.5">
+                    {SUGGESTED_QUESTIONS.map((q) => (
+                      <span
+                        key={q}
+                        className="px-2.5 py-1 text-[11px] bg-indigo-50 text-indigo-700 border border-indigo-200/80 rounded-lg font-medium"
+                      >
+                        "{q}"
+                      </span>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -1174,12 +1235,23 @@ export const CustomerDashboard: React.FC = () => {
                   {new Date(selectedHistoryCall.startTime).toLocaleString()} • Duration: {formatDuration(selectedHistoryCall.duration)}
                 </p>
               </div>
-              <button
-                onClick={() => setSelectedHistoryCall(null)}
-                className="text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
-              >
-                ✕ {t('history.modal_close')}
-              </button>
+              <div className="flex items-center gap-2">
+                {selectedHistoryCall.transcripts && selectedHistoryCall.transcripts.length > 0 && (
+                  <button
+                    onClick={() => handleDownloadTranscript(selectedHistoryCall.transcripts as any, `KAIRA-History-${selectedHistoryCall.id}`)}
+                    className="p-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-600 cursor-pointer"
+                    title="Export transcript as text"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                <button
+                  onClick={() => setSelectedHistoryCall(null)}
+                  className="text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
+                >
+                  ✕ {t('history.modal_close')}
+                </button>
+              </div>
             </div>
 
             {/* AI Call Intelligence Summary if generated */}

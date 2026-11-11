@@ -15,36 +15,30 @@ export interface GroundedResponse {
 }
 
 // Fallback message strictly required by specification
-export const FALLBACK_MESSAGE = "I don't have verified information about this. Let me connect you to an Admin.";
+export const FALLBACK_MESSAGE = "I'm sorry, I couldn't find the information you're looking for. Please hold while I connect you with our Admin.";
 
 const STOP_WORDS = new Set([
-  'the', 'is', 'at', 'which', 'on', 'a', 'an', 'and', 'or', 'but',
-  'in', 'with', 'to', 'for', 'of', 'by', 'from', 'up', 'about',
-  'into', 'over', 'after', 'can', 'you', 'your', 'yours', 'our', 'ours',
-  'my', 'mine', 'us', 'me', 'tell', 'how', 'what',
-  'when', 'where', 'who', 'why', 'does', 'did', 'do', 'will', 'would',
-  'should', 'could', 'are', 'was', 'were', 'been', 'being', 'have',
-  'has', 'had', 'i', 'we', 'they', 'he', 'she', 'it', 'there', 'their'
+  'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'have', 'has', 'had', 'do', 'does', 'did', 'can', 'could', 'will', 'would',
+  'shall', 'should', 'may', 'might', 'must', 'and', 'but', 'if', 'or',
+  'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with',
+  'about', 'between', 'into', 'through', 'during', 'before', 'after',
+  'to', 'from', 'in', 'out', 'on', 'off', 'over', 'under', 'again',
+  'further', 'then', 'once', 'here', 'there', 'all', 'any', 'both', 'each',
+  'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not',
+  'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'just',
+  'don', 'now', 'you', 'your', 'me', 'my', 'i', 'we', 'our', 'tell', 'give',
+  'know', 'please', 'like', 'want'
 ]);
 
-const STEM = (w: string) => w.toLowerCase().replace(/(ies|es|s|ing|ed)$/, '');
-
-const SYNONYMS: Record<string, string[]> = {
-  service: ['product', 'capabilit', 'offer', 'solution'],
-  services: ['product', 'capabilit', 'offer', 'solution'],
-  product: ['service', 'capabilit', 'offer', 'solution'],
-  products: ['service', 'capabilit', 'offer', 'solution'],
-  cost: ['price', 'pricing', 'plan', 'rate', 'fee'],
-  price: ['cost', 'pricing', 'plan', 'rate', 'fee'],
-  pricing: ['cost', 'price', 'plan', 'rate', 'fee'],
-  hour: ['schedule', 'time', 'availability', 'support'],
-  hours: ['schedule', 'time', 'availability', 'support'],
-  support: ['help', 'assist', 'contact', 'availability'],
-  help: ['support', 'assist', 'contact'],
-  security: ['safety', 'privacy', 'complianc'],
-  cancel: ['refund', 'cancellation'],
-  refund: ['cancel', 'cancellation']
-};
+function normalizeToken(token: string): string {
+  let t = token.toLowerCase().trim();
+  if (t.endsWith('ing') && t.length > 5) t = t.slice(0, -3);
+  else if (t.endsWith('ies') && t.length > 4) t = t.slice(0, -3) + 'y';
+  else if (t.endsWith('es') && t.length > 4) t = t.slice(0, -2);
+  else if (t.endsWith('s') && t.length > 3) t = t.slice(0, -1);
+  return t;
+}
 
 class KnowledgeService {
   private openai: OpenAI | null = null;
@@ -55,73 +49,60 @@ class KnowledgeService {
     }
   }
 
-  // Tokenize and clean text for lexical relevance (Full Unicode support for all languages)
+  // Tokenize and clean text for lexical relevance
   private tokenize(text: string): string[] {
     return text
       .toLowerCase()
-      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .replace(/[^\w\s]/g, ' ')
       .split(/\s+/)
+      .map(w => normalizeToken(w))
       .filter(w => w.length > 1);
   }
 
-  // Significant tokens excluding common grammatical stopwords
-  private getSignificantTokens(tokens: string[]): string[] {
-    const filtered = tokens.filter(t => !STOP_WORDS.has(t) && t.length > 2);
-    return filtered.length > 0 ? filtered : tokens;
-  }
-
-  // Helper to match token or its stem or domain synonyms
-  private matchToken(t: string, targets: string[]): boolean {
-    if (targets.includes(t)) return true;
-    const stemmedT = STEM(t);
-    if (targets.some(target => STEM(target) === stemmedT)) return true;
-    const syns = SYNONYMS[t] || SYNONYMS[stemmedT] || [];
-    return targets.some(target => {
-      const s = STEM(target);
-      return syns.some(syn => s === syn || target.includes(syn));
-    });
+  // Filter meaningful content tokens (ignoring conversational filler words)
+  private extractContentTokens(text: string): string[] {
+    return this.tokenize(text).filter(w => !STOP_WORDS.has(w));
   }
 
   // Calculate similarity between customer query and a KB entry
   private calculateScore(query: string, entry: any): number {
-    const rawTokens = this.tokenize(query);
-    if (rawTokens.length === 0) return 0;
+    const rawQueryTokens = this.tokenize(query);
+    if (rawQueryTokens.length === 0) return 0;
 
-    const significantTokens = this.getSignificantTokens(rawTokens);
+    const contentQueryTokens = this.extractContentTokens(query);
+    const tokensToMatch = contentQueryTokens.length > 0 ? contentQueryTokens : rawQueryTokens;
+
     const titleTokens = this.tokenize(entry.title || '');
     const questionTokens = this.tokenize(entry.question || '');
     const contentTokens = this.tokenize(entry.content || '');
     const keywordTokens = this.tokenize(entry.keywords || '');
 
-    // Strict zero-hallucination requirement: At least one significant keyword MUST match title, question, or keywords
-    const hasCoreMatch = significantTokens.some(
-      t => this.matchToken(t, titleTokens) || this.matchToken(t, questionTokens) || this.matchToken(t, keywordTokens)
-    );
-    if (!hasCoreMatch) {
-      return 0;
-    }
-
     let score = 0;
-    const queryLower = query.toLowerCase();
+    const cleanQuery = query.toLowerCase().replace(/[^\w\s]/g, ' ').trim();
 
     // Check direct substring matches
-    if (entry.question && queryLower.includes(entry.question.toLowerCase().trim())) {
-      score += 0.8;
+    if (entry.question) {
+      const cleanQ = entry.question.toLowerCase().replace(/[^\w\s]/g, ' ').trim();
+      if (cleanQuery.includes(cleanQ) || cleanQ.includes(cleanQuery)) {
+        score += 0.8;
+      }
     }
-    if (entry.title && queryLower.includes(entry.title.toLowerCase().trim())) {
-      score += 0.6;
+    if (entry.title) {
+      const cleanT = entry.title.toLowerCase().replace(/[^\w\s]/g, ' ').trim();
+      if (cleanQuery.includes(cleanT) || cleanT.includes(cleanQuery)) {
+        score += 0.6;
+      }
     }
 
-    // Significant tokens match weights heavily
     let qMatches = 0;
-    for (const token of significantTokens) {
-      if (this.matchToken(token, questionTokens)) qMatches += 2.0;
-      else if (this.matchToken(token, titleTokens)) qMatches += 1.8;
-      else if (this.matchToken(token, keywordTokens)) qMatches += 1.5;
-      else if (this.matchToken(token, contentTokens)) qMatches += 0.8;
+    for (const token of tokensToMatch) {
+      if (questionTokens.includes(token)) qMatches += 2.5;
+      else if (titleTokens.includes(token)) qMatches += 2.0;
+      else if (keywordTokens.includes(token)) qMatches += 2.0;
+      else if (contentTokens.includes(token)) qMatches += 1.0;
     }
 
-    const maxPossible = significantTokens.length * 2.0;
+    const maxPossible = tokensToMatch.length * 2.5;
     const matchRatio = Math.min(1.0, qMatches / Math.max(1, maxPossible));
     score += matchRatio;
 
@@ -141,7 +122,7 @@ class KnowledgeService {
 
     // Filter by threshold
     const sorted = scored
-      .filter(item => item.score > 0.28)
+      .filter(item => item.score > 0.22)
       .sort((a, b) => b.score - a.score);
 
     return sorted.slice(0, limit);
@@ -150,13 +131,101 @@ class KnowledgeService {
   // Answer customer query strictly grounded in Knowledge Base
   public async answerQuery(query: string): Promise<GroundedResponse> {
     const trimmedQuery = query.trim();
-
-    // Handle common conversational pleasantries naturally without transferring
-    const pleasantries = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening', 'who are you', 'how are you'];
-    const isPleasantry = pleasantries.some(p => trimmedQuery.toLowerCase() === p || trimmedQuery.toLowerCase() === p + '!');
-    if (isPleasantry) {
+    if (!trimmedQuery) {
       return {
-        answer: "Hello! Welcome to KAIRA. I am your AI customer communication assistant. How can I assist you with our platform, pricing, or voice services today?",
+        answer: "I am listening. How can I help you today?",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0
+      };
+    }
+
+    const cleanInput = trimmedQuery.toLowerCase().replace(/['".,!?;:]/g, '').trim();
+
+    // 1. Explicit request to speak with a human / Admin
+    if (/\b(speak\s+to|talk\s+to|connect(\s+me)?(\s+to)?|transfer(\s+me)?(\s+to)?|put\s+me\s+through\s+to|let\s+me\s+speak\s+to|want|need)\s+(an?\s+)?(admin|agent|human|person|representative|support|specialist)\b/i.test(cleanInput) ||
+        /\b(human agent|live agent|human representative|transfer me|live person)\b/i.test(cleanInput)) {
+      return {
+        answer: "Certainly. I am connecting you with our human Administrator right now. Please hold for a moment.",
+        isGrounded: false,
+        requiresTransfer: true,
+        sources: [],
+        confidence: 1.0
+      };
+    }
+
+    // 2. Greetings
+    if (/^(hi|hello|hey|good\s+(morning|afternoon|evening)|howdy)(\s+(there|kaira|assistant))?$/i.test(cleanInput) ||
+        cleanInput === 'hi' || cleanInput === 'hello' || cleanInput === 'hey') {
+      return {
+        answer: "Hello! Welcome to KAIRA. I am your AI customer communication assistant. How can I help you today with our platform, pricing, or voice services?",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0
+      };
+    }
+
+    // 3. How are you
+    if (/\b(how\s+are\s+you|how\s+are\s+things|hows\s+it\s+going|how\s+is\s+it\s+going)\b/i.test(cleanInput)) {
+      return {
+        answer: "I'm doing great, thank you! How may I assist you with KAIRA's platform or services today?",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0
+      };
+    }
+
+    // 4. Who are you / What can you do
+    if (/\b(who\s+are\s+you|what\s+can\s+you\s+do|what\s+is\s+your\s+name|what\s+are\s+you)\b/i.test(cleanInput)) {
+      return {
+        answer: "I am KAIRA's official AI voice assistant. I can answer questions about our voice platform, pricing plans, operating hours, and policies, or transfer you to our live administrative team.",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0
+      };
+    }
+
+    // 5. Thanks / Gratitude
+    if (/\b(thank\s+you|thanks|thank\s+you\s+so\s+much|appreciate\s+it|thx)\b/i.test(cleanInput)) {
+      return {
+        answer: "You are very welcome! Please let me know if there is anything else I can help you with today.",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0
+      };
+    }
+
+    // 6. Affirmations / Acknowledgments (OK, got it)
+    if (/^(ok|okay|got\s+it|alright|cool|great|sounds\s+good|perfect|sure|yes|yeah|yep)$/i.test(cleanInput)) {
+      return {
+        answer: "Great! Feel free to ask any other questions or let me know if you would like me to connect you with an admin.",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0
+      };
+    }
+
+    // 7. Goodbyes
+    if (/\b(goodbye|bye|bye\s+bye|see\s+you|talk\s+to\s+you\s+later|have\s+a\s+good\s+day)\b/i.test(cleanInput)) {
+      return {
+        answer: "Thank you for reaching out to KAIRA. Have a wonderful day ahead! Goodbye.",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0
+      };
+    }
+
+    // 8. Repeat request
+    if (/\b(repeat|say\s+that\s+again|pardon|what\s+did\s+you\s+say|once\s+more)\b/i.test(cleanInput)) {
+      return {
+        answer: "Sure, let me repeat: I am here to assist you with KAIRA's voice platform, subscriptions, policies, and customer support inquiries.",
         isGrounded: true,
         requiresTransfer: false,
         sources: [],
@@ -167,8 +236,8 @@ class KnowledgeService {
     // Search knowledge base
     const matches = await this.search(trimmedQuery);
 
-    // If no matches or score is below strict threshold -> Trigger transfer!
-    if (matches.length === 0 || matches[0].score < 0.35) {
+    // If no matches or score is below calibrated threshold -> Trigger transfer!
+    if (matches.length === 0 || matches[0].score < 0.28) {
       console.log(`[AI Grounding] Low confidence (${matches[0]?.score || 0}) for query: "${trimmedQuery}". Escalating to Admin.`);
       return {
         answer: FALLBACK_MESSAGE,
