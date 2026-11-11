@@ -25,6 +25,14 @@ uploads/
 *.db
 *.db-journal
 
+# SSL Certificates & Private Keys (NEVER COMMIT)
+ssl/
+server/ssl/
+*.pfx
+*.pem
+*.crt
+*.key
+
 # Logs
 logs/
 *.log

@@ -98,7 +98,7 @@ router.get('/status', (req: Request, res: Response) => {
 
 // 1b. Retrieve Dynamic WebRTC ICE / TURN Servers
 router.get('/ice-servers', async (req: Request, res: Response) => {
-  const customTurn = process.env.TURN_SERVER_URL;
+  const customTurn = process.env.TURN_SERVER_URL?.trim();
 
   const defaultStunServers = [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -124,9 +124,13 @@ router.get('/ice-servers', async (req: Request, res: Response) => {
 
   // 2. If custom TURN server is specified in environment
   if (customTurn) {
-    const turnEntry: any = { urls: customTurn };
-    if (process.env.TURN_USERNAME) turnEntry.username = process.env.TURN_USERNAME;
-    if (process.env.TURN_CREDENTIAL) turnEntry.credential = process.env.TURN_CREDENTIAL;
+    const urls = customTurn.includes(',')
+      ? customTurn.split(',').map(u => u.trim()).filter(Boolean)
+      : customTurn;
+
+    const turnEntry: any = { urls };
+    if (process.env.TURN_USERNAME?.trim()) turnEntry.username = process.env.TURN_USERNAME.trim();
+    if (process.env.TURN_CREDENTIAL?.trim()) turnEntry.credential = process.env.TURN_CREDENTIAL.trim();
 
     return res.json({
       iceServers: [...defaultStunServers, turnEntry],
@@ -141,6 +145,24 @@ router.get('/ice-servers', async (req: Request, res: Response) => {
     turnAvailable: false,
     provider: 'stun_only',
     message: 'STUN-only active. Behind Symmetric NAT or strict mobile cellular networks, a TURN relay is required.'
+  });
+});
+
+// 1c. Diagnostic endpoint to test and validate TURN configuration
+router.get('/turn-diagnostic', async (req: Request, res: Response) => {
+  const customTurn = process.env.TURN_SERVER_URL?.trim();
+  const username = process.env.TURN_USERNAME?.trim();
+  const credential = process.env.TURN_CREDENTIAL?.trim();
+
+  res.json({
+    turnServerConfigured: !!customTurn,
+    turnServerUrl: customTurn || null,
+    hasUsername: !!username,
+    hasCredential: !!credential,
+    twilioConfigured: telephonyService.isConfigured(),
+    message: customTurn
+      ? 'Custom TURN credentials active in environment.'
+      : (telephonyService.isConfigured() ? 'Twilio NTS active.' : 'STUN-only. No TURN relay credentials configured.')
   });
 });
 

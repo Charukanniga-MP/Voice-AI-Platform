@@ -29,6 +29,8 @@ export class WebRTCManager {
   private reconnectBackoffTimer: any = null;
 
   private callbacks: WebRTCCallbacks = {};
+  private iceServersLoaded: boolean = false;
+  private isTurnActive: boolean = false;
 
   private rtcConfig: RTCConfiguration = {
     iceServers: [
@@ -53,11 +55,13 @@ export class WebRTCManager {
         const data = await res.json();
         if (data.iceServers && Array.isArray(data.iceServers) && data.iceServers.length > 0) {
           this.rtcConfig.iceServers = data.iceServers;
-          console.log(`[WebRTC] ICE servers loaded (${data.provider}, TURN: ${data.turnAvailable})`);
+          this.isTurnActive = data.turnAvailable === true;
+          this.iceServersLoaded = true;
+          console.log(`[WebRTC] ICE servers loaded (${data.provider}, TURN active: ${this.isTurnActive})`);
         }
       }
     } catch (err) {
-      // Fallback silently to default STUN servers
+      console.warn('[WebRTC] Fallback to default STUN servers due to fetch error:', err);
     }
   }
 
@@ -222,6 +226,10 @@ export class WebRTCManager {
   private async initPeerConnection(): Promise<RTCPeerConnection> {
     if (this.peerConnection) return this.peerConnection;
 
+    if (!this.iceServersLoaded) {
+      await this.loadIceServers();
+    }
+
     this.peerConnection = new RTCPeerConnection(this.rtcConfig);
 
     // Add local tracks
@@ -240,14 +248,29 @@ export class WebRTCManager {
 
     // On ICE candidate generated
     this.peerConnection.onicecandidate = (event) => {
-      if (event.candidate && this.callId) {
-        const socket = getSocket();
-        socket.emit('webrtc:ice-candidate', {
-          target: this.targetSocketId,
-          candidate: event.candidate,
-          callId: this.callId
-        });
+      if (event.candidate) {
+        const candType = event.candidate.type;
+        const protocol = event.candidate.protocol;
+        const port = event.candidate.port;
+        console.log(`[WebRTC ICE] Local candidate: type=${candType}, protocol=${protocol}, port=${port}`);
+        if (candType === 'relay') {
+          console.log('🛡️ [WebRTC TURN Relay] Successfully allocated active TURN relay candidate:', event.candidate.candidate);
+        }
+
+        if (this.callId) {
+          const socket = getSocket();
+          socket.emit('webrtc:ice-candidate', {
+            target: this.targetSocketId,
+            candidate: event.candidate,
+            callId: this.callId
+          });
+        }
       }
+    };
+
+    // ICE candidate error monitor (e.g. 401 Unauthorized from TURN server)
+    (this.peerConnection as any).onicecandidateerror = (event: any) => {
+      console.warn(`[WebRTC ICE Error] Server: ${event.url}, Code: ${event.errorCode}, Text: ${event.errorText}`);
     };
 
     // Connection state monitor
@@ -258,6 +281,7 @@ export class WebRTCManager {
 
       if (state === 'connected') {
         this.handleReconnectionSuccess();
+        this.inspectActiveCandidatePair();
       } else if (state === 'disconnected' || state === 'failed') {
         this.handleDisconnection(`Connection state: ${state}`);
       }
@@ -270,6 +294,7 @@ export class WebRTCManager {
 
       if (iceState === 'connected' || iceState === 'completed') {
         this.handleReconnectionSuccess();
+        this.inspectActiveCandidatePair();
       } else if (iceState === 'disconnected' || iceState === 'failed') {
         this.handleDisconnection(`ICE state: ${iceState}`);
       }
@@ -281,6 +306,36 @@ export class WebRTCManager {
     }
 
     return this.peerConnection;
+  }
+
+  // Inspect active candidate pair to confirm whether TURN relay is actively routing audio
+  public async inspectActiveCandidatePair(): Promise<{ localType?: string; remoteType?: string; isRelay: boolean }> {
+    if (!this.peerConnection) return { isRelay: false };
+    try {
+      const stats = await this.peerConnection.getStats();
+      let selectedPair: any = null;
+      stats.forEach((report: any) => {
+        if (report.type === 'transport' && report.selectedCandidatePairId) {
+          selectedPair = stats.get(report.selectedCandidatePairId);
+        } else if (report.type === 'candidate-pair' && report.nominated && report.state === 'succeeded') {
+          selectedPair = report;
+        }
+      });
+      if (selectedPair) {
+        const localCand = stats.get(selectedPair.localCandidateId);
+        const remoteCand = stats.get(selectedPair.remoteCandidateId);
+        const isRelay = localCand?.candidateType === 'relay' || remoteCand?.candidateType === 'relay';
+        console.log(`[WebRTC Diagnostics] Active pair: Local=${localCand?.candidateType} (${localCand?.protocol}), Remote=${remoteCand?.candidateType} (${remoteCand?.protocol}), TURN Relay Used: ${isRelay}`);
+        return {
+          localType: localCand?.candidateType,
+          remoteType: remoteCand?.candidateType,
+          isRelay
+        };
+      }
+    } catch (err) {
+      console.warn('[WebRTC Diagnostics] Failed to inspect candidate pair:', err);
+    }
+    return { isRelay: false };
   }
 
   // Handle network or ICE disconnection by initiating auto-reconnection

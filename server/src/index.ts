@@ -11,6 +11,7 @@ dotenv.config();
 
 import express from 'express';
 import http from 'http';
+import https from 'https';
 import cors from 'cors';
 import fs from 'fs';
 import { Server as SocketIOServer } from 'socket.io';
@@ -42,22 +43,73 @@ try {
 }
 
 const app = express();
-const server = http.createServer(app);
 
-// Strict CORS Whitelist Configuration
+// Trust reverse proxy headers (e.g. Nginx, Caddy, Cloudflare, Traefik, AWS ALB)
+app.set('trust proxy', true);
+
+// Configure HTTP or HTTPS server
+let server: http.Server | https.Server;
+const isHttpsRequested = process.env.HTTPS === 'true';
+const sslKeyPath = process.env.SSL_KEY_PATH;
+const sslCertPath = process.env.SSL_CERT_PATH;
+const sslPfxPath = process.env.SSL_PFX_PATH || 'ssl/server.pfx';
+const sslPassphrase = process.env.SSL_PASSPHRASE || 'kaira123';
+
+const resolvedPfx = path.resolve(process.cwd(), sslPfxPath);
+const resolvedKey = sslKeyPath ? path.resolve(process.cwd(), sslKeyPath) : '';
+const resolvedCert = sslCertPath ? path.resolve(process.cwd(), sslCertPath) : '';
+
+let activeProtocol = 'http';
+
+if (isHttpsRequested) {
+  if (resolvedKey && resolvedCert && fs.existsSync(resolvedKey) && fs.existsSync(resolvedCert)) {
+    server = https.createServer({
+      key: fs.readFileSync(resolvedKey),
+      cert: fs.readFileSync(resolvedCert)
+    }, app);
+    activeProtocol = 'https';
+    console.log('🔒 HTTPS server active (Loaded PEM SSL key & certificate)');
+  } else if (fs.existsSync(resolvedPfx)) {
+    server = https.createServer({
+      pfx: fs.readFileSync(resolvedPfx),
+      passphrase: sslPassphrase
+    }, app);
+    activeProtocol = 'https';
+    console.log('🔒 HTTPS server active (Loaded PFX SSL certificate)');
+  } else {
+    console.warn('⚠️ HTTPS=true requested, but SSL files not found. Defaulting to HTTP server.');
+    server = http.createServer(app);
+  }
+} else {
+  server = http.createServer(app);
+}
+
+// Strict CORS Whitelist Configuration (Supports HTTP, HTTPS, tunnels, and local LAN)
 const rawAllowedOrigins = [
   process.env.CLIENT_URL,
   process.env.FRONTEND_URL,
+  process.env.PUBLIC_URL,
+  process.env.TUNNEL_URL,
   'http://localhost:5173',
+  'https://localhost:5173',
   'http://127.0.0.1:5173',
+  'https://127.0.0.1:5173',
   'http://localhost:5000',
+  'https://localhost:5000',
   'http://127.0.0.1:5000',
-  'http://localhost:3000'
+  'https://127.0.0.1:5000',
+  'http://localhost:3000',
+  'https://localhost:3000'
 ].filter(Boolean) as string[];
 
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
-    if (!origin || rawAllowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+    if (
+      !origin ||
+      rawAllowedOrigins.includes(origin) ||
+      process.env.NODE_ENV !== 'production' ||
+      (origin && (origin.includes('localhost') || origin.includes('127.0.0.1') || origin.includes('10.118.215.233')))
+    ) {
       callback(null, true);
     } else {
       callback(new Error('Blocked by CORS policy: Origin not allowed.'));
@@ -72,7 +124,12 @@ const corsOptions: cors.CorsOptions = {
 const io = new SocketIOServer(server, {
   cors: {
     origin: (origin, callback) => {
-      if (!origin || rawAllowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      if (
+        !origin ||
+        rawAllowedOrigins.includes(origin) ||
+        process.env.NODE_ENV !== 'production' ||
+        (origin && (origin.includes('localhost') || origin.includes('127.0.0.1') || origin.includes('10.118.215.233')))
+      ) {
         callback(null, true);
       } else {
         callback(new Error('Blocked by Socket.IO CORS'));
@@ -173,9 +230,9 @@ const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, async () => {
   console.log(`===============================================`);
-  console.log(`🚀 KAIRA Platform Backend Running on port ${PORT}`);
-  console.log(`📍 Health Check: http://localhost:${PORT}/api/health`);
-  console.log(`🔒 Security Baseline: JWT verification active, uploads protected`);
+  console.log(`🚀 KAIRA Platform Backend Running on ${activeProtocol}://0.0.0.0:${PORT}`);
+  console.log(`📍 Health Check: ${activeProtocol}://localhost:${PORT}/api/health`);
+  console.log(`🔒 Security Baseline: JWT verification active, uploads protected, Protocol: ${activeProtocol.toUpperCase()}`);
   console.log(`===============================================`);
 
   // Ensure default Admin, Agent, and KB records are initialized
