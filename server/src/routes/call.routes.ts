@@ -416,9 +416,23 @@ router.get('/queue', authenticate, requireRole(['admin', 'agent']), async (req: 
 router.post('/:id/notes', authenticate, requireRole(['admin', 'agent']), async (req: Request, res: Response) => {
   try {
     const { notes } = req.body;
+    const existing = await prisma.callRecord.findUnique({
+      where: { id: req.params.id }
+    });
+
+    if (!existing) {
+      res.status(404).json({ error: 'Call record not found.' });
+      return;
+    }
+
+    if (req.user!.role !== 'admin' && existing.agentId !== req.user!.id) {
+      res.status(403).json({ error: 'Access denied: You can only edit notes for calls assigned to you.' });
+      return;
+    }
+
     const call = await prisma.callRecord.update({
       where: { id: req.params.id },
-      data: { callNotes: notes }
+      data: { callNotes: typeof notes === 'string' ? notes.trim() : '' }
     });
 
     res.json({ message: 'Call notes saved successfully.', callNotes: call.callNotes });
@@ -431,9 +445,30 @@ router.post('/:id/notes', authenticate, requireRole(['admin', 'agent']), async (
 router.post('/:id/rating', authenticate, async (req: Request, res: Response) => {
   try {
     const { rating } = req.body;
+    const numRating = Number(rating);
+
+    if (isNaN(numRating) || numRating < 1 || numRating > 5) {
+      res.status(400).json({ error: 'Rating must be an integer between 1 and 5.' });
+      return;
+    }
+
+    const existing = await prisma.callRecord.findUnique({
+      where: { id: req.params.id }
+    });
+
+    if (!existing) {
+      res.status(404).json({ error: 'Call record not found.' });
+      return;
+    }
+
+    if (req.user!.role !== 'admin' && existing.customerId !== req.user!.id) {
+      res.status(403).json({ error: 'Access denied: You can only rate your own customer calls.' });
+      return;
+    }
+
     await prisma.callRecord.update({
       where: { id: req.params.id },
-      data: { rating: Number(rating) }
+      data: { rating: numRating }
     });
 
     res.json({ message: 'Rating saved.' });
@@ -461,6 +496,16 @@ router.post('/:id/quality', authenticate, async (req: Request, res: Response) =>
 
     if (!existing) {
       res.status(404).json({ error: 'Call record not found.' });
+      return;
+    }
+
+    // Verify caller is a legitimate participant or admin
+    const isCustomer = existing.customerId === req.user!.id;
+    const isAgent = existing.agentId === req.user!.id;
+    const isAdmin = req.user!.role === 'admin';
+
+    if (!isCustomer && !isAgent && !isAdmin) {
+      res.status(403).json({ error: 'Access denied: You are not a participant in this call.' });
       return;
     }
 

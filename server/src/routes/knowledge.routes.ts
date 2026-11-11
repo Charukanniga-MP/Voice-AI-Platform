@@ -223,7 +223,7 @@ router.post('/upload', authenticate, requireRole(['admin']), upload.single('file
     const doc = await prisma.knowledgeDocument.create({
       data: {
         title: title.trim(),
-        fileName: file.originalname,
+        fileName: file.filename || file.originalname,
         fileType: file.mimetype,
         fileSize: file.size,
         status: 'processing',
@@ -265,9 +265,79 @@ router.delete('/documents/:id', authenticate, requireRole(['admin']), async (req
       where: { id: doc.id }
     });
 
+    // Safely remove file from disk if present
+    const safeBaseName = path.basename(doc.fileName);
+    const resolvedPath = path.resolve(uploadDir, safeBaseName);
+    if (resolvedPath.startsWith(uploadDir) && fs.existsSync(resolvedPath)) {
+      try {
+        await fs.promises.unlink(resolvedPath);
+      } catch (e) {
+        console.warn(`[Knowledge] Could not delete disk file ${resolvedPath}:`, e);
+      }
+    }
+
     res.json({ message: 'Document and its extracted knowledge entries removed.' });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to delete document.' });
+  }
+});
+
+// 8. Secure Authenticated Document Download (Admin & Agent)
+router.get('/documents/:id/download', authenticate, requireRole(['admin', 'agent']), async (req: Request, res: Response) => {
+  try {
+    const doc = await prisma.knowledgeDocument.findUnique({
+      where: { id: req.params.id }
+    });
+
+    if (!doc) {
+      res.status(404).json({ error: 'Document record not found.' });
+      return;
+    }
+
+    // Sanitize filename to prevent directory traversal
+    const safeBaseName = path.basename(doc.fileName);
+    const resolvedPath = path.resolve(uploadDir, safeBaseName);
+
+    // Verify path remains strictly inside uploadDir
+    if (!resolvedPath.startsWith(uploadDir)) {
+      res.status(403).json({ error: 'Access denied: Path traversal detected.' });
+      return;
+    }
+
+    if (!fs.existsSync(resolvedPath)) {
+      res.status(404).json({ error: 'Document file not found on disk.' });
+      return;
+    }
+
+    res.setHeader('Content-Type', doc.fileType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(doc.title || doc.fileName)}"`);
+    res.sendFile(resolvedPath);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to access document file.' });
+  }
+});
+
+// 9. Authenticated direct file access by filename (strictly prevents directory traversal)
+router.get('/file/:filename', authenticate, requireRole(['admin', 'agent']), async (req: Request, res: Response) => {
+  try {
+    const requestedFile = req.params.filename;
+    // Strip directory separators to prevent traversal
+    const safeBaseName = path.basename(requestedFile);
+    const resolvedPath = path.resolve(uploadDir, safeBaseName);
+
+    if (!resolvedPath.startsWith(uploadDir)) {
+      res.status(403).json({ error: 'Access denied: Invalid file path.' });
+      return;
+    }
+
+    if (!fs.existsSync(resolvedPath)) {
+      res.status(404).json({ error: 'Requested file not found.' });
+      return;
+    }
+
+    res.sendFile(resolvedPath);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Error retrieving requested file.' });
   }
 });
 

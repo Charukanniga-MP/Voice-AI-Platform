@@ -16,11 +16,6 @@ interface GitStatus {
 }
 
 export const DevSyncMonitor: React.FC = () => {
-  // CRITICAL PRODUCTION SAFETY: Never render or mount in production builds
-  if (!import.meta.env.DEV) {
-    return null;
-  }
-
   const [isOpen, setIsOpen] = useState(false);
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -29,10 +24,21 @@ export const DevSyncMonitor: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const fetchStatus = useCallback(async () => {
+    // Only query if dev environment and token exists
+    if (!import.meta.env.DEV) return;
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch('/api/dev/git/status');
+      const res = await fetch('/api/dev/git/status', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.status === 401 || res.status === 403) {
+        // Not logged in as admin - suppress error in UI
+        return;
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setStatus(data);
@@ -44,6 +50,7 @@ export const DevSyncMonitor: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (!import.meta.env.DEV) return;
     fetchStatus();
     // Poll every 30 seconds only in development
     const interval = setInterval(fetchStatus, 30000);
@@ -51,9 +58,17 @@ export const DevSyncMonitor: React.FC = () => {
   }, [fetchStatus]);
 
   const handleFetchUpdates = async () => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      setError('Admin authentication required.');
+      return;
+    }
     setActionLoading('fetch');
     try {
-      const res = await fetch('/api/dev/git/fetch', { method: 'POST' });
+      const res = await fetch('/api/dev/git/fetch', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
       await res.json();
       await fetchStatus();
     } catch (err: any) {
@@ -64,10 +79,18 @@ export const DevSyncMonitor: React.FC = () => {
   };
 
   const handlePullChanges = async () => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      setError('Admin authentication required.');
+      return;
+    }
     setActionLoading('pull');
     setLogOutput('Initiating safe pull with auto-backup...');
     try {
-      const res = await fetch('/api/dev/git/pull', { method: 'POST' });
+      const res = await fetch('/api/dev/git/pull', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
       const data = await res.json();
       if (!res.ok) {
         setLogOutput(data.stdout || data.details || data.error);
@@ -83,10 +106,18 @@ export const DevSyncMonitor: React.FC = () => {
   };
 
   const handlePushChanges = async () => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      setError('Admin authentication required.');
+      return;
+    }
     setActionLoading('push');
     setLogOutput('Running pre-push checks and verification...');
     try {
-      const res = await fetch('/api/dev/git/push', { method: 'POST' });
+      const res = await fetch('/api/dev/git/push', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
       const data = await res.json();
       if (!res.ok) {
         setLogOutput(data.stdout || data.details || data.error);
@@ -100,6 +131,11 @@ export const DevSyncMonitor: React.FC = () => {
       setActionLoading(null);
     }
   };
+
+  // Safe early exit for production builds AFTER all hooks have executed unconditionally
+  if (!import.meta.env.DEV) {
+    return null;
+  }
 
   // Status Badge Styling
   const getBadgeStyle = () => {

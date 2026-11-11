@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../db.js';
 import { generateToken, authenticate } from '../middleware/auth.js';
+import { authLimiter } from '../middleware/rateLimiter.js';
 
 const router = Router();
 
@@ -23,7 +24,7 @@ function formatUserResponse(user: any) {
 }
 
 // 1. Unified Password Login (Supports Customer, Support Agent, and Administrator)
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', authLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password, role } = req.body;
 
@@ -96,7 +97,7 @@ router.post('/login', async (req: Request, res: Response) => {
 });
 
 // 1a. Dedicated Administrator Login
-router.post('/admin/login', async (req: Request, res: Response) => {
+router.post('/admin/login', authLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
@@ -126,7 +127,7 @@ router.post('/admin/login', async (req: Request, res: Response) => {
 });
 
 // 1b. Dedicated Support Agent Login
-router.post('/agent/login', async (req: Request, res: Response) => {
+router.post('/agent/login', authLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
@@ -156,7 +157,7 @@ router.post('/agent/login', async (req: Request, res: Response) => {
 });
 
 // 1c. Dedicated Customer Login
-router.post('/customer/login', async (req: Request, res: Response) => {
+router.post('/customer/login', authLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
@@ -186,7 +187,7 @@ router.post('/customer/login', async (req: Request, res: Response) => {
 });
 
 // 2. Customer Registration (Creates verified Customer account and automatically signs them in)
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', authLimiter, async (req: Request, res: Response) => {
   try {
     const { name, email, phone, password, confirmPassword } = req.body;
 

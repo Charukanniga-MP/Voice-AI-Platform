@@ -1,11 +1,94 @@
 import { Router, Request, Response } from 'express';
+import twilio from 'twilio';
 import { telephonyService } from '../services/telephony.js';
 import { translationService } from '../services/translation.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { prisma } from '../db.js';
 import { callIntelligenceService } from '../services/callIntelligence.js';
+import { telephonyLimiter } from '../middleware/rateLimiter.js';
 
 const router = Router();
+
+/**
+ * Validates incoming webhooks from Twilio using HMAC-SHA1 signature verification.
+ * In production: strictly enforces valid X-Twilio-Signature.
+ * In development: enforces signature if provided or if TWILIO_AUTH_TOKEN is configured.
+ */
+export function validateTwilioWebhook(req: Request, res: Response, next: Function) {
+  const authToken = process.env.TWILIO_AUTH_TOKEN?.trim();
+  const signature = (req.headers['x-twilio-signature'] as string) || '';
+  const isProd = process.env.NODE_ENV === 'production';
+
+  // In production without auth token, fail closed
+  if (isProd && !authToken) {
+    console.error('[SECURITY ERROR] Inbound Twilio webhook rejected: TWILIO_AUTH_TOKEN is not configured in production.');
+    res.status(403).type('text/plain').send('Forbidden: Insecure webhook configuration.');
+    return;
+  }
+
+  // If signature is provided or if in production, perform cryptographic verification
+  if (signature || isProd) {
+    if (!signature) {
+      console.warn(`[Telephony Webhook] Missing X-Twilio-Signature on ${req.originalUrl}`);
+      res.status(403).type('text/plain').send('Forbidden: Missing Twilio webhook signature.');
+      return;
+    }
+
+    if (!authToken) {
+      console.warn('[Telephony Webhook] Cannot verify signature: TWILIO_AUTH_TOKEN missing.');
+      res.status(403).type('text/plain').send('Forbidden: Twilio Auth Token not configured.');
+      return;
+    }
+
+    const protocol = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
+    const host = (req.headers['x-forwarded-host'] as string) || req.get('host') || 'localhost:5000';
+    const fullUrl = `${protocol}://${host}${req.originalUrl}`;
+
+    const params = req.body || {};
+    const isValid = twilio.validateRequest(authToken, signature, fullUrl, params);
+
+    if (!isValid) {
+      const externalBase = process.env.NGROK_URL || process.env.WEBHOOK_URL;
+      let validWithExternal = false;
+      if (externalBase) {
+        const altUrl = `${externalBase.replace(/\/$/, '')}${req.originalUrl}`;
+        validWithExternal = twilio.validateRequest(authToken, signature, altUrl, params);
+      }
+
+      if (!validWithExternal) {
+        console.warn(`[SECURITY WARNING] Rejected invalid Twilio webhook signature for URL: ${fullUrl}`);
+        res.status(403).type('text/plain').send('Forbidden: Invalid Twilio webhook signature.');
+        return;
+      }
+    }
+  }
+
+  next();
+}
+
+/**
+ * Validates callback parameters to prevent unauthorized or corrupted status updates.
+ */
+export function validateCallbackParams(req: Request, res: Response, next: Function) {
+  const { CallSid, CallStatus } = req.body;
+
+  if (CallSid && (typeof CallSid !== 'string' || !/^[a-zA-Z0-9_\-]{10,64}$/.test(CallSid))) {
+    res.status(400).type('text/plain').send('Bad Request: Invalid CallSid format.');
+    return;
+  }
+
+  if (CallStatus) {
+    const validStatuses = new Set([
+      'queued', 'initiated', 'ringing', 'in-progress', 'answered', 'completed', 'busy', 'failed', 'no-answer', 'canceled'
+    ]);
+    if (!validStatuses.has(String(CallStatus).toLowerCase())) {
+      res.status(400).type('text/plain').send('Bad Request: Invalid CallStatus value.');
+      return;
+    }
+  }
+
+  next();
+}
 
 // 1. Get Telephony Provider Configuration Status
 router.get('/status', (req: Request, res: Response) => {
@@ -35,7 +118,7 @@ router.get('/token', authenticate, requireRole(['agent', 'admin']), (req: Reques
 });
 
 // 3. Twilio TwiML Webhook – Called when Agent Browser Dials Customer Phone
-router.post('/voice', async (req: Request, res: Response) => {
+router.post('/voice', validateTwilioWebhook, async (req: Request, res: Response) => {
   try {
     const { To, From, CallSid, agentId } = req.body;
     console.log(`[Telephony Webhook: Voice] Outbound call from Agent ${From} to ${To} (CallSid: ${CallSid})`);
@@ -128,7 +211,7 @@ router.post('/voice', async (req: Request, res: Response) => {
 });
 
 // 4. Twilio Status Callback Webhook – Authoritative Call Lifecycle Tracker
-router.post('/status-callback', async (req: Request, res: Response) => {
+router.post('/status-callback', validateTwilioWebhook, validateCallbackParams, async (req: Request, res: Response) => {
   try {
     const io = req.app.get('io');
     await telephonyService.handleCallStatusWebhook(req.body, io);
@@ -141,7 +224,7 @@ router.post('/status-callback', async (req: Request, res: Response) => {
 });
 
 // 4A. Voice AI Outbound Telephone Call
-router.post('/ai-call', authenticate, requireRole(['agent', 'admin']), async (req: Request, res: Response) => {
+router.post('/ai-call', telephonyLimiter, authenticate, requireRole(['agent', 'admin']), async (req: Request, res: Response) => {
   try {
     const { customerId, customerName, customerPhone, language } = req.body;
     if (!customerPhone) {
@@ -202,7 +285,7 @@ router.post('/ai-call', authenticate, requireRole(['agent', 'admin']), async (re
 });
 
 // 4B. Voice AI Dialogue Entry Point (TwiML)
-router.all('/ai-dialogue', async (req: Request, res: Response) => {
+router.all('/ai-dialogue', validateTwilioWebhook, async (req: Request, res: Response) => {
   try {
     const lang = (req.query.lang as string) || (req.body?.lang as string) || 'en';
     const twiml = await telephonyService.generateAiGreetingTwiML(lang);
@@ -216,7 +299,7 @@ router.all('/ai-dialogue', async (req: Request, res: Response) => {
 });
 
 // 4C. Real-Time Speech Processing & Grounded Answer Webhook
-router.post('/process-speech', async (req: Request, res: Response) => {
+router.post('/process-speech', validateTwilioWebhook, async (req: Request, res: Response) => {
   try {
     const { SpeechResult, CallSid, From, To } = req.body;
     const queryLang = (req.query.lang as string) || 'en';
@@ -370,7 +453,7 @@ router.post('/process-speech', async (req: Request, res: Response) => {
 });
 
 // 5. Pre-register / Validate Outgoing Call from Frontend
-router.post('/register-call', authenticate, requireRole(['agent', 'admin']), async (req: Request, res: Response) => {
+router.post('/register-call', telephonyLimiter, authenticate, requireRole(['agent', 'admin']), async (req: Request, res: Response) => {
   try {
     const { customerId, customerName, customerPhone } = req.body;
 
