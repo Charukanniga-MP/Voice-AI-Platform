@@ -63,6 +63,7 @@ export const CustomerDashboard: React.FC = () => {
   const [ratingSubmitted, setRatingSubmitted] = useState(false);
   const [ratingVal, setRatingVal] = useState(5);
   const [ratingCallId, setRatingCallId] = useState<string | null>(null);
+  const [ratingComment, setRatingComment] = useState('');
 
   // Call history
   const [history, setHistory] = useState<CallRecord[]>([]);
@@ -393,6 +394,9 @@ export const CustomerDashboard: React.FC = () => {
 
     // 11. Call ended
     socket.on('call:ended', (data: { callId: string; duration?: number }) => {
+      setRatingComment('');
+      setRatingVal(5);
+      setRatingSubmitted(false);
       setRatingCallId(data.callId || callId);
       cleanupCall();
       fetchHistory();
@@ -584,6 +588,9 @@ export const CustomerDashboard: React.FC = () => {
     if (callId) {
       const socket = getSocket();
       socket.emit('call:end', { callId, duration, endedBy: 'customer' });
+      setRatingComment('');
+      setRatingVal(5);
+      setRatingSubmitted(false);
       setRatingCallId(callId);
     }
     cleanupCall();
@@ -607,15 +614,20 @@ export const CustomerDashboard: React.FC = () => {
     setRatingVal(stars);
     if (ratingCallId && token) {
       try {
-        await fetch(`/api/calls/${ratingCallId}/rating`, {
+        const response = await fetch(`/api/calls/${ratingCallId}/rating`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`
           },
-          body: JSON.stringify({ rating: stars })
+          body: JSON.stringify({ rating: stars, comment: ratingComment })
         });
-      } catch (e) { }
+        if (!response.ok) throw new Error('Could not save call feedback');
+      } catch (e) {
+        console.error('Failed to save call feedback:', e);
+        window.alert('Could not save your feedback. Please try again.');
+        return;
+      }
     }
     setRatingSubmitted(true);
     setTimeout(() => {
@@ -1079,16 +1091,33 @@ export const CustomerDashboard: React.FC = () => {
                 {t('rating.thank_you')}
               </div>
             ) : (
-              <div className="flex items-center justify-center gap-2 py-2">
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <button
-                    key={star}
-                    onClick={() => handleRatingSubmit(star)}
-                    className="p-2 rounded-xl hover:scale-125 transition-transform text-amber-400 cursor-pointer"
-                  >
-                    <Star className={`w-6 h-6 ${star <= ratingVal ? 'fill-amber-400' : 'text-slate-300'}`} />
+              <div className="space-y-3">
+                <div className="flex items-center justify-center gap-2 py-2">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      onClick={() => setRatingVal(star)}
+                      aria-label={`${star} star${star === 1 ? '' : 's'}`}
+                      className="p-2 rounded-xl hover:scale-125 transition-transform text-amber-400 cursor-pointer"
+                    >
+                      <Star className={`w-6 h-6 ${star <= ratingVal ? 'fill-amber-400' : 'text-slate-300'}`} />
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  value={ratingComment}
+                  onChange={(e) => setRatingComment(e.target.value.slice(0, 1000))}
+                  placeholder="Tell us what went well or what we could improve (optional)"
+                  maxLength={1000}
+                  rows={3}
+                  className="w-full resize-none rounded-xl border border-slate-200 p-3 text-left text-xs text-slate-700 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                />
+                <div className="flex items-center justify-between text-[10px] text-slate-400">
+                  <span>{ratingComment.length}/1000</span>
+                  <button onClick={() => handleRatingSubmit(ratingVal)} className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white hover:bg-indigo-700 cursor-pointer">
+                    Submit feedback
                   </button>
-                ))}
+                </div>
               </div>
             )}
 

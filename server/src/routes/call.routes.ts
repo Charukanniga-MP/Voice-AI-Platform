@@ -416,8 +416,14 @@ router.get('/queue', authenticate, requireRole(['admin', 'agent']), async (req: 
 router.post('/:id/notes', authenticate, requireRole(['admin', 'agent']), async (req: Request, res: Response) => {
   try {
     const { notes } = req.body;
-    const existing = await prisma.callRecord.findUnique({
-      where: { id: req.params.id }
+    const existing = await prisma.callRecord.findFirst({
+      where: {
+        OR: [
+          { id: req.params.id },
+          { callId: req.params.id },
+          { providerCallSid: req.params.id }
+        ]
+      }
     });
 
     if (!existing) {
@@ -431,7 +437,7 @@ router.post('/:id/notes', authenticate, requireRole(['admin', 'agent']), async (
     }
 
     const call = await prisma.callRecord.update({
-      where: { id: req.params.id },
+      where: { id: existing.id },
       data: { callNotes: typeof notes === 'string' ? notes.trim() : '' }
     });
 
@@ -444,16 +450,26 @@ router.post('/:id/notes', authenticate, requireRole(['admin', 'agent']), async (
 // 7. Save Customer Rating (Customer only)
 router.post('/:id/rating', authenticate, async (req: Request, res: Response) => {
   try {
-    const { rating } = req.body;
+    const { rating, comment } = req.body;
     const numRating = Number(rating);
 
-    if (isNaN(numRating) || numRating < 1 || numRating > 5) {
+    if (!Number.isInteger(numRating) || numRating < 1 || numRating > 5) {
       res.status(400).json({ error: 'Rating must be an integer between 1 and 5.' });
       return;
     }
+    if (comment !== undefined && (typeof comment !== 'string' || comment.length > 1000)) {
+      res.status(400).json({ error: 'Feedback comment must be 1000 characters or fewer.' });
+      return;
+    }
 
-    const existing = await prisma.callRecord.findUnique({
-      where: { id: req.params.id }
+    const existing = await prisma.callRecord.findFirst({
+      where: {
+        OR: [
+          { id: req.params.id },
+          { callId: req.params.id },
+          { providerCallSid: req.params.id }
+        ]
+      }
     });
 
     if (!existing) {
@@ -461,19 +477,78 @@ router.post('/:id/rating', authenticate, async (req: Request, res: Response) => 
       return;
     }
 
-    if (req.user!.role !== 'admin' && existing.customerId !== req.user!.id) {
+    if (req.user!.role !== 'customer' || existing.customerId !== req.user!.id) {
       res.status(403).json({ error: 'Access denied: You can only rate your own customer calls.' });
+      return;
+    }
+    if (existing.status !== 'completed') {
+      res.status(400).json({ error: 'Only completed calls can be rated.' });
       return;
     }
 
     await prisma.callRecord.update({
-      where: { id: req.params.id },
-      data: { rating: numRating }
+      where: { id: existing.id },
+      data: {
+        rating: numRating,
+        ratingComment: typeof comment === 'string' ? comment.trim() : null,
+        feedbackFollowUpCompleted: numRating > 2,
+        feedbackFollowUpNotes: null
+      }
     });
 
     res.json({ message: 'Rating saved.' });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to save call rating.' });
+  }
+});
+
+// Admin follow-up for low customer satisfaction ratings
+router.get('/feedback/low', authenticate, requireRole(['admin']), async (_req: Request, res: Response) => {
+  try {
+    const calls = await prisma.callRecord.findMany({
+      where: { rating: { lte: 2 } },
+      include: {
+        customer: { select: { id: true, name: true, email: true, phone: true } },
+        agent: { select: { id: true, name: true } }
+      },
+      orderBy: { startTime: 'desc' }
+    });
+    res.json({ calls });
+  } catch (err) {
+    console.error('[Calls] Low-rating feedback error:', err);
+    res.status(500).json({ error: 'Failed to retrieve low-rating feedback.' });
+  }
+});
+
+router.patch('/:id/feedback-follow-up', authenticate, requireRole(['admin']), async (req: Request, res: Response) => {
+  try {
+    const { completed, notes } = req.body;
+    if (typeof completed !== 'boolean') {
+      res.status(400).json({ error: 'completed must be a boolean.' });
+      return;
+    }
+    if (notes !== undefined && (typeof notes !== 'string' || notes.length > 1000)) {
+      res.status(400).json({ error: 'Follow-up notes must be 1000 characters or fewer.' });
+      return;
+    }
+
+    const existing = await prisma.callRecord.findUnique({ where: { id: req.params.id } });
+    if (!existing || existing.rating === null || existing.rating > 2) {
+      res.status(404).json({ error: 'Low-rating feedback not found.' });
+      return;
+    }
+
+    const call = await prisma.callRecord.update({
+      where: { id: existing.id },
+      data: {
+        feedbackFollowUpCompleted: completed,
+        ...(notes !== undefined ? { feedbackFollowUpNotes: notes.trim() || null } : {})
+      }
+    });
+    res.json({ message: 'Feedback follow-up updated.', call });
+  } catch (err) {
+    console.error('[Calls] Feedback follow-up error:', err);
+    res.status(500).json({ error: 'Failed to update feedback follow-up.' });
   }
 });
 

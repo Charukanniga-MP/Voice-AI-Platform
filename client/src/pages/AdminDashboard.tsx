@@ -109,6 +109,7 @@ export const AdminDashboard: React.FC = () => {
 
   // Section D: Call Monitoring State
   const [calls, setCalls] = useState<CallRecord[]>([]);
+  const [lowRatingFeedback, setLowRatingFeedback] = useState<CallRecord[]>([]);
   const [callFilter, setCallFilter] = useState<'all' | 'incoming' | 'outgoing' | 'transferred' | 'active' | 'completed' | 'missed'>('all');
   const [callSearch, setCallSearch] = useState('');
   const [loadingCalls, setLoadingCalls] = useState(false);
@@ -250,6 +251,38 @@ export const AdminDashboard: React.FC = () => {
       console.error('Failed to fetch calls:', err);
     } finally {
       setLoadingCalls(false);
+    }
+  };
+
+  const fetchLowRatingFeedback = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch('/api/calls/feedback/low', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok) setLowRatingFeedback(data.calls || []);
+    } catch (err) {
+      console.error('Failed to load low-rating feedback:', err);
+    }
+  };
+
+  const updateFeedbackFollowUp = async (call: CallRecord) => {
+    if (!token) return;
+    const completed = !call.feedbackFollowUpCompleted;
+    try {
+      const res = await fetch(`/api/calls/${call.id}/feedback-follow-up`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ completed, notes: call.feedbackFollowUpNotes || '' })
+      });
+      if (!res.ok) throw new Error('Could not save follow-up status');
+      setLowRatingFeedback(prev => prev.map(item => item.id === call.id
+        ? { ...item, feedbackFollowUpCompleted: completed }
+        : item));
+    } catch (err) {
+      console.error('Failed to update feedback follow-up:', err);
+      window.alert('Could not save the feedback follow-up. Please try again.');
     }
   };
 
@@ -395,7 +428,10 @@ export const AdminDashboard: React.FC = () => {
     if (activeSection === 'overview') fetchStats();
     if (activeSection === 'customers') fetchCustomers();
     if (activeSection === 'agents') fetchAgents();
-    if (activeSection === 'calls') fetchCalls();
+    if (activeSection === 'calls') {
+      fetchCalls();
+      fetchLowRatingFeedback();
+    }
     if (activeSection === 'transfers') fetchTransfers();
     if (activeSection === 'knowledge') fetchKnowledge();
     if (activeSection === 'quality') fetchQualityStats();
@@ -421,7 +457,10 @@ export const AdminDashboard: React.FC = () => {
 
     const handleStatusChanged = () => {
       fetchStats();
-      if (activeSection === 'calls') fetchCalls();
+      if (activeSection === 'calls') {
+        fetchCalls();
+        fetchLowRatingFeedback();
+      }
     };
 
     const handleCallEnded = () => {
@@ -1462,6 +1501,63 @@ export const AdminDashboard: React.FC = () => {
                 className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500/20 text-slate-900"
               />
             </div>
+
+            <section className="rounded-3xl border border-rose-200 bg-rose-50/70 p-5 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-sm font-extrabold text-slate-900">Customer feedback needing attention</h2>
+                  <p className="mt-1 text-xs text-slate-600">Calls rated 1 or 2 stars. Review the comment and record follow-up.</p>
+                </div>
+                <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-rose-700 border border-rose-200">
+                  {lowRatingFeedback.filter(call => !call.feedbackFollowUpCompleted).length} pending
+                </span>
+              </div>
+              {lowRatingFeedback.length === 0 ? (
+                <div className="rounded-2xl bg-white/80 px-4 py-5 text-center text-xs text-slate-500">
+                  No low customer ratings to follow up on.
+                </div>
+              ) : (
+                <div className="grid gap-3 lg:grid-cols-2">
+                  {lowRatingFeedback.map(call => (
+                    <article key={call.id} className="rounded-2xl border border-rose-100 bg-white p-4 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-bold text-slate-900">{call.customerName}</p>
+                          <p className="text-[11px] text-slate-500">{new Date(call.startTime).toLocaleString()}</p>
+                        </div>
+                        <span className="shrink-0 rounded-full bg-rose-100 px-2.5 py-1 text-xs font-extrabold text-rose-700">
+                          {call.rating} / 5 stars
+                        </span>
+                      </div>
+                      <p className="rounded-xl bg-slate-50 p-3 text-xs text-slate-700 whitespace-pre-wrap">
+                        {call.ratingComment || 'No comment provided.'}
+                      </p>
+                      <textarea
+                        value={call.feedbackFollowUpNotes || ''}
+                        onChange={event => setLowRatingFeedback(prev => prev.map(item => item.id === call.id
+                          ? { ...item, feedbackFollowUpNotes: event.target.value.slice(0, 1000) }
+                          : item))}
+                        rows={2}
+                        maxLength={1000}
+                        placeholder="Follow-up notes (optional)"
+                        className="w-full resize-none rounded-xl border border-slate-200 p-2.5 text-xs text-slate-700 outline-none focus:border-indigo-400"
+                      />
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`text-[11px] font-bold ${call.feedbackFollowUpCompleted ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {call.feedbackFollowUpCompleted ? 'Follow-up completed' : 'Follow-up pending'}
+                        </span>
+                        <button
+                          onClick={() => updateFeedbackFollowUp(call)}
+                          className={`rounded-xl px-3 py-2 text-[11px] font-bold cursor-pointer ${call.feedbackFollowUpCompleted ? 'bg-slate-100 text-slate-700 hover:bg-slate-200' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
+                        >
+                          {call.feedbackFollowUpCompleted ? 'Reopen follow-up' : 'Mark followed up'}
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
 
             {/* Calls Table */}
             <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs overflow-hidden">

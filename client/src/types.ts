@@ -74,6 +74,9 @@ export interface CallRecord {
   callNotes?: string | null;
   endedBy?: string | null;
   rating?: number | null;
+  ratingComment?: string | null;
+  feedbackFollowUpCompleted?: boolean;
+  feedbackFollowUpNotes?: string | null;
   providerCallSid?: string | null;
   providerName?: string | null;
   failureReason?: string | null;
