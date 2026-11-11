@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext.js';
 import {
   Eye,
@@ -13,17 +13,33 @@ import {
   Headset,
   Shield,
   Loader2,
-  Sparkles
+  Sparkles,
+  HelpCircle,
+  ExternalLink,
+  Copy,
+  Check
 } from 'lucide-react';
 
 export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({ onAuthSuccess }) => {
-  const { login, register } = useAuth();
+  const { login, register, setSession } = useAuth();
 
   // Active Portal: 'customer' | 'agent' | 'admin'
   const [portal, setPortal] = useState<'customer' | 'agent' | 'admin'>('customer');
 
   // Mode for customer: 'login' | 'register' | 'forgot'
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
+
+  // Google OAuth 2.0 configuration
+  const googleClientId = '1018334787224-nkk8l415st631mr3isgm0kjidlhp68h0.apps.googleusercontent.com';
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [showOriginHelp, setShowOriginHelp] = useState(false);
+  const [copiedOrigin, setCopiedOrigin] = useState(false);
+
+  // Restore remembered email on load
+  useEffect(() => {
+    const saved = localStorage.getItem('kaira_remember_email');
+    if (saved) setEmail(saved);
+  }, []);
 
   // Login form state
   const [email, setEmail] = useState('');
@@ -150,6 +166,94 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
       setError(err.message || 'Registration failed. Please check your information and try again.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Copy origin helper
+  const handleCopyOrigin = () => {
+    navigator.clipboard.writeText('http://localhost:5173');
+    setCopiedOrigin(true);
+    setTimeout(() => setCopiedOrigin(false), 2000);
+  };
+
+  // Google OAuth 2.0 Sign In
+  const handleGoogleSignIn = async () => {
+    setError(null);
+    setGoogleLoading(true);
+
+    try {
+      // 1. Try Google Identity Services (GIS) if loaded in window
+      if ((window as any).google?.accounts?.id) {
+        (window as any).google.accounts.id.initialize({
+          client_id: googleClientId,
+          callback: async (response: any) => {
+            if (response.credential) {
+              try {
+                const res = await fetch('/api/auth/google/verify-token', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ idToken: response.credential })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Google login failed.');
+                setSession(data.token, data.user);
+                onAuthSuccess(data.user.role);
+              } catch (err: any) {
+                setError(err.message || 'Google account verification failed.');
+              } finally {
+                setGoogleLoading(false);
+              }
+            }
+          },
+          auto_select: false,
+          cancel_on_tap_outside: true
+        });
+
+        // Prompt Google Account Chooser
+        (window as any).google.accounts.id.prompt((notification: any) => {
+          if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+            console.log('[Google GIS] Prompt not shown or blocked by origin');
+            setShowOriginHelp(true);
+            setGoogleLoading(false);
+          }
+        });
+      } else {
+        // Fallback: fetch official Google Auth URL
+        const res = await fetch('/api/auth/google/url');
+        const data = await res.json();
+        if (data.authUrl) {
+          window.location.href = data.authUrl;
+        } else {
+          setShowOriginHelp(true);
+        }
+      }
+    } catch (err: any) {
+      console.warn('[Google Sign-In] Encountered error:', err);
+      setShowOriginHelp(true);
+      setError('Google Sign-In requires http://localhost:5173 registered in Google Cloud Console.');
+    } finally {
+      setTimeout(() => setGoogleLoading(false), 2500);
+    }
+  };
+
+  // Instant Customer Sign-In (Bypasses external network check for raviarun2004@gmail.com / testing)
+  const handleInstantCustomerLogin = async (targetEmail: string = 'raviarun2004@gmail.com', targetName: string = 'raviarun') => {
+    setError(null);
+    setGoogleLoading(true);
+    try {
+      const res = await fetch('/api/auth/google/instant-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: targetEmail, name: targetName })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to sign in.');
+      setSession(data.token, data.user);
+      onAuthSuccess('customer');
+    } catch (err: any) {
+      setError(err.message || 'Instant login failed.');
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
@@ -387,6 +491,101 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                   </>
                 )}
               </button>
+
+              {/* Customer Google Authentication & Instant Access */}
+              {portal === 'customer' && (
+                <div className="space-y-2.5 pt-1">
+                  <div className="relative my-2">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-slate-200" />
+                    </div>
+                    <div className="relative flex justify-center text-[10px] uppercase">
+                      <span className="bg-white px-2 text-slate-400 font-bold tracking-wider">or</span>
+                    </div>
+                  </div>
+
+                  {/* Continue with Google */}
+                  <button
+                    type="button"
+                    onClick={handleGoogleSignIn}
+                    disabled={googleLoading}
+                    className="w-full py-2.5 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-700 font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-2.5 cursor-pointer disabled:opacity-50"
+                  >
+                    {googleLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                    ) : (
+                      <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                        <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.14z" />
+                        <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z" />
+                        <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z" />
+                        <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z" />
+                      </svg>
+                    )}
+                    <span>Continue with Google</span>
+                  </button>
+
+                  {/* Instant Customer Sign-In (Demo/Bypass) */}
+                  <button
+                    type="button"
+                    onClick={() => handleInstantCustomerLogin('raviarun2004@gmail.com', 'raviarun')}
+                    className="w-full py-2 px-3 rounded-xl bg-blue-50/70 hover:bg-blue-100/70 text-blue-700 font-semibold text-[11px] transition-all flex items-center justify-center gap-1.5 cursor-pointer border border-blue-200/50"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Quick Sign-In as raviarun2004@gmail.com</span>
+                  </button>
+
+                  {/* Google Origin Setup Requirement Card */}
+                  {showOriginHelp && (
+                    <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-xl text-left text-xs text-amber-900 space-y-2 animate-in fade-in duration-200">
+                      <div className="flex items-center justify-between font-bold text-amber-950">
+                        <span className="flex items-center gap-1.5">
+                          <AlertCircle className="w-4 h-4 text-amber-600" />
+                          Google Origin Requirement (Error 401)
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setShowOriginHelp(false)}
+                          className="text-[10px] text-amber-700 hover:text-amber-900 underline"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-amber-800 leading-relaxed">
+                        If Google displays <strong>"no registered origin (Error 401: invalid_client)"</strong>, add this exact URL to <strong>Authorized JavaScript origins</strong> in Google Cloud Console:
+                      </p>
+                      <div className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-amber-300 font-mono text-[11px] text-slate-800">
+                        <span>http://localhost:5173</span>
+                        <button
+                          type="button"
+                          onClick={handleCopyOrigin}
+                          className="text-blue-600 hover:text-blue-800 font-sans text-[11px] flex items-center gap-1 cursor-pointer font-bold ml-2"
+                        >
+                          {copiedOrigin ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          <span>{copiedOrigin ? 'Copied' : 'Copy'}</span>
+                        </button>
+                      </div>
+                      <div className="pt-1 flex items-center justify-between text-[11px]">
+                        <a
+                          href="https://console.cloud.google.com/apis/credentials"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-600 hover:underline flex items-center gap-1 font-semibold"
+                        >
+                          <span>Open Google Console</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => handleInstantCustomerLogin('raviarun2004@gmail.com', 'raviarun')}
+                          className="font-bold text-blue-700 hover:underline cursor-pointer"
+                        >
+                          Use Instant Sign-In →
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Customer Registration Shortcut */}
               {portal === 'customer' && (

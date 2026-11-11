@@ -210,6 +210,13 @@ export const CustomerDashboard: React.FC = () => {
       cleanupCall();
     });
 
+    // 4b. Agent declined/rejected call
+    socket.on('customer:call_declined', (data: { callId: string; reason?: string }) => {
+      console.log('[Customer] Support call declined:', data.reason);
+      cleanupCall();
+      alert(data.reason || 'Support Specialist is currently unavailable or declined the call. Please try again shortly.');
+    });
+
     // 5. Agent accepted call -> WebRTC audio connected
     socket.on('customer:call_accepted', async (data: {
       callId: string;
@@ -495,6 +502,7 @@ export const CustomerDashboard: React.FC = () => {
       }
 
       voiceService.unlockAudio();
+      webrtcManager.unlockAudio();
       setCallStatus('connecting');
       setDuration(0);
       setTranscripts([]);
@@ -534,6 +542,7 @@ export const CustomerDashboard: React.FC = () => {
       }
 
       voiceService.unlockAudio();
+      webrtcManager.unlockAudio();
       setCallStatus('connecting');
       setDuration(0);
       setTranscripts([]);

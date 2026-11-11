@@ -392,6 +392,7 @@ export const AgentDashboard: React.FC = () => {
 
     // Stop ringtone immediately
     ringtoneService.stop();
+    webrtcManager.unlockAudio();
 
     const selectedCall = incomingCall;
     setIncomingCall(null);

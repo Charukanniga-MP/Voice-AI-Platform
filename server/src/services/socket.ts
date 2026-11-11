@@ -518,20 +518,18 @@ export function initSocketServer(io: SocketIOServer) {
           }
         }
 
-        // If no other agent available, place customer in queue
+        // If no other agent available, notify customer of decline
         const customerSockets = Array.from(await io.in(`call:${data.callId}`).allSockets()).filter(s => s !== socket.id);
         const custSocket = customerSockets[0] || socket.id;
 
-        await enqueueCall({
+        io.to(`call:${data.callId}`).emit('customer:call_declined', {
           callId: data.callId,
-          callRecordId: call.id,
-          customerId: call.customerId,
-          customerName: call.customerName,
-          customerPhone: call.customerPhone || undefined,
-          preferredLanguage: call.language || 'en',
-          socketId: custSocket,
-          queuedAt: Date.now(),
-          rejectedByAgents: new Set([data.agentId])
+          reason: data.reason || 'Support Specialist is currently unavailable or declined the call.'
+        });
+
+        await prisma.callRecord.update({
+          where: { id: call.id },
+          data: { status: 'rejected', endedBy: 'agent' }
         });
       } catch (err) {
         console.error('[SupportCall] Error in agent:reject_call:', err);
