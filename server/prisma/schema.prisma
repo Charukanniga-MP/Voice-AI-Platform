@@ -62,6 +62,9 @@ model CallRecord {
   callNotes          String?
   endedBy            String?               // "customer" | "agent" | "network" | "system"
   rating             Int?
+  ratingComment      String?
+  feedbackFollowUpCompleted Boolean @default(false)
+  feedbackFollowUpNotes String?
   providerCallSid    String?               @unique
   providerName       String?               @default("twilio")
   failureReason      String?
