@@ -114,13 +114,18 @@ const rawAllowedOrigins = [
   'https://localhost:3000'
 ].filter(Boolean) as string[];
 
+// Recognize Cloudflare Quick Tunnel dynamic hostnames (https://*.trycloudflare.com)
+const isAllowedTunnelOrigin = (originUrl: string): boolean => {
+  return /^https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com$/.test(originUrl);
+};
+
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
     // Allow server-to-server or same-origin requests (origin undefined)
     if (!origin) return callback(null, true);
 
     const isProd = process.env.NODE_ENV === 'production';
-    if (rawAllowedOrigins.includes(origin)) {
+    if (rawAllowedOrigins.includes(origin) || isAllowedTunnelOrigin(origin)) {
       return callback(null, true);
     }
 
@@ -141,7 +146,7 @@ const io = new SocketIOServer(server, {
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
       const isProd = process.env.NODE_ENV === 'production';
-      if (rawAllowedOrigins.includes(origin)) {
+      if (rawAllowedOrigins.includes(origin) || isAllowedTunnelOrigin(origin)) {
         return callback(null, true);
       }
       if (!isProd && (origin.includes('localhost') || origin.includes('127.0.0.1') || origin.includes('10.118.215.233'))) {
