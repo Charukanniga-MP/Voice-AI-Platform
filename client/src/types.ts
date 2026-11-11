@@ -79,6 +79,9 @@ export interface CallRecord {
   requiresAssistance?: boolean;
   assistanceReason?: string | null;
   assistanceStatus?: 'none' | 'pending' | 'accepted' | 'dismissed' | null;
+  ratingComment?: string | null;
+  feedbackFollowUpCompleted?: boolean;
+  feedbackFollowUpNotes?: string | null;
   providerCallSid?: string | null;
   providerName?: string | null;
   failureReason?: string | null;

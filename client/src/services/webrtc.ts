@@ -75,15 +75,30 @@ export class WebRTCManager {
   }
 
   // Ensure remote audio element exists and sink ID is applied
-  private getAudioElement(): HTMLAudioElement {
+  public getAudioElement(): HTMLAudioElement {
     if (!this.remoteAudio) {
       this.remoteAudio = new Audio();
       this.remoteAudio.autoplay = true;
+      (this.remoteAudio as any).playsInline = true;
       document.body.appendChild(this.remoteAudio);
     }
     // Apply preferred speaker if set
     audioDeviceManager.applySpeakerToAudioElement(this.remoteAudio);
     return this.remoteAudio;
+  }
+
+  // Pre-unlock audio element in response to user click gesture (prevents browser Autoplay blocking)
+  public unlockAudio(): void {
+    try {
+      const audio = this.getAudioElement();
+      // Calling play() directly in a user gesture unlocks the audio pipeline for incoming WebRTC streams
+      audio.play().catch(() => {
+        // Expected promise rejection when srcObject is not yet attached
+      });
+      console.log('[WebRTC] Audio pipeline unlocked for two-way voice.');
+    } catch (e) {
+      console.warn('[WebRTC] Audio unlock warning:', e);
+    }
   }
 
   private setupNetworkListeners() {
