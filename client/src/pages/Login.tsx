@@ -221,11 +221,10 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
           <button
             type="button"
             onClick={() => handlePortalSwitch('customer')}
-            className={`py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-              portal === 'customer'
+            className={`py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${portal === 'customer'
                 ? 'bg-blue-600 text-white shadow-md shadow-blue-900/50'
                 : 'text-slate-400 hover:text-white hover:bg-white/5'
-            }`}
+              }`}
           >
             <User className="w-3.5 h-3.5" />
             Customer
@@ -234,11 +233,10 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
           <button
             type="button"
             onClick={() => handlePortalSwitch('agent')}
-            className={`py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-              portal === 'agent'
+            className={`py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${portal === 'agent'
                 ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/50'
                 : 'text-slate-400 hover:text-white hover:bg-white/5'
-            }`}
+              }`}
           >
             <Headset className="w-3.5 h-3.5" />
             Support Agent
@@ -247,11 +245,10 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
           <button
             type="button"
             onClick={() => handlePortalSwitch('admin')}
-            className={`py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-              portal === 'admin'
+            className={`py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${portal === 'admin'
                 ? 'bg-purple-600 text-white shadow-md shadow-purple-900/50'
                 : 'text-slate-400 hover:text-white hover:bg-white/5'
-            }`}
+              }`}
           >
             <Shield className="w-3.5 h-3.5" />
             Admin
