@@ -9,8 +9,14 @@ import { CallRecord, CallTranscript, LanguageCode, SUPPORTED_LANGUAGES } from '.
 import {
   PhoneCall, PhoneOff, Mic, MicOff, Volume2, VolumeX,
   Clock, ShieldAlert, Sparkles, MessageSquare, History, User as UserIcon,
-  Headphones, Globe, Star, Users, CheckCircle2, RefreshCw, Send, Download, Lightbulb
+  Headphones, Globe, Star, Users, CheckCircle2, RefreshCw, Send, Download, Lightbulb,
+  KeyRound, HeartPulse, Flame
 } from 'lucide-react';
+import { navigateToResetPassword } from '../utils/navigation.js';
+import { SentimentBadge } from '../components/SentimentBadge.js';
+import { LiveSentimentCard } from '../components/LiveSentimentCard.js';
+import { PostCallSentimentSummary } from '../components/PostCallSentimentSummary.js';
+import { SentimentType } from '../types.js';
 
 const SUGGESTED_QUESTIONS = [
   'What are your pricing plans?',
@@ -68,6 +74,15 @@ export const CustomerDashboard: React.FC = () => {
   const [history, setHistory] = useState<CallRecord[]>([]);
   const [selectedHistoryCall, setSelectedHistoryCall] = useState<CallRecord | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
+
+  // Live Sentiment Telemetry State
+  const [liveSentiment, setLiveSentiment] = useState<{
+    sentiment: SentimentType;
+    confidenceScore: number;
+    reason: string;
+    triggerText: string;
+    requiresHumanAssistance: boolean;
+  } | null>(null);
 
   // Auto-scroll transcript
   const transcriptEndRef = useRef<HTMLDivElement>(null);
@@ -293,6 +308,12 @@ export const CustomerDashboard: React.FC = () => {
       fetchHistory();
     });
 
+    // 12. Real-Time Customer Sentiment
+    const handleSentimentUpdate = (data: any) => {
+      setLiveSentiment(data);
+    };
+    socket.on('call:sentiment_update', handleSentimentUpdate);
+
     return () => {
       socket.off('customer:call_ringing');
       socket.off('customer:call_queued');
@@ -306,6 +327,7 @@ export const CustomerDashboard: React.FC = () => {
       socket.off('call:held');
       socket.off('call:resumed');
       socket.off('call:ended');
+      socket.off('call:sentiment_update', handleSentimentUpdate);
     };
   }, [callId, callStatus, user, selectedLanguage]);
 
@@ -508,6 +530,7 @@ export const CustomerDashboard: React.FC = () => {
     setInterimText('');
     setIsCallHeld(false);
     setQueueInfo(null);
+    setLiveSentiment(null);
     voiceService.cancelSpeech();
     voiceService.stopListening();
     webrtcManager.endCall();
@@ -608,6 +631,33 @@ export const CustomerDashboard: React.FC = () => {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Account Security Quick Bar */}
+      <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-indigo-600/10 text-indigo-700 flex items-center justify-center shrink-0">
+            <KeyRound className="w-5 h-5 text-indigo-600" />
+          </div>
+          <div>
+            <h3 className="text-xs font-bold text-slate-800">Password & Account Recovery</h3>
+            <p className="text-[11px] text-slate-500">
+              Manage your credentials, test secure token recovery, or set a new password.
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            window.location.hash = '#reset-password';
+            window.history.pushState({}, document.title, '/reset-password');
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }}
+          className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer"
+        >
+          <KeyRound className="w-3.5 h-3.5" />
+          <span>Open Password Reset Page</span>
+        </button>
       </div>
 
       {/* Main Calling Stage Console */}
@@ -913,6 +963,19 @@ export const CustomerDashboard: React.FC = () => {
           )}
         </div>
 
+        {/* Real-time Customer Sentiment Indicator */}
+        {callStatus !== 'idle' && (
+          <div className="px-6 py-3 border-t border-slate-200/80 bg-slate-50/40">
+            <LiveSentimentCard
+              sentiment={liveSentiment?.sentiment}
+              confidenceScore={liveSentiment?.confidenceScore}
+              reason={liveSentiment?.reason}
+              triggerText={liveSentiment?.triggerText}
+              requiresHumanAssistance={liveSentiment?.requiresHumanAssistance}
+            />
+          </div>
+        )}
+
         {/* Live Conversation Transcript */}
         <div className="border-t border-slate-200/80 bg-slate-50/60 p-6">
           <div className="flex items-center justify-between mb-4">
@@ -1076,6 +1139,7 @@ export const CustomerDashboard: React.FC = () => {
                   <th className="py-3 px-4">{t('history.col_language')}</th>
                   <th className="py-3 px-4">{t('history.col_type')}</th>
                   <th className="py-3 px-4">{t('history.col_status')}</th>
+                  <th className="py-3 px-4">Sentiment</th>
                   <th className="py-3 px-4">{t('history.col_handled_by')}</th>
                   <th className="py-3 px-4 text-right">{t('history.col_actions')}</th>
                 </tr>
@@ -1124,6 +1188,13 @@ export const CustomerDashboard: React.FC = () => {
                         >
                           {call.status}
                         </span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <SentimentBadge
+                          sentiment={call.overallSentiment}
+                          score={call.sentimentScore}
+                          size="xs"
+                        />
                       </td>
                       <td className="py-3 px-4 text-slate-700">
                         {call.transferred ? (
@@ -1189,6 +1260,16 @@ export const CustomerDashboard: React.FC = () => {
                 </button>
               </div>
             </div>
+
+            {/* Post-Call Sentiment Evaluation */}
+            <PostCallSentimentSummary
+              overallSentiment={selectedHistoryCall.overallSentiment}
+              sentimentScore={selectedHistoryCall.sentimentScore}
+              customerExperience={selectedHistoryCall.sentimentRecords?.find(r => r.isFinal)?.customerExperienceNote}
+              frustrationDetected={selectedHistoryCall.overallSentiment === 'FRUSTRATED'}
+              requiresAssistance={selectedHistoryCall.requiresAssistance}
+              assistanceReason={selectedHistoryCall.assistanceReason}
+            />
 
             <div className="max-h-80 overflow-y-auto space-y-3 p-2">
               {(!selectedHistoryCall.transcripts || selectedHistoryCall.transcripts.length === 0) ? (

@@ -1,8 +1,9 @@
-import React, { useState, Suspense, lazy } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext.js';
 import { LanguageProvider } from './context/LanguageContext.js';
 import { Navbar } from './components/Navbar.js';
 import { LoginPage } from './pages/Login.js';
+import { ResetPasswordPage } from './pages/ResetPassword.js';
 
 // Lazy-loaded role dashboards for optimal initial bundle loading speed and memory efficiency
 const CustomerDashboard = lazy(() =>
@@ -26,9 +27,35 @@ const RoleLoader: React.FC<{ roleName: string }> = ({ roleName }) => (
   </div>
 );
 
+const checkIsResetRoute = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  const path = window.location.pathname.toLowerCase();
+  const search = new URLSearchParams(window.location.search);
+  return (
+    path === '/reset-password' ||
+    path.startsWith('/reset-password') ||
+    search.get('view') === 'reset-password' ||
+    search.get('mode') === 'reset' ||
+    (search.has('token') && !search.has('user'))
+  );
+};
+
 const MainApp: React.FC = () => {
   const { user, isLoading } = useAuth();
   const [currentRoleView, setCurrentRoleView] = useState<string | null>(null);
+  const [isResetView, setIsResetView] = useState<boolean>(checkIsResetRoute);
+
+  useEffect(() => {
+    const handleUrlChange = () => {
+      setIsResetView(checkIsResetRoute());
+    };
+    window.addEventListener('popstate', handleUrlChange);
+    window.addEventListener('hashchange', handleUrlChange);
+    return () => {
+      window.removeEventListener('popstate', handleUrlChange);
+      window.removeEventListener('hashchange', handleUrlChange);
+    };
+  }, []);
 
   if (isLoading) {
     return (
@@ -40,6 +67,18 @@ const MainApp: React.FC = () => {
           Loading KAIRA Voice Core...
         </p>
       </div>
+    );
+  }
+
+  // Password Reset View: ALWAYS rendered whenever the route or query is reset-password
+  if (isResetView) {
+    return (
+      <ResetPasswordPage
+        onBackToLogin={() => {
+          window.history.pushState({}, document.title, '/');
+          setIsResetView(false);
+        }}
+      />
     );
   }
 

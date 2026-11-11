@@ -2,7 +2,7 @@ import React from 'react';
 import { useAuth } from '../context/AuthContext.js';
 import { useLanguage } from '../context/LanguageContext.js';
 import { LanguageSelector } from './LanguageSelector.js';
-import { LogOut, Shield, Headset, User as UserIcon } from 'lucide-react';
+import { LogOut, Shield, Headset, User as UserIcon, KeyRound } from 'lucide-react';
 
 export const Navbar: React.FC = () => {
   const { user, logout } = useAuth();
@@ -34,6 +34,11 @@ export const Navbar: React.FC = () => {
           </span>
         );
     }
+  };
+
+  const handleOpenResetPassword = () => {
+    window.history.pushState({}, document.title, '/reset-password');
+    window.dispatchEvent(new PopStateEvent('popstate'));
   };
 
   return (
@@ -73,6 +78,17 @@ export const Navbar: React.FC = () => {
           </div>
 
           <div className="h-6 w-px bg-slate-200" />
+
+          {/* Direct Password Reset / Change Action */}
+          <button
+            type="button"
+            onClick={handleOpenResetPassword}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors cursor-pointer border border-indigo-200"
+            title="Reset or Change Password"
+          >
+            <KeyRound className="w-4 h-4 text-indigo-600" />
+            <span className="hidden sm:inline">Reset Password</span>
+          </button>
 
           <button
             onClick={logout}

@@ -7,21 +7,88 @@ import { fileURLToPath } from 'url';
 import { OAuth2Client } from 'google-auth-library';
 import { prisma } from '../db.js';
 import { generateToken, authenticate } from '../middleware/auth.js';
+import { authLimiter, forgotPasswordLimiter } from '../middleware/rateLimiter.js';
+import {
+  validate,
+  loginSchema,
+  registerSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema
+} from '../middleware/validation.js';
+import { logSecurityEvent } from '../services/audit.js';
+import { sendPasswordResetEmail, sendGoogleAccountRecoveryNotice } from '../services/email.js';
+import { env } from '../config/env.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const router = Router();
 
-// 1. Password Login for Administrator and Support Agent (Strictly restricted from Customers)
-router.post('/login', async (req: Request, res: Response) => {
+// Helper: Handle failed authentication attempts and brute-force mitigation
+async function recordFailedLogin(user: { id: string; email: string; failedLoginAttempts: number }, req: Request): Promise<number> {
+  const newAttempts = (user.failedLoginAttempts || 0) + 1;
+  const lockThreshold = 5;
+  const isLocking = newAttempts >= lockThreshold;
+  const lockedUntil = isLocking ? new Date(Date.now() + 15 * 60 * 1000) : null;
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      failedLoginAttempts: newAttempts,
+      lockedUntil
+    }
+  });
+
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const ua = (req.headers['user-agent'] as string) || 'unknown';
+
+  if (isLocking) {
+    await logSecurityEvent({
+      eventType: 'ACCOUNT_LOCKED',
+      userId: user.id,
+      email: user.email,
+      ipAddress: ip,
+      userAgent: ua,
+      details: `Account temporarily locked for 15 minutes after ${newAttempts} consecutive failed login attempts.`
+    });
+  } else {
+    await logSecurityEvent({
+      eventType: 'LOGIN_FAILED',
+      userId: user.id,
+      email: user.email,
+      ipAddress: ip,
+      userAgent: ua,
+      details: `Failed authentication attempt (${newAttempts}/${lockThreshold})`
+    });
+  }
+
+  return Math.max(0, lockThreshold - newAttempts);
+}
+
+// Helper: Reset failed attempts upon successful login
+async function recordSuccessfulLogin(user: { id: string; email: string }, req: Request): Promise<void> {
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      failedLoginAttempts: 0,
+      lockedUntil: null
+    }
+  });
+
+  await logSecurityEvent({
+    eventType: 'LOGIN_SUCCESS',
+    userId: user.id,
+    email: user.email,
+    ipAddress: req.ip || req.socket.remoteAddress || 'unknown',
+    userAgent: (req.headers['user-agent'] as string) || 'unknown',
+    details: 'User authenticated successfully'
+  });
+}
+
+// 1. Password Login for Administrator, Support Agent, and Customer
+router.post('/login', authLimiter, validate(loginSchema), async (req: Request, res: Response) => {
   try {
     const { email, password, role } = req.body;
-
-    if (!email || !password) {
-      res.status(400).json({ error: 'Username / email and password are required.' });
-      return;
-    }
 
     const cleanEmail = email.trim().toLowerCase();
 
@@ -35,7 +102,24 @@ router.post('/login', async (req: Request, res: Response) => {
     });
 
     if (!user) {
+      await logSecurityEvent({
+        eventType: 'LOGIN_FAILED',
+        email: cleanEmail,
+        ipAddress: req.ip || req.socket.remoteAddress,
+        userAgent: req.headers['user-agent'] as string,
+        details: 'Login attempt for non-existent user'
+      });
       res.status(401).json({ error: 'Invalid username/email or password.' });
+      return;
+    }
+
+    // Check account lockout
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
+      const remainingMinutes = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60000);
+      res.status(429).json({
+        error: `Account temporarily locked due to multiple failed login attempts. Please try again in ${remainingMinutes} minute(s) or reset your password.`,
+        code: 'ACCOUNT_LOCKED'
+      });
       return;
     }
 
@@ -64,9 +148,14 @@ router.post('/login', async (req: Request, res: Response) => {
     // Compare password with bcrypt hash
     const isValid = await bcrypt.compare(password, user.passwordHash);
     if (!isValid) {
-      res.status(401).json({ error: 'Invalid username/email or password.' });
+      const remaining = await recordFailedLogin(user, req);
+      const remainingMsg = remaining > 0 ? ` (${remaining} attempt(s) remaining before temporary lockout)` : '';
+      res.status(401).json({ error: `Invalid username/email or password.${remainingMsg}` });
       return;
     }
+
+    // Success: reset failure counters
+    await recordSuccessfulLogin(user, req);
 
     const token = generateToken({
       id: user.id,
@@ -94,24 +183,42 @@ router.post('/login', async (req: Request, res: Response) => {
 });
 
 // 1a. Dedicated Administrator Login
-router.post('/admin/login', async (req: Request, res: Response) => {
+router.post('/admin/login', authLimiter, validate(loginSchema), async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) {
-      res.status(400).json({ error: 'Admin username/email and password are required.' });
-      return;
-    }
     const cleanEmail = email.trim().toLowerCase();
     const user = await prisma.user.findFirst({ where: { email: cleanEmail } });
     if (!user || user.role !== 'admin') {
+      await logSecurityEvent({
+        eventType: 'LOGIN_FAILED',
+        email: cleanEmail,
+        ipAddress: req.ip || req.socket.remoteAddress,
+        userAgent: req.headers['user-agent'] as string,
+        details: 'Failed admin login attempt: invalid user or role'
+      });
       res.status(403).json({ error: 'Access denied. This account does not have Administrator privileges.' });
       return;
     }
-    const isValid = await bcrypt.compare(password, user.passwordHash);
-    if (!isValid) {
-      res.status(401).json({ error: 'Invalid username/email or password.' });
+
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
+      const remainingMinutes = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60000);
+      res.status(429).json({
+        error: `Account temporarily locked due to multiple failed login attempts. Please try again in ${remainingMinutes} minute(s).`,
+        code: 'ACCOUNT_LOCKED'
+      });
       return;
     }
+
+    const isValid = await bcrypt.compare(password, user.passwordHash);
+    if (!isValid) {
+      const remaining = await recordFailedLogin(user, req);
+      const remainingMsg = remaining > 0 ? ` (${remaining} attempt(s) remaining)` : '';
+      res.status(401).json({ error: `Invalid username/email or password.${remainingMsg}` });
+      return;
+    }
+
+    await recordSuccessfulLogin(user, req);
+
     const token = generateToken({ id: user.id, email: user.email, name: user.name, role: 'admin' });
     res.json({
       message: 'Administrator login successful',
@@ -124,24 +231,42 @@ router.post('/admin/login', async (req: Request, res: Response) => {
 });
 
 // 1b. Dedicated Support Agent Login
-router.post('/agent/login', async (req: Request, res: Response) => {
+router.post('/agent/login', authLimiter, validate(loginSchema), async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) {
-      res.status(400).json({ error: 'Support Agent username/email and password are required.' });
-      return;
-    }
     const cleanEmail = email.trim().toLowerCase();
     const user = await prisma.user.findFirst({ where: { email: cleanEmail } });
     if (!user || user.role !== 'agent') {
+      await logSecurityEvent({
+        eventType: 'LOGIN_FAILED',
+        email: cleanEmail,
+        ipAddress: req.ip || req.socket.remoteAddress,
+        userAgent: req.headers['user-agent'] as string,
+        details: 'Failed agent login attempt: invalid user or role'
+      });
       res.status(403).json({ error: 'Access denied. This account does not have Support Agent privileges.' });
       return;
     }
-    const isValid = await bcrypt.compare(password, user.passwordHash);
-    if (!isValid) {
-      res.status(401).json({ error: 'Invalid username/email or password.' });
+
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
+      const remainingMinutes = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60000);
+      res.status(429).json({
+        error: `Account temporarily locked due to multiple failed login attempts. Please try again in ${remainingMinutes} minute(s).`,
+        code: 'ACCOUNT_LOCKED'
+      });
       return;
     }
+
+    const isValid = await bcrypt.compare(password, user.passwordHash);
+    if (!isValid) {
+      const remaining = await recordFailedLogin(user, req);
+      const remainingMsg = remaining > 0 ? ` (${remaining} attempt(s) remaining)` : '';
+      res.status(401).json({ error: `Invalid username/email or password.${remainingMsg}` });
+      return;
+    }
+
+    await recordSuccessfulLogin(user, req);
+
     const token = generateToken({ id: user.id, email: user.email, name: user.name, role: 'agent' });
     res.json({
       message: 'Support Agent login successful',
@@ -154,25 +279,9 @@ router.post('/agent/login', async (req: Request, res: Response) => {
 });
 
 // 2. Customer Registration (Only customers can create accounts)
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', authLimiter, validate(registerSchema), async (req: Request, res: Response) => {
   try {
-    const { name, email, phone, password, confirmPassword } = req.body;
-
-    if (!name || !email || !password) {
-      res.status(400).json({ error: 'Full name, email, and password are required.' });
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      res.status(400).json({ error: 'Passwords do not match.' });
-      return;
-    }
-
-    if (password.length < 6) {
-      res.status(400).json({ error: 'Password must be at least 6 characters long.' });
-      return;
-    }
-
+    const { name, email, phone, password } = req.body;
     const cleanEmail = email.trim().toLowerCase();
 
     // Check if email already exists
@@ -186,7 +295,8 @@ router.post('/register', async (req: Request, res: Response) => {
     }
 
     // Role is strictly locked to "customer" - never allow registering as admin or agent
-    const passwordHash = await bcrypt.hash(password, 10);
+    // Hash password with bcrypt cost 12
+    const passwordHash = await bcrypt.hash(password, 12);
     const newUser = await prisma.user.create({
       data: {
         name: name.trim(),
@@ -195,6 +305,15 @@ router.post('/register', async (req: Request, res: Response) => {
         role: 'customer',
         passwordHash
       }
+    });
+
+    await logSecurityEvent({
+      eventType: 'LOGIN_SUCCESS',
+      userId: newUser.id,
+      email: newUser.email,
+      ipAddress: req.ip || req.socket.remoteAddress,
+      userAgent: req.headers['user-agent'] as string,
+      details: 'New customer account registered'
     });
 
     const token = generateToken({
@@ -224,10 +343,12 @@ router.post('/register', async (req: Request, res: Response) => {
 // 2.5 Google OAuth Configuration Status for Frontend
 router.get('/google/config', (req: Request, res: Response) => {
   const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
-  const isConfigured = Boolean(clientId && clientId !== '' && !clientId.includes('your-google-client-id'));
+  const isValidFormat = Boolean(clientId && clientId.endsWith('.apps.googleusercontent.com'));
+  const isConfigured = Boolean(clientId && clientId !== '' && !clientId.includes('your-google-client-id') && isValidFormat);
   res.json({
     configured: isConfigured,
-    clientId: isConfigured ? clientId : null
+    clientId: isConfigured ? clientId : null,
+    error: clientId && !isValidFormat ? 'Google Client ID must end with .apps.googleusercontent.com' : null
   });
 });
 
@@ -242,6 +363,13 @@ router.post('/google/configure', async (req: Request, res: Response) => {
     }
 
     const cleanClientId = clientId.trim();
+    if (!cleanClientId.endsWith('.apps.googleusercontent.com')) {
+      res.status(400).json({
+        error: 'Invalid Google Client ID format. A valid Google Cloud OAuth 2.0 Web Client ID must end with .apps.googleusercontent.com (e.g. 1234567890-abcdef.apps.googleusercontent.com).'
+      });
+      return;
+    }
+
     const cleanSecret = clientSecret && typeof clientSecret === 'string' ? clientSecret.trim() : '';
 
     // Update in-memory process.env immediately
@@ -300,10 +428,10 @@ router.get('/google/url', (req: Request, res: Response) => {
   const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
   const redirectUri = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:5000/api/auth/google/callback';
 
-  if (!clientId || clientId === '' || clientId.includes('your-google-client-id')) {
+  if (!clientId || clientId === '' || clientId.includes('your-google-client-id') || !clientId.endsWith('.apps.googleusercontent.com')) {
     res.json({
       configured: false,
-      message: 'Google Client ID is not configured in server/.env',
+      message: 'Google Client ID is not configured with a valid OAuth 2.0 Client ID (must end in .apps.googleusercontent.com).',
       clientId: null,
       authUrl: null
     });
@@ -838,7 +966,7 @@ router.get('/me', authenticate, async (req: Request, res: Response) => {
   }
 });
 
-// 6b. Update user preferences (language, agent status)
+// 6b. Update user preferences (language, agent status only - strictly forbidden from escalating role)
 router.put('/preferences', authenticate, async (req: Request, res: Response) => {
   try {
     const { preferredLanguage, supportedLanguages, agentStatus } = req.body;
@@ -846,6 +974,11 @@ router.put('/preferences', authenticate, async (req: Request, res: Response) => 
     if (preferredLanguage) updateData.preferredLanguage = preferredLanguage;
     if (supportedLanguages) updateData.supportedLanguages = Array.isArray(supportedLanguages) ? supportedLanguages.join(',') : supportedLanguages;
     if (agentStatus) updateData.agentStatus = agentStatus;
+
+    // Explicitly prevent role tampering
+    delete (updateData as any).role;
+    delete (updateData as any).id;
+    delete (updateData as any).passwordHash;
 
     const user = await prisma.user.update({
       where: { id: req.user!.id },
@@ -872,25 +1005,185 @@ router.put('/preferences', authenticate, async (req: Request, res: Response) => 
   }
 });
 
-// 7. Forgot Password
-router.post('/forgot-password', async (req: Request, res: Response) => {
+// 7. Secure Forgot Password API (Enumeration-protected & Rate-limited)
+router.post('/forgot-password', forgotPasswordLimiter, validate(forgotPasswordSchema), async (req: Request, res: Response) => {
   try {
     const { email } = req.body;
-    if (!email) {
-      res.status(400).json({ error: 'Email address is required.' });
-      return;
-    }
-
     const cleanEmail = email.trim().toLowerCase();
-    await prisma.user.findFirst({
+
+    const user = await prisma.user.findFirst({
       where: { email: cleanEmail }
     });
 
+    // Enumeration defense: always send neutral message
+    const neutralMessage = 'If an account exists with this email address, password reset instructions have been sent to your inbox.';
+
+    if (!user) {
+      // Do not reveal account does not exist
+      res.json({ message: neutralMessage });
+      return;
+    }
+
+    // Google-only account check: accounts registered strictly via Google with no custom password
+    // Should follow the Google OAuth recovery flow rather than setting a local password unexpectedly
+    if (user.googleId && (!user.passwordHash || user.passwordHash.length < 20)) {
+      await sendGoogleAccountRecoveryNotice(user.email, user.name);
+      res.json({ message: neutralMessage });
+      return;
+    }
+
+    // Generate cryptographically secure random token (64 hex characters)
+    const rawToken = crypto.randomBytes(32).toString('hex');
+
+    // Store only the SHA-256 hash in the database
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+    // Invalidate any existing unused reset tokens for this user
+    await prisma.passwordResetToken.updateMany({
+      where: {
+        userId: user.id,
+        used: false
+      },
+      data: { used: true }
+    });
+
+    // Set 15-minute expiration period
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+    await prisma.passwordResetToken.create({
+      data: {
+        userId: user.id,
+        tokenHash,
+        expiresAt,
+        used: false
+      }
+    });
+
+    // Send reset email with reset link containing the plain token
+    const resetLink = `${env.FRONTEND_URL}/reset-password?token=${rawToken}`;
+    await sendPasswordResetEmail(user.email, user.name, resetLink);
+
+    await logSecurityEvent({
+      eventType: 'PASSWORD_RESET_REQUESTED',
+      userId: user.id,
+      email: user.email,
+      ipAddress: req.ip || req.socket.remoteAddress,
+      userAgent: req.headers['user-agent'] as string,
+      details: 'Password reset token generated and dispatched'
+    });
+
+    if (env.NODE_ENV !== 'production') {
+      res.json({
+        message: neutralMessage,
+        devResetLink: resetLink,
+        devToken: rawToken
+      });
+    } else {
+      res.json({ message: neutralMessage });
+    }
+  } catch (err: any) {
+    console.error('[Auth] Forgot password error:', err);
+    res.status(500).json({ error: 'Failed to process password recovery request.' });
+  }
+});
+
+// 8. Verify Password Reset Token Validity (before submitting form)
+router.post('/verify-reset-token', async (req: Request, res: Response) => {
+  try {
+    const { token } = req.body;
+    if (!token || typeof token !== 'string') {
+      res.status(400).json({ valid: false, error: 'Token is required.' });
+      return;
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(token.trim()).digest('hex');
+    const resetRecord = await prisma.passwordResetToken.findUnique({
+      where: { tokenHash },
+      include: { user: { select: { email: true, name: true } } }
+    });
+
+    if (!resetRecord || resetRecord.used || resetRecord.expiresAt < new Date()) {
+      res.status(400).json({
+        valid: false,
+        error: 'This password reset link is invalid, expired, or has already been used. Please request a new one.'
+      });
+      return;
+    }
+
     res.json({
-      message: 'If an account exists with this email address, password reset instructions have been dispatched.'
+      valid: true,
+      email: resetRecord.user.email
     });
   } catch (err: any) {
-    res.status(500).json({ error: 'Error processing forgot password request.' });
+    res.status(500).json({ valid: false, error: 'Failed to verify reset token.' });
+  }
+});
+
+// 9. Reset Password using verified token
+router.post('/reset-password', authLimiter, validate(resetPasswordSchema), async (req: Request, res: Response) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    // Hash token to look up database record
+    const tokenHash = crypto.createHash('sha256').update(token.trim()).digest('hex');
+    const resetRecord = await prisma.passwordResetToken.findUnique({
+      where: { tokenHash }
+    });
+
+    if (!resetRecord || resetRecord.used || resetRecord.expiresAt < new Date()) {
+      await logSecurityEvent({
+        eventType: 'PASSWORD_RESET_FAILED',
+        ipAddress: req.ip || req.socket.remoteAddress,
+        userAgent: req.headers['user-agent'] as string,
+        details: 'Attempted to reset password with invalid, expired, or used token'
+      });
+
+      res.status(400).json({
+        error: 'This password reset link is invalid, expired, or has already been used. Please request a new one.'
+      });
+      return;
+    }
+
+    // Invalidate token immediately upon consumption
+    await prisma.passwordResetToken.update({
+      where: { id: resetRecord.id },
+      data: { used: true }
+    });
+
+    // Invalidate all other reset tokens for this user
+    await prisma.passwordResetToken.updateMany({
+      where: { userId: resetRecord.userId, used: false },
+      data: { used: true }
+    });
+
+    // Hash new password using bcrypt cost 12
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+
+    // Update user password and unlock account if previously locked
+    const updatedUser = await prisma.user.update({
+      where: { id: resetRecord.userId },
+      data: {
+        passwordHash,
+        failedLoginAttempts: 0,
+        lockedUntil: null
+      }
+    });
+
+    await logSecurityEvent({
+      eventType: 'PASSWORD_RESET_SUCCESS',
+      userId: updatedUser.id,
+      email: updatedUser.email,
+      ipAddress: req.ip || req.socket.remoteAddress,
+      userAgent: req.headers['user-agent'] as string,
+      details: 'Password was successfully changed via reset token'
+    });
+
+    res.json({
+      message: 'Your password has been successfully reset. Please sign in with your new credentials.'
+    });
+  } catch (err: any) {
+    console.error('[Auth] Reset password error:', err);
+    res.status(500).json({ error: 'Failed to reset password.' });
   }
 });
 

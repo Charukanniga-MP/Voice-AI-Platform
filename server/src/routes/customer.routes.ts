@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../db.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
+import { validate, customerCreateSchema, customerUpdateSchema } from '../middleware/validation.js';
 
 const router = Router();
 
@@ -65,7 +66,7 @@ router.get('/', authenticate, requireRole(['admin', 'agent']), async (req: Reque
 });
 
 // 2. Add customer manually (Admin only)
-router.post('/', authenticate, requireRole(['admin']), async (req: Request, res: Response) => {
+router.post('/', authenticate, requireRole(['admin']), validate(customerCreateSchema), async (req: Request, res: Response) => {
   try {
     const { name, email, phone, password } = req.body;
 
@@ -117,9 +118,18 @@ router.post('/', authenticate, requireRole(['admin']), async (req: Request, res:
   }
 });
 
-// 3. Get customer details with full call history (Admin & Agent)
-router.get('/:id', authenticate, requireRole(['admin', 'agent']), async (req: Request, res: Response) => {
+// 3. Get customer details with full call history (Admin, Agent, or Customer accessing own profile)
+router.get('/:id', authenticate, async (req: Request, res: Response) => {
   try {
+    // Role & ownership check
+    if (req.user!.role === 'customer' && req.params.id !== req.user!.id) {
+      res.status(403).json({
+        error: 'Access denied. You cannot access another customer\'s private information.',
+        code: 'FORBIDDEN'
+      });
+      return;
+    }
+
     const customer = await prisma.user.findUnique({
       where: { id: req.params.id },
       include: {
@@ -147,7 +157,7 @@ router.get('/:id', authenticate, requireRole(['admin', 'agent']), async (req: Re
 });
 
 // 4. Update customer information (Admin only)
-router.put('/:id', authenticate, requireRole(['admin']), async (req: Request, res: Response) => {
+router.put('/:id', authenticate, requireRole(['admin']), validate(customerUpdateSchema), async (req: Request, res: Response) => {
   try {
     const { name, email, phone } = req.body;
 

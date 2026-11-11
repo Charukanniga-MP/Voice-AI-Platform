@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { prisma } from '../db.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
+import { validate, knowledgeEntrySchema } from '../middleware/validation.js';
 import { processUploadedDocument } from '../services/documentProcessor.js';
 import { knowledgeService } from '../services/knowledge.js';
 import { seedDefaultKnowledgeEntries } from '../seed.js';
@@ -16,25 +17,35 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Multer storage configuration
+// Multer storage configuration with sanitized filenames to prevent directory traversal
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + '-' + file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_'));
+    const safeName = path.basename(file.originalname).replace(/[^a-zA-Z0-9.-]/g, '_');
+    cb(null, `${uniqueSuffix}-${safeName}`);
   }
 });
+
+const ALLOWED_EXTENSIONS = new Set(['.pdf', '.docx']);
+const ALLOWED_MIME_TYPES = new Set([
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/msword'
+]);
 
 const upload = multer({
   storage,
   limits: { fileSize: 25 * 1024 * 1024 }, // 25MB max
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    if (ext === '.pdf' || ext === '.docx' || ext === '.doc' || ext === '.txt') {
-      cb(null, true);
-    } else {
-      cb(new Error('Only PDF, DOCX, and TXT documents are supported.'));
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      return cb(new Error('Invalid file type. Only approved PDF and DOCX documents are accepted for Knowledge Base indexing.'));
     }
+    if (file.mimetype && !ALLOWED_MIME_TYPES.has(file.mimetype) && file.mimetype !== 'application/octet-stream') {
+      return cb(new Error('Invalid file MIME type. Only approved PDF and DOCX documents are accepted.'));
+    }
+    cb(null, true);
   }
 });
 
@@ -105,7 +116,7 @@ router.get('/documents', authenticate, requireRole(['admin']), async (req: Reque
 });
 
 // 3. Add Knowledge Entry (Admin only)
-router.post('/', authenticate, requireRole(['admin']), async (req: Request, res: Response) => {
+router.post('/', authenticate, requireRole(['admin']), validate(knowledgeEntrySchema), async (req: Request, res: Response) => {
   try {
     const { title, category, question, answer, content, keywords } = req.body;
 

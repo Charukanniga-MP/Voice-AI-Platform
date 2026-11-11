@@ -72,6 +72,11 @@ export interface CallRecord {
   callNotes?: string | null;
   endedBy?: string | null;
   rating?: number | null;
+  overallSentiment?: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL' | 'FRUSTRATED' | null;
+  sentimentScore?: number | null;
+  requiresAssistance?: boolean;
+  assistanceReason?: string | null;
+  assistanceStatus?: 'none' | 'pending' | 'accepted' | 'dismissed' | null;
   providerCallSid?: string | null;
   providerName?: string | null;
   failureReason?: string | null;
@@ -80,6 +85,7 @@ export interface CallRecord {
   admin?: { id: string; name: string };
   transcripts?: CallTranscript[];
   transferRequests?: CallTransferRequest[];
+  sentimentRecords?: SentimentRecord[];
 }
 
 export interface KnowledgeEntry {
@@ -125,5 +131,64 @@ export interface CallStats {
   avgWaitTime?: number; // in seconds
   avgDuration?: number; // in seconds
   callsByLanguage?: Record<string, number>;
+}
+
+export type SentimentType = 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL' | 'FRUSTRATED';
+
+export interface SentimentRecord {
+  id: string;
+  callRecordId: string;
+  customerId?: string | null;
+  sentiment: SentimentType;
+  confidenceScore: number;
+  reason?: string | null;
+  triggerText?: string | null;
+  language?: string | null;
+  requiresHumanAssistance: boolean;
+  isFinal: boolean;
+  customerExperienceNote?: string | null;
+  detectedAt: string;
+}
+
+export interface SentimentAnalyticsData {
+  totalAnalyzed: number;
+  counts: {
+    positive: number;
+    negative: number;
+    neutral: number;
+    frustrated: number;
+  };
+  percentages: {
+    positive: number;
+    negative: number;
+    neutral: number;
+    frustrated: number;
+  };
+  requiresHumanAssistance: number;
+  recentCalls: Array<{
+    id: string;
+    callId: string;
+    customerName: string;
+    customerPhone?: string | null;
+    overallSentiment: SentimentType;
+    sentimentScore: number;
+    requiresAssistance: boolean;
+    assistanceReason?: string | null;
+    assistanceStatus?: string | null;
+    language?: string | null;
+    duration: number;
+    createdAt: string;
+  }>;
+  dailyTrend: Array<{
+    date: string;
+    positive: number;
+    negative: number;
+    neutral: number;
+    frustrated: number;
+  }>;
+  filterApplied: {
+    period: string;
+    category: string;
+  };
 }
 

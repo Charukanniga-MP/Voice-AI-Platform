@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { authenticate } from '../middleware/auth.js';
+import { validate, ticketCreateSchema, ticketUpdateSchema } from '../middleware/validation.js';
 
 const router = Router();
 const statuses = ['open', 'in_progress', 'waiting', 'resolved', 'closed'];
@@ -35,7 +36,7 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 // 2. Create Support Ticket (Customers, Agents, Admins)
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', validate(ticketCreateSchema), async (req: Request, res: Response) => {
   try {
     const user = req.user!;
     const { customerId, customerName, customerEmail, subject, description, priority, assignedTo, followUpAt } = req.body;
@@ -73,7 +74,7 @@ router.post('/', async (req: Request, res: Response) => {
 });
 
 // 3. Update Support Ticket (Admins & Agents can update status/priority/assignedTo; Customers can update open tickets)
-router.patch('/:id', async (req: Request, res: Response) => {
+router.patch('/:id', validate(ticketUpdateSchema), async (req: Request, res: Response) => {
   try {
     const user = req.user!;
     const existing = await prisma.supportTicket.findUnique({ where: { id: req.params.id } });
