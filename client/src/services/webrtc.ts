@@ -50,7 +50,12 @@ export class WebRTCManager {
   // Load configured ICE/TURN servers from backend
   private async loadIceServers(): Promise<void> {
     try {
-      const res = await fetch('/api/telephony/ice-servers');
+      const token = localStorage.getItem('token');
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const res = await fetch('/api/telephony/ice-servers', { headers });
       if (res.ok) {
         const data = await res.json();
         if (data.iceServers && Array.isArray(data.iceServers) && data.iceServers.length > 0) {
@@ -254,7 +259,7 @@ export class WebRTCManager {
         const port = event.candidate.port;
         console.log(`[WebRTC ICE] Local candidate: type=${candType}, protocol=${protocol}, port=${port}`);
         if (candType === 'relay') {
-          console.log('🛡️ [WebRTC TURN Relay] Successfully allocated active TURN relay candidate:', event.candidate.candidate);
+          console.log(`🛡️ [WebRTC TURN Relay] Successfully allocated active TURN relay candidate (${candType}, ${protocol}:${port})`);
         }
 
         if (this.callId) {

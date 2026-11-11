@@ -90,8 +90,8 @@ export function validateCallbackParams(req: Request, res: Response, next: Functi
   next();
 }
 
-// 1. Get Telephony Provider Configuration Status
-router.get('/status', (req: Request, res: Response) => {
+// 1. Get Telephony Provider Configuration Status (Authenticated)
+router.get('/status', authenticate, (req: Request, res: Response) => {
   const status = telephonyService.getStatus();
   res.json(status);
 });
@@ -148,8 +148,8 @@ router.get('/ice-servers', async (req: Request, res: Response) => {
   });
 });
 
-// 1c. Diagnostic endpoint to test and validate TURN configuration
-router.get('/turn-diagnostic', async (req: Request, res: Response) => {
+// 1c. Diagnostic endpoint to test and validate TURN configuration (Admin Protected)
+router.get('/turn-diagnostic', authenticate, requireRole(['admin']), async (req: Request, res: Response) => {
   const customTurn = process.env.TURN_SERVER_URL?.trim();
   const username = process.env.TURN_USERNAME?.trim();
   const credential = process.env.TURN_CREDENTIAL?.trim();

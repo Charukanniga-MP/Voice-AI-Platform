@@ -44,8 +44,20 @@ try {
 
 const app = express();
 
-// Trust reverse proxy headers (e.g. Nginx, Caddy, Cloudflare, Traefik, AWS ALB)
-app.set('trust proxy', true);
+// Configure trust proxy: Trust localhost reverse proxy (Caddy/Nginx/Cloudflare) by default, or specific proxy subnet
+const trustProxyConfig = process.env.TRUST_PROXY || 'loopback';
+app.set('trust proxy', trustProxyConfig === 'true' ? true : trustProxyConfig === 'false' ? false : trustProxyConfig);
+
+// Enforce HTTPS in production when behind HTTPS reverse proxy or when native HTTPS is enabled
+if (process.env.NODE_ENV === 'production' && (process.env.FORCE_HTTPS === 'true' || process.env.HTTPS === 'true')) {
+  app.use((req, res, next) => {
+    if (!req.secure && req.headers['x-forwarded-proto'] !== 'https') {
+      const host = req.headers['x-forwarded-host'] || req.headers.host;
+      return res.redirect(301, `https://${host}${req.originalUrl}`);
+    }
+    next();
+  });
+}
 
 // Configure HTTP or HTTPS server
 let server: http.Server | https.Server;
@@ -104,16 +116,19 @@ const rawAllowedOrigins = [
 
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
-    if (
-      !origin ||
-      rawAllowedOrigins.includes(origin) ||
-      process.env.NODE_ENV !== 'production' ||
-      (origin && (origin.includes('localhost') || origin.includes('127.0.0.1') || origin.includes('10.118.215.233')))
-    ) {
-      callback(null, true);
-    } else {
-      callback(new Error('Blocked by CORS policy: Origin not allowed.'));
+    // Allow server-to-server or same-origin requests (origin undefined)
+    if (!origin) return callback(null, true);
+
+    const isProd = process.env.NODE_ENV === 'production';
+    if (rawAllowedOrigins.includes(origin)) {
+      return callback(null, true);
     }
+
+    if (!isProd && (origin.includes('localhost') || origin.includes('127.0.0.1') || origin.includes('10.118.215.233'))) {
+      return callback(null, true);
+    }
+
+    callback(new Error('Blocked by CORS policy: Origin not allowed.'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
@@ -124,16 +139,15 @@ const corsOptions: cors.CorsOptions = {
 const io = new SocketIOServer(server, {
   cors: {
     origin: (origin, callback) => {
-      if (
-        !origin ||
-        rawAllowedOrigins.includes(origin) ||
-        process.env.NODE_ENV !== 'production' ||
-        (origin && (origin.includes('localhost') || origin.includes('127.0.0.1') || origin.includes('10.118.215.233')))
-      ) {
-        callback(null, true);
-      } else {
-        callback(new Error('Blocked by Socket.IO CORS'));
+      if (!origin) return callback(null, true);
+      const isProd = process.env.NODE_ENV === 'production';
+      if (rawAllowedOrigins.includes(origin)) {
+        return callback(null, true);
       }
+      if (!isProd && (origin.includes('localhost') || origin.includes('127.0.0.1') || origin.includes('10.118.215.233'))) {
+        return callback(null, true);
+      }
+      callback(new Error('Blocked by Socket.IO CORS'));
     },
     credentials: true
   }
