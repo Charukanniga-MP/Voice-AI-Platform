@@ -70,7 +70,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
   const [error, setError] = useState<string | null>(null);
 
   // Google Identity Services (GIS) configuration
-  const envClientId = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '1018334787224-nkk8l415st631mr3isgm0kjidlhp68h0.apps.googleusercontent.com';
+  const envClientId = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '';
 
   const isClientIdValid = (cid: string | null | undefined): boolean => {
     if (!cid) return false;
