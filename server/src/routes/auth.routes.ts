@@ -278,6 +278,54 @@ router.post('/agent/login', authLimiter, validate(loginSchema), async (req: Requ
   }
 });
 
+// 1c. Dedicated Customer Login
+router.post('/customer/login', authLimiter, validate(loginSchema), async (req: Request, res: Response) => {
+  try {
+    const { email, password } = req.body;
+    const cleanEmail = email.trim().toLowerCase();
+    const user = await prisma.user.findFirst({ where: { email: cleanEmail } });
+    if (!user || user.role !== 'customer') {
+      await logSecurityEvent({
+        eventType: 'LOGIN_FAILED',
+        email: cleanEmail,
+        ipAddress: req.ip || req.socket.remoteAddress,
+        userAgent: req.headers['user-agent'] as string,
+        details: 'Failed customer login attempt: invalid user or not a customer'
+      });
+      res.status(403).json({ error: 'Access denied. No customer account found with this email.' });
+      return;
+    }
+
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
+      const remainingMinutes = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60000);
+      res.status(429).json({
+        error: `Account temporarily locked due to multiple failed login attempts. Please try again in ${remainingMinutes} minute(s).`,
+        code: 'ACCOUNT_LOCKED'
+      });
+      return;
+    }
+
+    const isValid = await bcrypt.compare(password, user.passwordHash);
+    if (!isValid) {
+      const remaining = await recordFailedLogin(user, req);
+      const remainingMsg = remaining > 0 ? ` (${remaining} attempt(s) remaining)` : '';
+      res.status(401).json({ error: `Invalid username/email or password.${remainingMsg}` });
+      return;
+    }
+
+    await recordSuccessfulLogin(user, req);
+
+    const token = generateToken({ id: user.id, email: user.email, name: user.name, role: 'customer' });
+    res.json({
+      message: 'Customer login successful',
+      token,
+      user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role, avatar: user.avatar }
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Internal server error during Customer login.' });
+  }
+});
+
 // 2. Customer Registration (Only customers can create accounts)
 router.post('/register', authLimiter, validate(registerSchema), async (req: Request, res: Response) => {
   try {

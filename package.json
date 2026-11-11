@@ -1,12 +1,19 @@
 {
   "name": "kaira-platform",
   "version": "1.0.0",
+  "type": "module",
   "private": true,
   "scripts": {
     "dev": "npm run dev --prefix server",
     "dev:client": "npm run dev --prefix client",
     "build:client": "npm run build --prefix client",
-    "start": "npm start --prefix server"
+    "start": "npm start --prefix server",
+    "sync": "node scripts/sync-team.js dashboard",
+    "sync:check": "node scripts/sync-team.js check",
+    "sync:pull": "node scripts/sync-team.js pull",
+    "sync:push": "node scripts/sync-team.js push",
+    "sync:resolve": "node scripts/sync-team.js resolve",
+    "sync:backup": "node scripts/sync-team.js backup",
+    "check-updates": "node scripts/sync-team.js check"
   }
 }
-

@@ -6,14 +6,19 @@ import { voiceService } from '../services/voice.js';
 import { SupportTickets } from './SupportTickets.js';
 import {
   User, CallRecord, CallTranscript, CallTransferRequest,
-  KnowledgeEntry, KnowledgeDocument, CallStats, LanguageCode, SUPPORTED_LANGUAGES
+  KnowledgeEntry, KnowledgeDocument, CallStats, CallQualityStats, LanguageCode, SUPPORTED_LANGUAGES,
+  CallIntelligenceStats, KnowledgeGap, FollowUpTask
 } from '../types.js';
+import { CustomerProfileModal } from '../components/CustomerProfileModal.js';
+import { CallIntelligenceModal } from '../components/CallIntelligenceModal.js';
+import { FollowUpTasksManager } from '../components/FollowUpTasksManager.js';
 import {
   Users, PhoneCall, PhoneIncoming, PhoneOutgoing, PhoneForwarded,
   PhoneOff, Mic, MicOff, Volume2, VolumeX, Clock, Search,
   BookOpen, Plus, Trash2, Edit3, Upload, CheckCircle2, MessageSquare,
   AlertCircle, ShieldAlert, Eye, Headphones, Radio, RefreshCw, Globe,
-  Sparkles, Download, Lightbulb, HeartPulse
+  Activity, Wifi, WifiOff, Signal, Zap, AlertTriangle, XCircle, BarChart3, Sliders, ShieldCheck,
+  Sparkles, ListTodo, Download, Lightbulb, HeartPulse
 } from 'lucide-react';
 import { SentimentDashboardSection } from '../components/SentimentDashboardSection.js';
 import { SentimentBadge } from '../components/SentimentBadge.js';
@@ -38,7 +43,7 @@ export const AdminDashboard: React.FC = () => {
   const { user, token } = useAuth();
 
   // Active navigation section
-  const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'agents' | 'calls' | 'transfers' | 'knowledge' | 'tickets' | 'sentiment'>('overview');
+  const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'agents' | 'calls' | 'intelligence' | 'tasks' | 'transfers' | 'knowledge' | 'tickets' | 'quality' | 'sentiment'>('overview');
 
   // Stats state
   const [stats, setStats] = useState<CallStats>({
@@ -147,11 +152,27 @@ export const AdminDashboard: React.FC = () => {
   const [uploadTitle, setUploadTitle] = useState('');
   const [isUploading, setIsUploading] = useState(false);
 
-  // Knowledge Base Query Playground State
-  const [testQuery, setTestQuery] = useState('');
-  const [testingQuery, setTestingQuery] = useState(false);
-  const [testResult, setTestResult] = useState<any | null>(null);
-  const [seedingDefaults, setSeedingDefaults] = useState(false);
+  // Section G: Call Quality Monitoring State
+  const [qualityStats, setQualityStats] = useState<CallQualityStats | null>(null);
+  const [loadingQuality, setLoadingQuality] = useState(false);
+  const [qualityFilter, setQualityFilter] = useState<'all' | 'excellent' | 'good' | 'poor' | 'reconnected' | 'disconnected' | 'failed'>('all');
+  const [qualitySearch, setQualitySearch] = useState('');
+  const [selectedQualityCall, setSelectedQualityCall] = useState<CallRecord | null>(null);
+
+  // Section H: Call Intelligence & Follow-Up State
+  const [intelligenceStats, setIntelligenceStats] = useState<CallIntelligenceStats | null>(null);
+  const [loadingIntelligence, setLoadingIntelligence] = useState(false);
+  const [gapSearch, setGapSearch] = useState('');
+  const [gapLangFilter, setGapLangFilter] = useState('all');
+  const [selectedIntelligenceCallId, setSelectedIntelligenceCallId] = useState<string | null>(null);
+  const [selectedProfileCustomerId, setSelectedProfileCustomerId] = useState<string | null>(null);
+
+  // Knowledge Gap Approval Modal State
+  const [approvingGap, setApprovingGap] = useState<KnowledgeGap | null>(null);
+  const [gapTitle, setGapTitle] = useState('');
+  const [gapAnswer, setGapAnswer] = useState('');
+  const [gapCategory, setGapCategory] = useState('general');
+  const [savingGap, setSavingGap] = useState(false);
 
   // Auto-scroll transcript
   const transcriptEndRef = useRef<HTMLDivElement>(null);
@@ -296,80 +317,88 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Test Knowledge Query in Playground
-  const handleTestQuery = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!testQuery.trim() || !token) return;
-    setTestingQuery(true);
-    setTestResult(null);
+  // Fetch Call Quality Stats & Telemetry
+  const fetchQualityStats = async () => {
+    if (!token) return;
+    setLoadingQuality(true);
     try {
-      const res = await fetch('/api/knowledge/test-query', {
+      const res = await fetch('/api/calls/quality/stats', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setQualityStats(data);
+      }
+    } catch (err) {
+      console.error('Failed to load call quality stats:', err);
+    } finally {
+      setLoadingQuality(false);
+    }
+  };
+
+  // Fetch AI Post-Call Intelligence Statistics & Knowledge Gaps
+  const fetchIntelligenceStats = async () => {
+    if (!token) return;
+    setLoadingIntelligence(true);
+    try {
+      const res = await fetch('/api/calls/intelligence/stats', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setIntelligenceStats(data);
+      }
+    } catch (err) {
+      console.error('Failed to load intelligence stats:', err);
+    } finally {
+      setLoadingIntelligence(false);
+    }
+  };
+
+  const handleOpenApproveGap = (gap: KnowledgeGap) => {
+    setApprovingGap(gap);
+    setGapTitle(gap.topic || 'General Inquiry');
+    setGapAnswer('');
+    setGapCategory('general');
+  };
+
+  const handleSaveApproveGap = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!approvingGap || !token) return;
+    setSavingGap(true);
+    try {
+      const res = await fetch(`/api/knowledge-gaps/${approvingGap.id}/approve-to-kb`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ query: testQuery.trim() })
+        body: JSON.stringify({
+          title: gapTitle,
+          answer: gapAnswer,
+          category: gapCategory
+        })
       });
-      const data = await res.json();
       if (res.ok) {
-        setTestResult(data);
-      } else {
-        alert(data.error || 'Failed to test query.');
-      }
-    } catch (err: any) {
-      alert('Error testing query: ' + err.message);
-    } finally {
-      setTestingQuery(false);
-    }
-  };
-
-  // Restore Default FAQs
-  const handleSeedDefaultFaqs = async () => {
-    if (!window.confirm('Restore / update the official 28 KAIRA Knowledge Base entries? This ensures full voice AI coverage for customers.')) return;
-    if (!token) return;
-    setSeedingDefaults(true);
-    try {
-      const res = await fetch('/api/knowledge/seed-defaults', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (res.ok) {
+        setApprovingGap(null);
+        fetchIntelligenceStats();
         fetchKnowledge();
-        alert(data.message || 'Seeded successfully.');
       } else {
-        alert(data.error || 'Failed to seed defaults.');
+        const err = await res.json();
+        alert(err.message || 'Failed to approve knowledge gap');
       }
-    } catch (err: any) {
-      alert('Error: ' + err.message);
+    } catch (err) {
+      console.error('Error approving knowledge gap:', err);
+      alert('Network error approving gap');
     } finally {
-      setSeedingDefaults(false);
+      setSavingGap(false);
     }
-  };
-
-  // Export Call Transcript as .txt
-  const handleDownloadAdminTranscript = (transcriptList: CallTranscript[], title: string = 'KAIRA-Admin-Call') => {
-    if (!transcriptList || transcriptList.length === 0) return;
-    const header = `=================================================\nKAIRA Voice Platform - Official Call Record\nExported: ${new Date().toLocaleString()}\n=================================================\n\n`;
-    const body = transcriptList.map(tItem => {
-      const time = tItem.timestamp ? new Date(tItem.timestamp).toLocaleTimeString() : '';
-      const speaker = tItem.senderName || (tItem.sender === 'customer' ? 'Customer' : tItem.sender === 'admin' ? 'Administrator' : tItem.sender === 'agent' ? 'Support Agent' : 'KAIRA AI');
-      return `[${time}] ${speaker}:\n${tItem.text}${tItem.translation ? `\n(Translation: ${tItem.translation})` : ''}\n`;
-    }).join('\n');
-
-    const blob = new Blob([header + body], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${title}-${new Date().toISOString().slice(0, 10)}.txt`;
-    link.click();
-    URL.revokeObjectURL(url);
   };
 
   // Initial stats load
   useEffect(() => {
     fetchStats();
+    fetchIntelligenceStats();
   }, [token]);
 
   // Section-specific data fetching
@@ -380,6 +409,8 @@ export const AdminDashboard: React.FC = () => {
     if (activeSection === 'calls') fetchCalls();
     if (activeSection === 'transfers') fetchTransfers();
     if (activeSection === 'knowledge') fetchKnowledge();
+    if (activeSection === 'quality') fetchQualityStats();
+    if (activeSection === 'intelligence') fetchIntelligenceStats();
   }, [activeSection, token, customerSearch, agentSearch, callFilter, callSearch, kbCategory, kbSearch]);
 
   // Socket setup with clean teardown
@@ -847,6 +878,46 @@ export const AdminDashboard: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setActiveSection('intelligence')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'intelligence'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                }`}
+            >
+              <Sparkles className="w-4 h-4" />
+              AI Call Intelligence
+            </button>
+
+            <button
+              onClick={() => setActiveSection('tasks')}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'tasks'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                }`}
+            >
+              <div className="flex items-center gap-3">
+                <ListTodo className="w-4 h-4" />
+                Follow-Up Tasks
+              </div>
+              {(intelligenceStats?.pendingFollowUpTasks ?? 0) > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                  {intelligenceStats?.pendingFollowUpTasks}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => setActiveSection('quality')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'quality'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                }`}
+            >
+              <Activity className="w-4 h-4" />
+              Call Quality & Reliability
+            </button>
+
+            <button
               onClick={() => setActiveSection('transfers')}
               className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'transfers'
                 ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
@@ -867,12 +938,12 @@ export const AdminDashboard: React.FC = () => {
             <button
               onClick={() => setActiveSection('tickets')}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'tickets'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
-                  : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
                 }`}
             >
               <MessageSquare className="w-4 h-4" />
-              Support Tickets
+              Customer Issue Management
             </button>
 
             <button
@@ -1091,7 +1162,7 @@ export const AdminDashboard: React.FC = () => {
             </div>
 
             {/* Quick Navigation Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <div
                 onClick={() => setActiveSection('transfers')}
                 className="p-6 rounded-3xl bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 cursor-pointer hover:shadow-md transition-all space-y-3"
@@ -1128,6 +1199,19 @@ export const AdminDashboard: React.FC = () => {
                 <h3 className="font-bold text-slate-900 text-sm">Agent Management</h3>
                 <p className="text-xs text-slate-600">
                   Provision and manage human Support Agents handling customer outbound and escalated voice calls.
+                </p>
+              </div>
+
+              <div
+                onClick={() => setActiveSection('quality')}
+                className="p-6 rounded-3xl bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-200 cursor-pointer hover:shadow-md transition-all space-y-3"
+              >
+                <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-bold">
+                  <Activity className="w-5 h-5" />
+                </div>
+                <h3 className="font-bold text-slate-900 text-sm">Call Quality & Reliability</h3>
+                <p className="text-xs text-slate-600">
+                  Monitor live network latency, packet loss, automatic reconnection telemetry, and audio performance.
                 </p>
               </div>
             </div>
@@ -1206,6 +1290,14 @@ export const AdminDashboard: React.FC = () => {
                             {c.lastCallDate ? new Date(c.lastCallDate).toLocaleDateString() : 'Never'}
                           </td>
                           <td className="py-3.5 px-4 text-right space-x-2">
+                            <button
+                              onClick={() => setSelectedProfileCustomerId(c.id)}
+                              className="px-2.5 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg font-medium transition-colors cursor-pointer inline-flex items-center gap-1"
+                              title="Customer Intelligence & Interaction History"
+                            >
+                              <Sparkles className="w-3 h-3 text-purple-600" />
+                              Profile
+                            </button>
                             <button
                               onClick={() => {
                                 fetch(`/api/customers/${c.id}`, { headers: { Authorization: `Bearer ${token}` } })
@@ -1477,10 +1569,18 @@ export const AdminDashboard: React.FC = () => {
                               <span className="text-slate-400">No</span>
                             )}
                           </td>
-                          <td className="py-3.5 px-4 text-right">
+                          <td className="py-3.5 px-4 text-right space-x-1.5 whitespace-nowrap">
+                            <button
+                              onClick={() => setSelectedIntelligenceCallId(call.id)}
+                              className="px-2.5 py-1 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded-lg font-semibold transition-colors cursor-pointer text-xs inline-flex items-center gap-1"
+                              title="AI Call Summary & Intelligence"
+                            >
+                              <Sparkles className="w-3 h-3 text-purple-600" />
+                              AI Summary
+                            </button>
                             <button
                               onClick={() => setSelectedCallDetails(call)}
-                              className="px-3 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg font-semibold transition-colors cursor-pointer text-xs"
+                              className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-semibold transition-colors cursor-pointer text-xs"
                             >
                               Details
                             </button>
@@ -1601,19 +1701,7 @@ export const AdminDashboard: React.FC = () => {
 
                 {/* Transcripts in Active Transfer */}
                 <div className="p-6">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Live Transcript</h3>
-                    {transcripts.length > 0 && (
-                      <button
-                        onClick={() => handleDownloadAdminTranscript(transcripts, `KAIRA-Transfer-${activeTransferredCall?.callId}`)}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg text-[11px] font-semibold text-slate-600 cursor-pointer shadow-2xs transition-colors"
-                        title="Download transcript as text"
-                      >
-                        <Download className="w-3 h-3 text-slate-500" />
-                        Export .txt
-                      </button>
-                    )}
-                  </div>
+                  <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">Live Transcript</h3>
                   <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 h-64 overflow-y-auto space-y-3">
                     {transcripts.map((t) => (
                       <div key={t.id} className="text-xs">
@@ -1736,16 +1824,6 @@ export const AdminDashboard: React.FC = () => {
 
               <div className="flex items-center gap-3">
                 <button
-                  onClick={handleSeedDefaultFaqs}
-                  disabled={seedingDefaults}
-                  className="inline-flex items-center gap-2 px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-semibold rounded-xl shadow-xs cursor-pointer transition-colors disabled:opacity-50"
-                  title="Populate/update all 28 default official FAQs"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${seedingDefaults ? 'animate-spin' : ''}`} />
-                  {seedingDefaults ? 'Restoring...' : 'Restore Default FAQs'}
-                </button>
-
-                <button
                   onClick={() => {
                     setEditingKbEntry(null);
                     setKbTitle('');
@@ -1762,68 +1840,6 @@ export const AdminDashboard: React.FC = () => {
                   Add Knowledge Entry
                 </button>
               </div>
-            </div>
-
-            {/* Knowledge Base Query Playground */}
-            <div className="bg-gradient-to-br from-indigo-50/70 to-purple-50/70 rounded-3xl border border-indigo-200/80 p-6 shadow-xs space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-indigo-600" />
-                  <h3 className="font-bold text-slate-900 text-sm">AI Voice Agent Grounding Playground</h3>
-                </div>
-                <span className="text-[11px] font-medium text-indigo-700 bg-indigo-100/80 px-2.5 py-0.5 rounded-full">
-                  Real-time Test Console
-                </span>
-              </div>
-              <p className="text-xs text-slate-600">
-                Test any question to preview what the voice agent would speak and verify if the answer is grounded or would escalate to Admin.
-              </p>
-
-              <form onSubmit={handleTestQuery} className="flex gap-2">
-                <input
-                  type="text"
-                  value={testQuery}
-                  onChange={(e) => setTestQuery(e.target.value)}
-                  placeholder="Ask a customer question (e.g. 'What are your pricing plans?', 'Where is your office?')..."
-                  className="flex-1 px-4 py-2.5 text-xs bg-white border border-indigo-200 rounded-xl text-slate-900 focus:outline-indigo-500 shadow-2xs"
-                />
-                <button
-                  type="submit"
-                  disabled={testingQuery || !testQuery.trim()}
-                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-xs rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5 transition-colors"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  {testingQuery ? 'Testing...' : 'Test Question'}
-                </button>
-              </form>
-
-              {testResult && (
-                <div className="p-4 bg-white rounded-2xl border border-indigo-100 space-y-2.5 shadow-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-700">Test Query Result:</span>
-                    <div className="flex items-center gap-2">
-                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${testResult.isGrounded ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
-                        {testResult.isGrounded ? 'Grounded & Verified' : 'Escalates to Admin'}
-                      </span>
-                      <span className="text-[11px] text-slate-500 font-mono">
-                        Confidence: {(testResult.confidence * 100).toFixed(0)}%
-                      </span>
-                    </div>
-                  </div>
-                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-800 leading-relaxed">
-                    <span className="font-semibold text-indigo-700 block mb-1">Spoken Voice Response:</span>
-                    {testResult.answer}
-                  </div>
-                  {testResult.sources && testResult.sources.length > 0 && (
-                    <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
-                      <span className="font-medium">Matched Source:</span>
-                      <span className="bg-purple-50 text-purple-700 px-2 py-0.5 rounded-md font-semibold">
-                        {testResult.sources[0]?.title}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
             {/* Document Upload Card */}
@@ -1990,6 +2006,763 @@ export const AdminDashboard: React.FC = () => {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* SECTION G: CALL QUALITY MONITORING */}
+        {activeSection === 'quality' && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                    <Activity className="w-5 h-5" />
+                  </div>
+                  <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Call Quality & Reliability Monitoring</h1>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Live WebRTC audio telemetry, round-trip latency, packet loss, jitter, automatic reconnection tracking, and voice quality performance.
+                </p>
+              </div>
+              <button
+                onClick={fetchQualityStats}
+                disabled={loadingQuality}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 shadow-2xs cursor-pointer transition-colors"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingQuality ? 'animate-spin text-emerald-600' : ''}`} />
+                {loadingQuality ? 'Refreshing...' : 'Refresh Telemetry'}
+              </button>
+            </div>
+
+            {/* 6 Key Quality Metric Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+              {/* 1. Successful Calls */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Successful Calls</span>
+                  <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <CheckCircle2 className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-2xl font-black text-slate-900">
+                  {qualityStats?.successfulCalls ?? 0}
+                </div>
+                <p className="text-[11px] text-emerald-600 font-semibold">
+                  {qualityStats?.totalCalls
+                    ? `${Math.round(((qualityStats.successfulCalls) / qualityStats.totalCalls) * 100)}% completion rate`
+                    : '100% completion rate'}
+                </p>
+              </div>
+
+              {/* 2. Failed Calls */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Failed Calls</span>
+                  <div className="w-7 h-7 rounded-lg bg-red-50 text-red-600 flex items-center justify-center">
+                    <XCircle className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-2xl font-black text-slate-900">
+                  {qualityStats?.failedCalls ?? 0}
+                </div>
+                <p className="text-[11px] text-red-500 font-semibold">Carrier / connection aborts</p>
+              </div>
+
+              {/* 3. Disconnected Calls */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Disconnected</span>
+                  <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+                    <WifiOff className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-2xl font-black text-slate-900">
+                  {qualityStats?.disconnectedCalls ?? 0}
+                </div>
+                <p className="text-[11px] text-amber-600 font-semibold">Network interruptions</p>
+              </div>
+
+              {/* 4. Reconnected Calls */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Reconnected</span>
+                  <div className="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                    <RefreshCw className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-2xl font-black text-slate-900">
+                  {qualityStats?.reconnectedCalls ?? 0}
+                </div>
+                <p className="text-[11px] text-indigo-600 font-semibold">Automatic ICE recovery</p>
+              </div>
+
+              {/* 5. Average Duration */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Avg Duration</span>
+                  <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+                    <Clock className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-2xl font-black text-slate-900 font-mono">
+                  {formatDuration(qualityStats?.avgDuration ?? 0)}
+                </div>
+                <p className="text-[11px] text-slate-400">Active talk conversation</p>
+              </div>
+
+              {/* 6. Avg Latency & Loss */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Avg Latency & Loss</span>
+                  <div className="w-7 h-7 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center">
+                    <Signal className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-2xl font-black text-slate-900">
+                  {qualityStats?.avgLatency ?? 0} <span className="text-xs font-normal text-slate-500">ms RTT</span>
+                </div>
+                <p className="text-[11px] text-slate-500 font-mono">
+                  Loss: <span className="font-bold text-slate-700">{qualityStats?.avgPacketLoss ?? 0}%</span> • Jitter: <span className="font-bold text-slate-700">{qualityStats?.avgJitter ?? 0}ms</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Quality Distribution Breakdown */}
+            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Audio Connection Quality Distribution</h3>
+                  <p className="text-xs text-slate-500">Real-time breakdown of estimated ITU-T G.107 VoIP MOS ratings across all voice sessions</p>
+                </div>
+                <div className="flex items-center gap-4 text-xs">
+                  <span className="flex items-center gap-1.5 font-semibold text-emerald-700">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                    Excellent ({qualityStats?.qualityBreakdown?.excellent ?? 0})
+                  </span>
+                  <span className="flex items-center gap-1.5 font-semibold text-blue-700">
+                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                    Good ({qualityStats?.qualityBreakdown?.good ?? 0})
+                  </span>
+                  <span className="flex items-center gap-1.5 font-semibold text-amber-700">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                    Poor ({qualityStats?.qualityBreakdown?.poor ?? 0})
+                  </span>
+                </div>
+              </div>
+
+              {/* Progress Bar */}
+              {(() => {
+                const totalBreakdown =
+                  (qualityStats?.qualityBreakdown?.excellent || 0) +
+                  (qualityStats?.qualityBreakdown?.good || 0) +
+                  (qualityStats?.qualityBreakdown?.poor || 0);
+                const excPct = totalBreakdown > 0 ? ((qualityStats?.qualityBreakdown?.excellent || 0) / totalBreakdown) * 100 : 70;
+                const goodPct = totalBreakdown > 0 ? ((qualityStats?.qualityBreakdown?.good || 0) / totalBreakdown) * 100 : 25;
+                const poorPct = totalBreakdown > 0 ? ((qualityStats?.qualityBreakdown?.poor || 0) / totalBreakdown) * 100 : 5;
+
+                return (
+                  <div className="space-y-2">
+                    <div className="h-4 w-full bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
+                      <div
+                        style={{ width: `${excPct}%` }}
+                        className="bg-emerald-500 h-full transition-all duration-500"
+                        title={`Excellent: ${Math.round(excPct)}%`}
+                      />
+                      <div
+                        style={{ width: `${goodPct}%` }}
+                        className="bg-blue-500 h-full transition-all duration-500"
+                        title={`Good: ${Math.round(goodPct)}%`}
+                      />
+                      <div
+                        style={{ width: `${poorPct}%` }}
+                        className="bg-amber-500 h-full transition-all duration-500"
+                        title={`Poor: ${Math.round(poorPct)}%`}
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 text-xs">
+                      <div className="p-3 rounded-2xl bg-emerald-50/60 border border-emerald-100">
+                        <div className="font-bold text-emerald-800">🟢 Excellent Quality (MOS ≥ 4.0)</div>
+                        <p className="text-[11px] text-emerald-700 mt-0.5">Latency &lt; 100ms, Packet Loss &lt; 1%, Jitter &lt; 20ms. Crisp, studio-clear two-way audio.</p>
+                      </div>
+                      <div className="p-3 rounded-2xl bg-blue-50/60 border border-blue-100">
+                        <div className="font-bold text-blue-800">🔵 Good Quality (MOS 3.5 - 4.0)</div>
+                        <p className="text-[11px] text-blue-700 mt-0.5">Latency 100-200ms, Packet Loss &lt; 2.5%. Normal natural dialogue with slight compression.</p>
+                      </div>
+                      <div className="p-3 rounded-2xl bg-amber-50/60 border border-amber-100">
+                        <div className="font-bold text-amber-800">🔴 Poor Quality (MOS &lt; 3.5)</div>
+                        <p className="text-[11px] text-amber-700 mt-0.5">Latency &gt; 200ms or Packet Loss &gt; 2.5%. Potential jitter buffers, audio cutouts, or auto-reconnections.</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Call Quality History Table & Filters */}
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden space-y-4 p-6">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Call Quality & Reliability History</h3>
+                  <p className="text-xs text-slate-500">Detailed historical record of live voice sessions with real-time network metrics and reconnection events</p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Search */}
+                  <div className="relative min-w-[240px]">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                    <input
+                      type="text"
+                      placeholder="Search customer, phone, or agent..."
+                      value={qualitySearch}
+                      onChange={(e) => setQualitySearch(e.target.value)}
+                      className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500/20 text-slate-900"
+                    />
+                  </div>
+
+                  {/* Filter Pills */}
+                  <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl text-xs font-semibold overflow-x-auto">
+                    {(['all', 'excellent', 'good', 'poor', 'reconnected', 'disconnected', 'failed'] as const).map((filterKey) => (
+                      <button
+                        key={filterKey}
+                        onClick={() => setQualityFilter(filterKey)}
+                        className={`px-3 py-1 rounded-lg capitalize transition-all cursor-pointer ${qualityFilter === filterKey
+                            ? 'bg-white text-slate-900 font-bold shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                      >
+                        {filterKey}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Table */}
+              {(() => {
+                const historyList = (qualityStats?.history || []).filter(call => {
+                  if (qualityFilter === 'excellent' && call.quality !== 'excellent') return false;
+                  if (qualityFilter === 'good' && call.quality !== 'good') return false;
+                  if (qualityFilter === 'poor' && call.quality !== 'poor') return false;
+                  if (qualityFilter === 'reconnected' && !call.wasReconnected && (!call.reconnectCount || call.reconnectCount === 0)) return false;
+                  if (qualityFilter === 'disconnected' && call.status !== 'disconnected') return false;
+                  if (qualityFilter === 'failed' && call.status !== 'failed') return false;
+
+                  if (qualitySearch.trim()) {
+                    const q = qualitySearch.toLowerCase();
+                    const matchName = (call.customerName || '').toLowerCase().includes(q);
+                    const matchPhone = (call.customerPhone || '').toLowerCase().includes(q);
+                    const matchAgent = (call.agentName || '').toLowerCase().includes(q);
+                    const matchId = (call.callId || call.id || '').toLowerCase().includes(q);
+                    return matchName || matchPhone || matchAgent || matchId;
+                  }
+                  return true;
+                });
+
+                if (loadingQuality) {
+                  return <div className="py-12 text-center text-xs text-slate-500">Loading call quality records...</div>;
+                }
+
+                if (historyList.length === 0) {
+                  return (
+                    <div className="py-12 text-center space-y-2">
+                      <Activity className="w-8 h-8 text-slate-300 mx-auto" />
+                      <p className="text-xs text-slate-400">No call quality records match the selected filter.</p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-slate-400 font-semibold bg-slate-50/70">
+                          <th className="py-3 px-4">Customer & Call</th>
+                          <th className="py-3 px-4">Agent / Handler</th>
+                          <th className="py-3 px-4">Date & Duration</th>
+                          <th className="py-3 px-4">Quality Rating</th>
+                          <th className="py-3 px-4">Latency (RTT)</th>
+                          <th className="py-3 px-4">Packet Loss & Jitter</th>
+                          <th className="py-3 px-4">Reconnections</th>
+                          <th className="py-3 px-4">Call Status</th>
+                          <th className="py-3 px-4 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        {historyList.map((call) => {
+                          const isExcellent = call.quality === 'excellent';
+                          const isGood = call.quality === 'good';
+                          const isPoor = call.quality === 'poor';
+
+                          return (
+                            <tr key={call.id} className="hover:bg-slate-50/80 transition-colors">
+                              {/* Customer & Call */}
+                              <td className="py-3 px-4">
+                                <div className="font-bold text-slate-900">{call.customerName || 'Registered Customer'}</div>
+                                <div className="text-[11px] text-slate-500 font-mono">{call.customerPhone || 'WebRTC Call'}</div>
+                                <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-600">
+                                  {call.direction === 'outgoing' || call.callType === 'outgoing' ? 'PSTN Outbound' : call.direction === 'incoming' || call.callType === 'incoming' ? 'Incoming Support' : 'Voice Session'}
+                                </span>
+                              </td>
+
+                              {/* Agent */}
+                              <td className="py-3 px-4">
+                                <div className="font-semibold text-slate-800">{call.agentName || (call.adminId || call.adminHandled ? 'Admin Specialist' : 'KAIRA AI')}</div>
+                                <div className="text-[10px] text-slate-400">{call.language ? `Lang: ${call.language.toUpperCase()}` : 'Default'}</div>
+                              </td>
+
+                              {/* Date & Duration */}
+                              <td className="py-3 px-4 font-mono text-[11px]">
+                                <div>{new Date(call.startTime).toLocaleDateString()}</div>
+                                <div className="text-slate-400">{new Date(call.startTime).toLocaleTimeString()}</div>
+                                <div className="font-bold text-slate-700 mt-0.5">{formatDuration(call.duration)}</div>
+                              </td>
+
+                              {/* Quality Rating */}
+                              <td className="py-3 px-4">
+                                <span
+                                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${isExcellent
+                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                      : isGood
+                                        ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                        : isPoor
+                                          ? 'bg-red-50 text-red-700 border-red-200'
+                                          : 'bg-slate-50 text-slate-700 border-slate-200'
+                                    }`}
+                                >
+                                  <span
+                                    className={`w-1.5 h-1.5 rounded-full ${isExcellent ? 'bg-emerald-500' : isGood ? 'bg-blue-500' : isPoor ? 'bg-red-500' : 'bg-slate-400'
+                                      }`}
+                                  />
+                                  {isExcellent ? 'Excellent' : isGood ? 'Good' : isPoor ? 'Poor' : 'Normal'}
+                                  {call.audioQualityScore ? ` (${call.audioQualityScore.toFixed(1)})` : ''}
+                                </span>
+                              </td>
+
+                              {/* Latency (RTT) */}
+                              <td className="py-3 px-4 font-mono">
+                                <span
+                                  className={`font-bold ${call.avgLatency && call.avgLatency > 200
+                                      ? 'text-red-600'
+                                      : call.avgLatency && call.avgLatency > 100
+                                        ? 'text-amber-600'
+                                        : 'text-emerald-700'
+                                    }`}
+                                >
+                                  {call.avgLatency ? `${Math.round(call.avgLatency)} ms` : '< 50 ms'}
+                                </span>
+                              </td>
+
+                              {/* Packet Loss & Jitter */}
+                              <td className="py-3 px-4 font-mono text-[11px]">
+                                <div>Loss: <span className="font-bold text-slate-800">{call.packetLoss ? `${call.packetLoss.toFixed(1)}%` : '0%'}</span></div>
+                                <div className="text-slate-400">Jitter: {call.jitter ? `${Math.round(call.jitter)}ms` : '0ms'}</div>
+                              </td>
+
+                              {/* Reconnection Status */}
+                              <td className="py-3 px-4">
+                                {call.wasReconnected || (call.reconnectCount && call.reconnectCount > 0) ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                    <RefreshCw className="w-3 h-3 text-indigo-500" />
+                                    Reconnected ({call.reconnectCount || 1}x)
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                                    Stable
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* Status */}
+                              <td className="py-3 px-4">
+                                <span
+                                  className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${call.status === 'completed'
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      : call.status === 'disconnected'
+                                        ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                        : call.status === 'failed'
+                                          ? 'bg-red-50 text-red-700 border border-red-200'
+                                          : 'bg-slate-100 text-slate-700'
+                                    }`}
+                                >
+                                  {call.status}
+                                </span>
+                              </td>
+
+                              {/* Actions */}
+                              <td className="py-3 px-4 text-right">
+                                <button
+                                  onClick={() => setSelectedCallDetails(call)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-50 hover:bg-purple-50 text-slate-700 hover:text-purple-700 rounded-lg border border-slate-200 transition-colors font-medium text-[11px] cursor-pointer"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  Details
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
+        {/* SECTION H: CALL INTELLIGENCE & ANALYTICS */}
+        {activeSection === 'intelligence' && (
+          <div className="space-y-6">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="w-9 h-9 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">AI Call Intelligence & Follow-Up Analytics</h1>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Automated post-call summarization, conversation resolution classification, Knowledge Base gap identification, and agent resolution metrics.
+                </p>
+              </div>
+              <button
+                onClick={fetchIntelligenceStats}
+                disabled={loadingIntelligence}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 shadow-2xs cursor-pointer transition-colors"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingIntelligence ? 'animate-spin text-purple-600' : ''}`} />
+                {loadingIntelligence ? 'Refreshing...' : 'Refresh Intelligence'}
+              </button>
+            </div>
+
+            {/* 7 Key Intelligence Metric Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3">
+              {/* 1. Analyzed Calls */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Calls Analyzed</span>
+                  <Sparkles className="w-4 h-4 text-purple-500" />
+                </div>
+                <div className="text-xl font-black text-slate-900">{intelligenceStats?.totalCallsAnalyzed ?? 0}</div>
+                <p className="text-[10px] text-slate-400">Structured summaries</p>
+              </div>
+
+              {/* 2. Resolved Calls */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Resolved</span>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                </div>
+                <div className="text-xl font-black text-slate-900">{intelligenceStats?.resolvedCalls ?? 0}</div>
+                <p className="text-[10px] text-emerald-600 font-bold">
+                  {intelligenceStats?.totalCallsAnalyzed
+                    ? `${Math.round(((intelligenceStats.resolvedCalls) / intelligenceStats.totalCallsAnalyzed) * 100)}% resolution rate`
+                    : '100% rate'}
+                </p>
+              </div>
+
+              {/* 3. Partially Resolved */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Partially Resolved</span>
+                  <Clock className="w-4 h-4 text-blue-500" />
+                </div>
+                <div className="text-xl font-black text-slate-900">{intelligenceStats?.partiallyResolvedCalls ?? 0}</div>
+                <p className="text-[10px] text-blue-600 font-semibold">Follow-up needed</p>
+              </div>
+
+              {/* 4. Unresolved Calls */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Unresolved</span>
+                  <AlertTriangle className="w-4 h-4 text-amber-500" />
+                </div>
+                <div className="text-xl font-black text-slate-900">{intelligenceStats?.unresolvedCalls ?? 0}</div>
+                <p className="text-[10px] text-amber-600 font-semibold">Requires attention</p>
+              </div>
+
+              {/* 5. Escalated Calls */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Escalated</span>
+                  <PhoneForwarded className="w-4 h-4 text-fuchsia-500" />
+                </div>
+                <div className="text-xl font-black text-slate-900">{intelligenceStats?.escalatedCalls ?? 0}</div>
+                <p className="text-[10px] text-fuchsia-600 font-semibold">Admin transfers</p>
+              </div>
+
+              {/* 6. Pending Follow-Ups */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Pending Tasks</span>
+                  <ListTodo className="w-4 h-4 text-orange-500" />
+                </div>
+                <div className="text-xl font-black text-slate-900">{intelligenceStats?.pendingFollowUpTasks ?? 0}</div>
+                <p className="text-[10px] text-orange-600 font-semibold">Open agent tasks</p>
+              </div>
+
+              {/* 7. Completed Tasks */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Tasks Completed</span>
+                  <CheckCircle2 className="w-4 h-4 text-teal-500" />
+                </div>
+                <div className="text-xl font-black text-slate-900">{intelligenceStats?.completedFollowUpTasks ?? 0}</div>
+                <p className="text-[10px] text-teal-600 font-semibold">Confirmed resolved</p>
+              </div>
+            </div>
+
+            {/* AI Issue Resolution Distribution Progress Bar */}
+            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">AI Issue Resolution Classification Distribution</h3>
+                  <p className="text-xs text-slate-500">
+                    Classified based strictly on dialogue confirmation, agent answers, and customer sentiment — never marked resolved merely because the call ended.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 text-xs">
+                  <span className="flex items-center gap-1.5 font-semibold text-emerald-700">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                    Resolved ({intelligenceStats?.resolvedCalls ?? 0})
+                  </span>
+                  <span className="flex items-center gap-1.5 font-semibold text-blue-700">
+                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                    Partially Resolved ({intelligenceStats?.partiallyResolvedCalls ?? 0})
+                  </span>
+                  <span className="flex items-center gap-1.5 font-semibold text-amber-700">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                    Unresolved ({intelligenceStats?.unresolvedCalls ?? 0})
+                  </span>
+                  <span className="flex items-center gap-1.5 font-semibold text-purple-700">
+                    <span className="w-2.5 h-2.5 rounded-full bg-purple-500" />
+                    Escalated ({intelligenceStats?.escalatedCalls ?? 0})
+                  </span>
+                </div>
+              </div>
+
+              {/* Progress Bar */}
+              {(() => {
+                const total = intelligenceStats?.totalCallsAnalyzed || 0;
+                const resPct = total > 0 ? ((intelligenceStats?.resolvedCalls || 0) / total) * 100 : 70;
+                const partPct = total > 0 ? ((intelligenceStats?.partiallyResolvedCalls || 0) / total) * 100 : 15;
+                const unresPct = total > 0 ? ((intelligenceStats?.unresolvedCalls || 0) / total) * 100 : 10;
+                const escPct = total > 0 ? ((intelligenceStats?.escalatedCalls || 0) / total) * 100 : 5;
+
+                return (
+                  <div className="space-y-3">
+                    <div className="h-4 w-full bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
+                      <div style={{ width: `${resPct}%` }} className="bg-emerald-500 h-full transition-all duration-500" title={`Resolved: ${Math.round(resPct)}%`} />
+                      <div style={{ width: `${partPct}%` }} className="bg-blue-500 h-full transition-all duration-500" title={`Partially Resolved: ${Math.round(partPct)}%`} />
+                      <div style={{ width: `${unresPct}%` }} className="bg-amber-500 h-full transition-all duration-500" title={`Unresolved: ${Math.round(unresPct)}%`} />
+                      <div style={{ width: `${escPct}%` }} className="bg-purple-500 h-full transition-all duration-500" title={`Escalated: ${Math.round(escPct)}%`} />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
+                      <div className="p-3 rounded-2xl bg-emerald-50/60 border border-emerald-100">
+                        <span className="font-bold text-emerald-800 block">Resolved</span>
+                        <p className="text-[11px] text-emerald-700 mt-0.5">Explicit customer confirmation, verified KB solutions provided, zero pending questions.</p>
+                      </div>
+                      <div className="p-3 rounded-2xl bg-blue-50/60 border border-blue-100">
+                        <span className="font-bold text-blue-800 block">Partially Resolved</span>
+                        <p className="text-[11px] text-blue-700 mt-0.5">Primary topic addressed but secondary inquiries remain open or follow-up requested.</p>
+                      </div>
+                      <div className="p-3 rounded-2xl bg-amber-50/60 border border-amber-100">
+                        <span className="font-bold text-amber-800 block">Unresolved</span>
+                        <p className="text-[11px] text-amber-700 mt-0.5">Customer issue not resolved; auto-creates a follow-up task for responsible agent.</p>
+                      </div>
+                      <div className="p-3 rounded-2xl bg-purple-50/60 border border-purple-100">
+                        <span className="font-bold text-purple-800 block">Escalated to Admin</span>
+                        <p className="text-[11px] text-purple-700 mt-0.5">Ungrounded queries or specialized requests transferred directly to human admin staff.</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Knowledge Base Gap Report & Unanswered Questions */}
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 space-y-4">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-extrabold text-slate-900">Knowledge Base Intelligence & Gaps Report</h3>
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                      {intelligenceStats?.kbGaps?.length ?? 0} Identified Gaps
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Unanswered and repeated customer questions where official KB content is missing. Admins can review, approve, and publish verified answers.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="relative min-w-[200px]">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                    <input
+                      type="text"
+                      placeholder="Search questions or topics..."
+                      value={gapSearch}
+                      onChange={(e) => setGapSearch(e.target.value)}
+                      className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white text-slate-900"
+                    />
+                  </div>
+
+                  {/* Language filter */}
+                  <select
+                    value={gapLangFilter}
+                    onChange={(e) => setGapLangFilter(e.target.value)}
+                    className="p-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-700 font-semibold"
+                  >
+                    <option value="all">All Languages</option>
+                    <option value="en">English</option>
+                    <option value="ta">Tamil (தமிழ்)</option>
+                    <option value="te">Telugu (తెలుగు)</option>
+                    <option value="ml">Malayalam (മലയാളം)</option>
+                    <option value="hi">Hindi (हिन्दी)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Gaps Table */}
+              {(() => {
+                const gaps = (intelligenceStats?.kbGaps || []).filter(g => {
+                  if (gapLangFilter !== 'all' && g.language !== gapLangFilter) return false;
+                  if (gapSearch.trim()) {
+                    const q = gapSearch.toLowerCase();
+                    return g.question.toLowerCase().includes(q) || g.topic.toLowerCase().includes(q);
+                  }
+                  return true;
+                });
+
+                if (gaps.length === 0) {
+                  return (
+                    <div className="py-8 text-center text-xs text-slate-400">
+                      No unresolved Knowledge Base gaps detected. All answered questions are grounded!
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-slate-400 font-semibold bg-slate-50/70">
+                          <th className="py-3 px-4">Repeated Unanswered Question</th>
+                          <th className="py-3 px-4">Inferred Topic</th>
+                          <th className="py-3 px-4">Language</th>
+                          <th className="py-3 px-4">Frequency</th>
+                          <th className="py-3 px-4">Status</th>
+                          <th className="py-3 px-4 text-right">Admin Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        {gaps.map((gap) => (
+                          <tr key={gap.id} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="py-3 px-4 font-bold text-slate-900 max-w-md">
+                              "{gap.question}"
+                            </td>
+                            <td className="py-3 px-4">
+                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                {gap.topic}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4">
+                              <span className="font-semibold text-slate-600">
+                                {SUPPORTED_LANGUAGES[gap.language as LanguageCode]?.name || gap.language.toUpperCase()}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 font-mono font-bold text-purple-700">
+                              {gap.frequency}x
+                            </td>
+                            <td className="py-3 px-4">
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                gap.status === 'added_to_kb'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}>
+                                {gap.status === 'added_to_kb' ? 'Added to KB' : 'Open Gap'}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              {gap.status !== 'added_to_kb' ? (
+                                <button
+                                  onClick={() => handleOpenApproveGap(gap)}
+                                  className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl text-[11px] shadow-xs cursor-pointer transition-all flex items-center gap-1 ml-auto"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  Approve & Add to KB
+                                </button>
+                              ) : (
+                                <span className="text-emerald-600 text-[11px] font-semibold flex items-center gap-1 justify-end">
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  Published
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Agent Resolution Statistics Leaderboard */}
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 space-y-4">
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900">Agent Resolution Performance & Resolution Rates</h3>
+                <p className="text-xs text-slate-500">Individual support agent metrics computed from real post-call conversation analyses</p>
+              </div>
+
+              {(!intelligenceStats?.agentResolutionStats || intelligenceStats.agentResolutionStats.length === 0) ? (
+                <p className="text-xs text-slate-400 py-4">No agent resolution records available yet.</p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {intelligenceStats.agentResolutionStats.map((a) => (
+                    <div key={a.agentId} className="p-4 rounded-2xl border border-slate-200 bg-slate-50/50 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="font-bold text-slate-900 text-xs">{a.agentName}</div>
+                        <span className="font-mono text-xs font-black text-emerald-600">{a.resolutionRate}% Rate</span>
+                      </div>
+                      <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                        <div style={{ width: `${a.resolutionRate}%` }} className="bg-emerald-500 h-full" />
+                      </div>
+                      <div className="flex justify-between text-[11px] text-slate-500 font-mono">
+                        <span>Calls: {a.totalCallsHandled}</span>
+                        <span>Resolved: {a.resolvedCount}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Frequently Asked Questions (FAQ) Aggregation */}
+            {intelligenceStats?.frequentlyAskedQuestions && intelligenceStats.frequentlyAskedQuestions.length > 0 && (
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 space-y-3">
+                <h3 className="text-sm font-bold text-slate-900">Frequently Asked Customer Questions (Aggregated)</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                  {intelligenceStats.frequentlyAskedQuestions.map((faq, idx) => (
+                    <div key={idx} className="p-3 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between">
+                      <span className="font-medium text-slate-800">"{faq.question}"</span>
+                      <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 font-bold font-mono text-[10px]">
+                        {faq.count} {faq.count === 1 ? 'call' : 'calls'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* SECTION I: FOLLOW-UP TASKS (Admin View) */}
+        {activeSection === 'tasks' && (
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 space-y-6 shadow-xs">
+            <FollowUpTasksManager token={token} currentUserId={user?.id} isAgent={false} />
           </div>
         )}
 
@@ -2358,6 +3131,48 @@ export const AdminDashboard: React.FC = () => {
               assistanceReason={selectedCallDetails.assistanceReason}
             />
 
+            {/* Call Quality & Telemetry Metadata */}
+            {(selectedCallDetails.quality || selectedCallDetails.avgLatency != null || selectedCallDetails.wasReconnected) && (
+              <div className="p-3 bg-emerald-50/50 rounded-2xl border border-emerald-100 space-y-1.5 text-[11px]">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-emerald-950 flex items-center gap-1.5">
+                    <Activity className="w-3.5 h-3.5 text-emerald-600" />
+                    Network & Quality Telemetry
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                    selectedCallDetails.quality === 'excellent'
+                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                      : selectedCallDetails.quality === 'good'
+                        ? 'bg-blue-100 text-blue-800 border-blue-300'
+                        : 'bg-amber-100 text-amber-800 border-amber-300'
+                  }`}>
+                    {selectedCallDetails.quality ? selectedCallDetails.quality.toUpperCase() : 'NORMAL'}
+                    {selectedCallDetails.audioQualityScore ? ` • MOS ${selectedCallDetails.audioQualityScore.toFixed(1)}` : ''}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 font-mono text-[10px] pt-1">
+                  <div>
+                    <span className="text-slate-500 block">Latency (RTT)</span>
+                    <span className="font-bold text-slate-800">
+                      {selectedCallDetails.avgLatency ? `${Math.round(selectedCallDetails.avgLatency)} ms` : '< 50 ms'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Packet Loss</span>
+                    <span className="font-bold text-slate-800">
+                      {selectedCallDetails.packetLoss ? `${selectedCallDetails.packetLoss.toFixed(1)}%` : '0%'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Reconnections</span>
+                    <span className={`font-bold ${selectedCallDetails.wasReconnected ? 'text-indigo-600' : 'text-slate-800'}`}>
+                      {selectedCallDetails.reconnectCount ? `${selectedCallDetails.reconnectCount}x (Auto-restored)` : 'None (Stable)'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="max-h-80 overflow-y-auto space-y-3 p-2">
               <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Conversation Transcript</h4>
               {(!selectedCallDetails.transcripts || selectedCallDetails.transcripts.length === 0) ? (
@@ -2379,23 +3194,12 @@ export const AdminDashboard: React.FC = () => {
               )}
             </div>
 
-            <div className="flex items-center gap-2">
-              {selectedCallDetails.transcripts && selectedCallDetails.transcripts.length > 0 && (
-                <button
-                  onClick={() => handleDownloadAdminTranscript(selectedCallDetails.transcripts as any, `KAIRA-Call-${selectedCallDetails.callId}`)}
-                  className="w-1/2 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  Download .txt
-                </button>
-              )}
-              <button
-                onClick={() => setSelectedCallDetails(null)}
-                className={`py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl cursor-pointer ${selectedCallDetails.transcripts && selectedCallDetails.transcripts.length > 0 ? 'w-1/2' : 'w-full'}`}
-              >
-                Close
-              </button>
-            </div>
+            <button
+              onClick={() => setSelectedCallDetails(null)}
+              className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl cursor-pointer"
+            >
+              Close
+            </button>
           </div>
         </div>
       )}
@@ -2531,6 +3335,123 @@ export const AdminDashboard: React.FC = () => {
                 Confirm Delete
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOMER INTERACTION PROFILE MODAL */}
+      {selectedProfileCustomerId && (
+        <CustomerProfileModal
+          customerId={selectedProfileCustomerId}
+          isOpen={!!selectedProfileCustomerId}
+          token={token}
+          onClose={() => setSelectedProfileCustomerId(null)}
+          onOpenIntelligence={(callId: string) => {
+            setSelectedProfileCustomerId(null);
+            setSelectedIntelligenceCallId(callId);
+          }}
+        />
+      )}
+
+      {/* CALL INTELLIGENCE INSPECTION MODAL */}
+      {selectedIntelligenceCallId && (
+        <CallIntelligenceModal
+          callId={selectedIntelligenceCallId}
+          isOpen={!!selectedIntelligenceCallId}
+          token={token}
+          onClose={() => setSelectedIntelligenceCallId(null)}
+          onOpenCustomerProfile={(customerId: string) => {
+            setSelectedIntelligenceCallId(null);
+            setSelectedProfileCustomerId(customerId);
+          }}
+        />
+      )}
+
+      {/* APPROVE KNOWLEDGE GAP TO OFFICIAL KB MODAL */}
+      {approvingGap && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-purple-200 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2 text-purple-700">
+                <Sparkles className="w-5 h-5" />
+                <h3 className="font-extrabold text-slate-900 text-sm">Approve & Add Knowledge Base Content</h3>
+              </div>
+              <button
+                onClick={() => setApprovingGap(null)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer p-1 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-2xl text-xs space-y-1">
+              <span className="font-bold text-amber-800">Customer Inquiry:</span>
+              <p className="text-slate-800 font-semibold italic">"{approvingGap.question}"</p>
+              <div className="flex gap-4 pt-1 text-[11px] text-amber-700">
+                <span>Language: <strong>{SUPPORTED_LANGUAGES[approvingGap.language as LanguageCode]?.name || approvingGap.language}</strong></span>
+                <span>Repeated: <strong>{approvingGap.frequency} times</strong></span>
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveApproveGap} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Knowledge Title</label>
+                <input
+                  type="text"
+                  required
+                  value={gapTitle}
+                  onChange={(e) => setGapTitle(e.target.value)}
+                  placeholder="e.g. Refund Policy and Processing Times"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Category</label>
+                <select
+                  value={gapCategory}
+                  onChange={(e) => setGapCategory(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+                >
+                  <option value="general">General</option>
+                  <option value="pricing">Pricing & Plans</option>
+                  <option value="technical">Technical Support</option>
+                  <option value="billing">Billing & Refunds</option>
+                  <option value="account">Account Management</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Official Verified Answer (Spoken by AI & Multilingual Handlers)
+                </label>
+                <textarea
+                  rows={4}
+                  required
+                  value={gapAnswer}
+                  onChange={(e) => setGapAnswer(e.target.value)}
+                  placeholder="Enter the official company response. This will be converted to speech and provided whenever customers ask this question."
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setApprovingGap(null)}
+                  className="flex-1 py-2 font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingGap || !gapAnswer.trim()}
+                  className="flex-1 py-2 font-semibold text-white bg-purple-600 hover:bg-purple-700 rounded-xl shadow-xs cursor-pointer disabled:opacity-50"
+                >
+                  {savingGap ? 'Publishing to KB...' : 'Approve & Publish to KB'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

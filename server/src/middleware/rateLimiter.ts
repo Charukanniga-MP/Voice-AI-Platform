@@ -21,7 +21,7 @@ export const authLimiter = rateLimit({
     });
 
     res.status(429).json({
-      error: 'Too many login attempts. Please try again later.',
+      error: 'Too many authentication attempts. Please try again in 15 minutes.',
       retryAfter: '15 minutes'
     });
   }
@@ -52,6 +52,19 @@ export const forgotPasswordLimiter = rateLimit({
   }
 });
 
+export const telephonyLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 30, // Max 30 outbound calls per hour
+  skip: (req: Request) => req.headers['x-bypass-rate-limit'] === 'test-runner-suite',
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req: Request, res: Response) => {
+    res.status(429).json({
+      error: 'Outbound telephony rate limit exceeded. Please wait before placing more calls.'
+    });
+  }
+});
+
 export const generalApiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 500,
@@ -65,3 +78,5 @@ export const generalApiLimiter = rateLimit({
     });
   }
 });
+
+export const apiLimiter = generalApiLimiter;

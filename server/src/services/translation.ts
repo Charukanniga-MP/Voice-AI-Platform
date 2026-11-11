@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { prisma } from '../db.js';
-import { knowledgeService } from './knowledge.js';
+import { knowledgeService, FALLBACK_MESSAGE } from './knowledge.js';
 
 export const SUPPORTED_LANGUAGES: Record<string, { name: string; nativeName: string; bcp47: string }> = {
   en: { name: 'English', nativeName: 'English', bcp47: 'en-US' },
@@ -15,13 +15,105 @@ export class TranslationService {
 
   constructor() {
     if (process.env.OPENAI_API_KEY && !process.env.OPENAI_API_KEY.includes('your_openai_api_key')) {
-      this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 0 });
     }
   }
 
   // Get language display name
   public getLanguageName(code: string): string {
-    return SUPPORTED_LANGUAGES[code]?.name || 'English';
+    const norm = (code || 'en').toLowerCase().slice(0, 2);
+    return SUPPORTED_LANGUAGES[norm]?.name || 'English';
+  }
+
+  // Automatic language detection from Unicode script analysis
+  public detectLanguage(text: string): string {
+    const trimmed = (text || '').trim();
+    if (!trimmed) return 'en';
+
+    // Tamil unicode range: U+0B80 to U+0BFF
+    if (/[\u0B80-\u0BFF]/.test(trimmed)) return 'ta';
+    // Telugu unicode range: U+0C00 to U+0C7F
+    if (/[\u0C00-\u0C7F]/.test(trimmed)) return 'te';
+    // Malayalam unicode range: U+0D00 to U+0D7F
+    if (/[\u0D00-\u0D7F]/.test(trimmed)) return 'ml';
+    // Devanagari / Hindi unicode range: U+0900 to U+097F
+    if (/[\u0900-\u097F]/.test(trimmed)) return 'hi';
+
+    return 'en';
+  }
+
+  // High-accuracy multi-tier translation engine with automated fallback
+  private async translateWithGtx(text: string, target: string, source: string = 'auto'): Promise<string> {
+    const clean = (text || '').trim();
+    if (!clean) return '';
+
+    // Tier 1: Chrome Extension translation endpoint (high-speed, generous quota, no CAPTCHA)
+    try {
+      const url = `https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=${encodeURIComponent(source)}&tl=${encodeURIComponent(target)}&q=${encodeURIComponent(clean)}`;
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          if (Array.isArray(data[0]) && typeof data[0][0] === 'string') {
+            const out = data[0][0].trim();
+            if (out) return out;
+          } else if (typeof data[0] === 'string') {
+            const out = data[0].trim();
+            if (out) return out;
+          }
+        } else if (typeof data === 'string' && data.trim()) {
+          return data.trim();
+        }
+      }
+    } catch {
+      // Proceed to Tier 2
+    }
+
+    // Tier 2: Standard Google GTX endpoint
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${encodeURIComponent(source)}&tl=${encodeURIComponent(target)}&dt=t&q=${encodeURIComponent(clean)}`;
+        const res = await fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && Array.isArray(data[0])) {
+            const translated = data[0].map((item: any) => item[0]).filter(Boolean).join('');
+            if (translated && translated.trim()) {
+              return translated.trim();
+            }
+          }
+        }
+      } catch {
+        if (attempt < 1) {
+          await new Promise(r => setTimeout(r, 100));
+        }
+      }
+    }
+
+    // Tier 3: MyMemory API fallback
+    try {
+      const srcPair = source === 'auto' ? 'autodetect' : source;
+      const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(clean)}&langpair=${encodeURIComponent(srcPair)}|${encodeURIComponent(target)}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.responseData?.translatedText && !data.responseData.translatedText.includes('MYMEMORY WARNING')) {
+          return data.responseData.translatedText.trim();
+        }
+      }
+    } catch {
+      // Fall through to clean
+    }
+
+    return clean;
   }
 
   // Translate text between languages preserving brand terms and accuracy
@@ -30,7 +122,7 @@ export class TranslationService {
     targetLang: string,
     sourceLang?: string
   ): Promise<string> {
-    const trimmed = text.trim();
+    const trimmed = (text || '').trim();
     if (!trimmed) return '';
 
     const normTarget = (targetLang || 'en').toLowerCase().slice(0, 2);
@@ -40,38 +132,10 @@ export class TranslationService {
       return trimmed;
     }
 
-    const targetInfo = SUPPORTED_LANGUAGES[normTarget] || SUPPORTED_LANGUAGES.en;
-    const sourceInfo = normSource ? (SUPPORTED_LANGUAGES[normSource] || SUPPORTED_LANGUAGES.en) : null;
-
-    if (this.openai) {
-      try {
-        const response = await this.openai.chat.completions.create({
-          model: 'gpt-4o-mini',
-          messages: [
-            {
-              role: 'system',
-              content: `You are a certified professional multilingual customer support interpreter for KAIRA Technologies.
-Translate the text accurately into ${targetInfo.name} (${targetInfo.nativeName}).
-Rules:
-1. Preserve technical terminology, software names, and company names exactly: "KAIRA", "VoiceCore", "LiveEscalate", "Omnichannel Hub".
-2. Preserve numbers, pricing figures (e.g. $49, $199, $799), email addresses, and phone numbers without alteration.
-3. Keep the translation natural, polite, and professional.
-4. Output ONLY the raw translation text with no explanations or quotes.`
-            },
-            {
-              role: 'user',
-              content: trimmed
-            }
-          ],
-          temperature: 0.1,
-          max_tokens: 350
-        });
-
-        const translation = response.choices[0]?.message?.content?.trim();
-        if (translation) return translation;
-      } catch (err: any) {
-        console.warn('[TranslationService] OpenAI translation API error, using original text:', err.message);
-      }
+    // High-speed, high-accuracy GTX engine (reliable, zero quota limit)
+    const gtxTranslated = await this.translateWithGtx(trimmed, normTarget, normSource || 'auto');
+    if (gtxTranslated && gtxTranslated !== trimmed) {
+      return gtxTranslated;
     }
 
     return trimmed;
@@ -87,25 +151,55 @@ Rules:
     isGrounded: boolean;
     language: string;
   }> {
-    const trimmed = query.trim();
+    const trimmed = (query || '').trim();
     if (!trimmed) {
       return { answer: null, sources: [], isGrounded: false, language: customerLang };
     }
 
-    const normLang = (customerLang || 'en').toLowerCase().slice(0, 2);
+    // Detect if customer spoke in a specific language (e.g. Tamil, Telugu, Hindi, Malayalam)
+    const detectedLang = this.detectLanguage(trimmed);
+    let normLang = (customerLang || 'en').toLowerCase().slice(0, 2);
+    if (detectedLang !== 'en' && detectedLang !== normLang) {
+      normLang = detectedLang;
+    }
 
-    // 1. If customer query is in non-English, translate to English for high-precision KB retrieval
+    // 1. Handle common conversational pleasantries naturally in customer's language
+    const pleasantries = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening', 'who are you', 'how are you'];
+    const isEnglishPleasantry = pleasantries.some(p => trimmed.toLowerCase() === p || trimmed.toLowerCase() === p + '!');
+
+    // Check if query is a pleasantry in non-English
     let englishQuery = trimmed;
     if (normLang !== 'en') {
       englishQuery = await this.translateText(trimmed, 'en', normLang);
     }
 
-    // 2. Search approved corporate Knowledge Base
+    const isTranslatedPleasantry = pleasantries.some(p => englishQuery.toLowerCase().includes(p));
+
+    if (isEnglishPleasantry || isTranslatedPleasantry) {
+      let welcome = "Hello! Welcome to KAIRA. I am your AI voice assistant. How can I assist you with our platform, pricing, or voice services today?";
+      if (normLang !== 'en') {
+        welcome = await this.translateText(welcome, normLang, 'en');
+      }
+      return {
+        answer: welcome,
+        sources: [],
+        isGrounded: true,
+        language: normLang
+      };
+    }
+
+    // 2. Search approved corporate Knowledge Base using English query representation
     const searchResults = await knowledgeService.search(englishQuery, 3);
 
-    if (searchResults.length === 0 || searchResults[0].score < 0.35) {
+    // If query not found or confidence is too low -> Strict fallback (Zero Hallucination)
+    if (searchResults.length === 0 || searchResults[0].score < 0.28) {
+      let localizedFallback = FALLBACK_MESSAGE;
+      if (normLang !== 'en') {
+        localizedFallback = await this.translateText(FALLBACK_MESSAGE, normLang, 'en');
+      }
+
       return {
-        answer: null,
+        answer: localizedFallback,
         sources: [],
         isGrounded: false,
         language: normLang
@@ -119,55 +213,9 @@ Rules:
       category: m.entry.category
     }));
 
-    const groundContext = bestMatches
-      .map(m => `Title: ${m.entry.title}\nContent: ${m.entry.content}\n${m.entry.answer ? `Direct Answer: ${m.entry.answer}` : ''}`)
-      .join('\n\n---\n\n');
-
     let englishAnswer = bestMatches[0].entry.answer || bestMatches[0].entry.content;
 
-    // 3. Synthesize concise agent talking point grounded strictly in the KB
-    if (this.openai) {
-      try {
-        const completion = await this.openai.chat.completions.create({
-          model: 'gpt-4o-mini',
-          messages: [
-            {
-              role: 'system',
-              content: `You are an AI customer support copilot for KAIRA Technologies.
-Formulate a direct, concise answer for the support agent to convey to the customer.
-Strict Rules:
-- Answer ONLY using the facts from the Knowledge Context below.
-- Do NOT invent policies, features, or prices.
-- If the context does not answer the question, say "No verified answer found."
-- Answer in ${SUPPORTED_LANGUAGES[normLang]?.name || 'English'}.
-
-Knowledge Context:
-${groundContext}`
-            },
-            {
-              role: 'user',
-              content: `Customer asked: "${trimmed}"`
-            }
-          ],
-          temperature: 0.1,
-          max_tokens: 300
-        });
-
-        const synthAnswer = completion.choices[0]?.message?.content?.trim();
-        if (synthAnswer && !synthAnswer.toLowerCase().includes('no verified answer')) {
-          return {
-            answer: synthAnswer,
-            sources,
-            isGrounded: true,
-            language: normLang
-          };
-        }
-      } catch (err) {
-        console.warn('[TranslationService] AI synthesis error, using direct KB answer:', err);
-      }
-    }
-
-    // Fallback: translate the direct KB answer to customer's language
+    // Direct KB match translation to customer's language (Strict Zero Hallucination)
     let localizedAnswer = englishAnswer;
     if (normLang !== 'en') {
       localizedAnswer = await this.translateText(englishAnswer, normLang, 'en');
@@ -183,4 +231,3 @@ ${groundContext}`
 }
 
 export const translationService = new TranslationService();
-

@@ -6,12 +6,18 @@ import { webrtcManager } from '../services/webrtc.js';
 import { voiceService } from '../services/voice.js';
 import { ringtoneService } from '../services/ringtone.js';
 import { SupportTickets } from './SupportTickets.js';
+import { FollowUpTasksManager } from '../components/FollowUpTasksManager.js';
+import { CustomerProfileModal } from '../components/CustomerProfileModal.js';
+import { CallIntelligenceModal } from '../components/CallIntelligenceModal.js';
+import { CallQualityIndicator } from '../components/CallQualityIndicator.js';
+import { AudioDeviceModal } from '../components/AudioDeviceModal.js';
+import { audioDeviceManager } from '../services/audioDevice.js';
 import { User, CallRecord, KnowledgeEntry, LanguageCode, SUPPORTED_LANGUAGES } from '../types.js';
 import {
   PhoneCall, PhoneOutgoing, PhoneOff, Mic, MicOff,
   Volume2, VolumeX, Clock, Search, BookOpen,
   Smartphone, AlertCircle, CheckCircle2, Radio, Info,
-  Globe, Sparkles, MessageSquare, Pause, Play, Send, Copy, Users,
+  Globe, Sparkles, MessageSquare, Pause, Play, Send, Copy, Users, Settings, ListTodo,
   HeartPulse, Flame
 } from 'lucide-react';
 import { SentimentBadge } from '../components/SentimentBadge.js';
@@ -43,8 +49,12 @@ interface IncomingCall {
 export const AgentDashboard: React.FC = () => {
   const { user, token } = useAuth();
 
-  // Navigation tab: 'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets'
-  const [activeTab, setActiveTab] = useState<'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets'>('outgoing');
+  // Navigation tab: 'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets' | 'tasks'
+  const [activeTab, setActiveTab] = useState<'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets' | 'tasks'>('outgoing');
+
+  // Customer Profile & Call Intelligence modals
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [selectedCallIdForIntel, setSelectedCallIdForIntel] = useState<string | null>(null);
 
   // Agent Availability & Supported Languages
   const [agentStatus, setAgentStatus] = useState<'available' | 'busy'>(
@@ -93,6 +103,7 @@ export const AgentDashboard: React.FC = () => {
   // Live logs / transcript
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [callError, setCallError] = useState<string | null>(null);
+  const [showAudioDeviceModal, setShowAudioDeviceModal] = useState(false);
 
   // Sentiment Analysis State
   const [liveSentiment, setLiveSentiment] = useState<{
@@ -252,7 +263,7 @@ export const AgentDashboard: React.FC = () => {
       setQueueCount(data.queueLength || 0);
     });
 
-    // 4. Live speech transcript relay (Multilingual)
+    // 4. Live speech transcript relay (Multilingual with deduplication)
     socket.on('call:live_transcript', (data: {
       sender: any;
       senderName: string;
@@ -261,17 +272,24 @@ export const AgentDashboard: React.FC = () => {
       language?: string;
       timestamp: string;
     }) => {
-      setLogs(prev => [
-        ...prev,
-        {
-          id: 'log_' + Date.now() + Math.random(),
-          sender: data.sender,
-          senderName: data.senderName,
-          text: data.text,
-          translation: data.translation,
-          timestamp: new Date().toLocaleTimeString()
-        }
-      ]);
+      setLogs(prev => {
+        const isDuplicate = prev.some(l =>
+          l.sender === data.sender &&
+          l.text.trim().toLowerCase() === data.text.trim().toLowerCase()
+        );
+        if (isDuplicate) return prev;
+        return [
+          ...prev,
+          {
+            id: 'log_' + Date.now() + Math.random(),
+            sender: data.sender,
+            senderName: data.senderName,
+            text: data.text,
+            translation: data.translation,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        ];
+      });
     });
 
     // 5. AI Knowledge Base Answer Suggestion
@@ -313,6 +331,46 @@ export const AgentDashboard: React.FC = () => {
     };
     socket.on('sentiment:assistance_alert', handleAssistanceAlert);
 
+    // 9. Automatic call reconnection updates
+    socket.on('call:reconnecting', (data: { callId: string; attempt: number; maxAttempts: number }) => {
+      setLogs(prev => [
+        ...prev,
+        {
+          id: 'recon_' + Date.now(),
+          sender: 'system',
+          senderName: 'System',
+          text: `⚠️ Network connection interrupted. Attempting automatic reconnection (${data.attempt}/${data.maxAttempts})...`,
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]);
+    });
+
+    socket.on('call:reconnected', () => {
+      setLogs(prev => [
+        ...prev,
+        {
+          id: 'recon_ok_' + Date.now(),
+          sender: 'system',
+          senderName: 'System',
+          text: `✅ Network connection restored. Voice stream resumed.`,
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]);
+    });
+
+    socket.on('call:reconnect_failed', (data: { reason: string }) => {
+      setLogs(prev => [
+        ...prev,
+        {
+          id: 'recon_fail_' + Date.now(),
+          sender: 'system',
+          senderName: 'System',
+          text: `❌ Automatic reconnection failed: ${data.reason}.`,
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]);
+    });
+
     return () => {
       socket.off('agent:incoming_call');
       socket.off('agent:call_missed');
@@ -322,12 +380,52 @@ export const AgentDashboard: React.FC = () => {
       socket.off('call:ended');
       socket.off('call:sentiment_update', handleSentimentUpdate);
       socket.off('sentiment:assistance_alert', handleAssistanceAlert);
+      socket.off('call:reconnecting');
+      socket.off('call:reconnected');
+      socket.off('call:reconnect_failed');
     };
   }, [incomingCall, activeCall]);
+
+  // WebRTC Manager Callback Hooks
+  useEffect(() => {
+    webrtcManager.setCallbacks({
+      onReconnecting: (attempt, max) => {
+        setLogs(prev => [
+          ...prev,
+          {
+            id: 'webrtc_recon_' + Date.now(),
+            sender: 'system',
+            senderName: 'System',
+            text: `⚠️ WebRTC audio link interrupted. Auto-reconnecting (${attempt}/${max})...`,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        ]);
+      },
+      onReconnected: () => {
+        setLogs(prev => [
+          ...prev,
+          {
+            id: 'webrtc_recon_ok_' + Date.now(),
+            sender: 'system',
+            senderName: 'System',
+            text: `✅ WebRTC audio link re-established.`,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        ]);
+      }
+    });
+  }, []);
 
   // Accept Incoming Customer Call
   const handleAcceptIncomingCall = async () => {
     if (!incomingCall) return;
+
+    // Check microphone permission before accepting
+    const hasMic = await audioDeviceManager.ensureMicrophoneAccess();
+    if (!hasMic) {
+      setShowAudioDeviceModal(true);
+      return;
+    }
 
     // Stop ringtone immediately
     ringtoneService.stop();
@@ -434,7 +532,7 @@ export const AgentDashboard: React.FC = () => {
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ notes: callNotes })
         });
-      } catch (e) {}
+      } catch (e) { }
     }
     setNotesSaved(true);
     setTimeout(() => setNotesSaved(false), 2000);
@@ -527,10 +625,89 @@ export const AgentDashboard: React.FC = () => {
     ]);
   };
 
+  // Initiate Outbound Voice AI Call to customer's mobile phone
+  const handleStartAiCall = async (targetName: string, targetPhone: string, customerId?: string, preferredLang: string = 'en') => {
+    if (!targetPhone.trim()) {
+      alert('Please provide a valid destination mobile phone number.');
+      return;
+    }
+
+    setCallError(null);
+    setCallDuration(0);
+    setIsMuted(false);
+    setIsCallHeld(false);
+    setCallNotes('');
+
+    const callInitId = 'pstn_ai_' + Date.now();
+    setActiveCall({
+      callId: callInitId,
+      customerName: targetName,
+      customerPhone: targetPhone,
+      customerId,
+      preferredLanguage: preferredLang,
+      isIncomingSupport: false,
+      state: 'initiating',
+      statusText: `Initiating AI Voice Call to ${targetName} (${targetPhone})...`
+    });
+
+    setLogs([
+      {
+        id: 'log_0',
+        sender: 'system',
+        senderName: 'System',
+        text: `Automated KAIRA AI Voice Call initiated to ${targetName} at ${targetPhone} (Language: ${SUPPORTED_LANGUAGES[preferredLang as LanguageCode]?.name || 'English'}).`,
+        timestamp: new Date().toLocaleTimeString()
+      }
+    ]);
+
+    setActiveTab('console');
+
+    try {
+      const res = await fetch('/api/telephony/ai-call', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          customerId: customerId || null,
+          customerName: targetName,
+          customerPhone: targetPhone,
+          language: preferredLang
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to initiate AI call.');
+      }
+
+      if (data.callRecord) {
+        setActiveCall(prev => prev ? {
+          ...prev,
+          callId: data.callRecord.callId,
+          callRecordId: data.callRecord.id,
+          state: 'ringing',
+          statusText: `Ringing ${targetName}'s phone (${targetPhone})...`
+        } : null);
+      }
+    } catch (err: any) {
+      setCallError(err.message || 'Error placing AI call');
+      addLog('system', `Error: ${err.message}`);
+    }
+  };
+
   // Initiate Outbound Real Telephone Call (PSTN)
   const handleStartCall = async (targetName: string, targetPhone: string, customerId?: string) => {
     if (!targetPhone.trim()) {
       alert('Please provide a valid destination mobile phone number.');
+      return;
+    }
+
+    // Check microphone access before placing call
+    const hasMic = await audioDeviceManager.ensureMicrophoneAccess();
+    if (!hasMic) {
+      setShowAudioDeviceModal(true);
       return;
     }
 
@@ -606,7 +783,7 @@ export const AgentDashboard: React.FC = () => {
                   duration: telephonyVoiceManager.getDurationSeconds(),
                   failureReason: state === 'failed' ? (message || 'Call failed') : null
                 })
-              }).catch(() => {});
+              }).catch(() => { });
             }
           }
         },
@@ -646,7 +823,7 @@ export const AgentDashboard: React.FC = () => {
             callId: activeCall.callRecordId || activeCall.callId,
             duration: callDuration
           })
-        }).catch(() => {});
+        }).catch(() => { });
       }
       cleanupActiveCall();
     }
@@ -801,11 +978,10 @@ export const AgentDashboard: React.FC = () => {
               {/* Agent Status Toggle */}
               <button
                 onClick={handleToggleStatus}
-                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border transition-all cursor-pointer ${
-                  agentStatus === 'available'
+                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border transition-all cursor-pointer ${agentStatus === 'available'
                     ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
                     : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
-                }`}
+                  }`}
                 title="Click to toggle Available / Busy"
               >
                 <span className={`w-2 h-2 rounded-full ${agentStatus === 'available' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
@@ -817,6 +993,16 @@ export const AgentDashboard: React.FC = () => {
                 <Users className="w-3.5 h-3.5 text-blue-600" />
                 Queue: {queueCount} Waiting
               </div>
+
+              {/* Audio Device Settings Pill */}
+              <button
+                onClick={() => setShowAudioDeviceModal(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-all cursor-pointer"
+                title="Microphone & Speaker Test / Device Selection"
+              >
+                <Settings className="w-3.5 h-3.5 text-slate-500" />
+                <span>Audio Settings</span>
+              </button>
             </div>
             <p className="text-xs text-slate-500 mt-1">
               Multilingual customer incoming voice calls, WebRTC audio, grounded KB copilot, and PSTN outbound dialer.
@@ -827,17 +1013,15 @@ export const AgentDashboard: React.FC = () => {
           <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200 text-xs font-semibold overflow-x-auto">
             <button
               onClick={() => setActiveTab('outgoing')}
-              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'outgoing' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-              }`}
+              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${activeTab === 'outgoing' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
             >
               Outgoing Calls
             </button>
             <button
               onClick={() => setActiveTab('console')}
-              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'console' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-              }`}
+              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === 'console' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
             >
               {activeCall && (activeCall.state === 'connected' || activeCall.state === 'on_hold') && (
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
@@ -846,17 +1030,15 @@ export const AgentDashboard: React.FC = () => {
             </button>
             <button
               onClick={() => setActiveTab('history')}
-              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'history' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-              }`}
+              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${activeTab === 'history' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
             >
               Call History
             </button>
             <button
               onClick={() => setActiveTab('knowledge')}
-              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'knowledge' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-              }`}
+              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === 'knowledge' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
             >
               <BookOpen className="w-3.5 h-3.5 text-blue-600" />
               Knowledge Base
@@ -869,6 +1051,15 @@ export const AgentDashboard: React.FC = () => {
             >
               <MessageSquare className="w-3.5 h-3.5 text-purple-600" />
               Support Tickets
+            </button>
+            <button
+              onClick={() => setActiveTab('tasks')}
+              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'tasks' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <ListTodo className="w-3.5 h-3.5 text-amber-600" />
+              Follow-Up Tasks
             </button>
           </div>
         </div>
@@ -885,11 +1076,10 @@ export const AgentDashboard: React.FC = () => {
               <button
                 key={code}
                 onClick={() => handleToggleLanguage(code)}
-                className={`px-2.5 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-                  isSupported
+                className={`px-2.5 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer ${isSupported
                     ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
                     : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'
-                }`}
+                  }`}
               >
                 {meta.nativeName} ({meta.name})
               </button>
@@ -1013,14 +1203,27 @@ export const AgentDashboard: React.FC = () => {
                       </div>
                     </div>
 
-                    <button
-                      onClick={() => handleStartCall(c.name, c.phone || '', c.id)}
-                      disabled={!c.phone || Boolean(activeCall && activeCall.state === 'connected')}
-                      className="w-full py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
-                    >
-                      <PhoneOutgoing className="w-3.5 h-3.5" />
-                      Initiate Voice Call
-                    </button>
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <button
+                        onClick={() => handleStartCall(c.name, c.phone || '', c.id)}
+                        disabled={!c.phone || Boolean(activeCall && activeCall.state === 'connected')}
+                        className="py-2 px-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-[11px] flex items-center justify-center gap-1 shadow-xs transition-colors cursor-pointer"
+                        title="Agent speaks directly to customer phone"
+                      >
+                        <PhoneOutgoing className="w-3.5 h-3.5" />
+                        Agent Call
+                      </button>
+
+                      <button
+                        onClick={() => handleStartAiCall(c.name, c.phone || '', c.id, c.preferredLanguage || 'en')}
+                        disabled={!c.phone || Boolean(activeCall && activeCall.state === 'connected')}
+                        className="py-2 px-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold text-[11px] flex items-center justify-center gap-1 shadow-xs transition-colors cursor-pointer"
+                        title="KAIRA Voice AI automated call to customer phone"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        AI Voice Call
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1067,10 +1270,25 @@ export const AgentDashboard: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Timer */}
-                    <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 border border-slate-200 rounded-2xl font-mono text-sm font-black text-slate-800">
-                      <Clock className="w-4 h-4 text-slate-400" />
-                      {formatDuration(callDuration)}
+                    <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+                      {/* Call Quality Indicator */}
+                      <CallQualityIndicator isCallActive={!!activeCall && activeCall.state !== 'ended'} />
+
+                      {/* In-call Audio Settings Button */}
+                      <button
+                        onClick={() => setShowAudioDeviceModal(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 text-slate-700 hover:text-blue-700 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                        title="Configure audio devices"
+                      >
+                        <Settings className="w-3.5 h-3.5 text-slate-500" />
+                        <span className="hidden sm:inline">Audio</span>
+                      </button>
+
+                      {/* Timer */}
+                      <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-slate-50 border border-slate-200 rounded-2xl font-mono text-sm font-black text-slate-800">
+                        <Clock className="w-4 h-4 text-slate-400" />
+                        {formatDuration(callDuration)}
+                      </div>
                     </div>
                   </div>
 
@@ -1096,9 +1314,8 @@ export const AgentDashboard: React.FC = () => {
                     {/* Mute Button */}
                     <button
                       onClick={handleToggleMute}
-                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
-                        isMuted ? 'bg-red-50 border-red-200 text-red-600' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
-                      }`}
+                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${isMuted ? 'bg-red-50 border-red-200 text-red-600' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+                        }`}
                       title={isMuted ? 'Unmute Mic' : 'Mute Mic'}
                     >
                       {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
@@ -1107,11 +1324,10 @@ export const AgentDashboard: React.FC = () => {
                     {/* Hold / Resume Button */}
                     <button
                       onClick={handleToggleHold}
-                      className={`flex items-center gap-2 px-4 py-3.5 rounded-2xl border font-bold text-xs transition-all cursor-pointer ${
-                        isCallHeld
+                      className={`flex items-center gap-2 px-4 py-3.5 rounded-2xl border font-bold text-xs transition-all cursor-pointer ${isCallHeld
                           ? 'bg-amber-500 text-white border-amber-500 shadow-md shadow-amber-200'
                           : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
-                      }`}
+                        }`}
                     >
                       {isCallHeld ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
                       {isCallHeld ? 'Resume Call' : 'Hold Call'}
@@ -1175,13 +1391,12 @@ export const AgentDashboard: React.FC = () => {
                     {logs.map((log) => (
                       <div
                         key={log.id}
-                        className={`flex flex-col ${
-                          log.sender === 'agent'
+                        className={`flex flex-col ${log.sender === 'agent'
                             ? 'items-end'
                             : log.sender === 'system'
-                            ? 'items-center'
-                            : 'items-start'
-                        }`}
+                              ? 'items-center'
+                              : 'items-start'
+                          }`}
                       >
                         {log.sender === 'system' ? (
                           <span className="px-3 py-1 bg-slate-200/60 text-slate-700 text-[11px] rounded-full font-medium my-0.5">
@@ -1193,17 +1408,15 @@ export const AgentDashboard: React.FC = () => {
                               {log.senderName} • {log.timestamp}
                             </span>
                             <div
-                              className={`px-4 py-2.5 rounded-2xl text-xs leading-relaxed ${
-                                log.sender === 'agent'
+                              className={`px-4 py-2.5 rounded-2xl text-xs leading-relaxed ${log.sender === 'agent'
                                   ? 'bg-blue-600 text-white rounded-tr-xs shadow-xs'
                                   : 'bg-white text-slate-900 border border-slate-200 rounded-tl-xs shadow-2xs'
-                              }`}
+                                }`}
                             >
                               <div>{log.text}</div>
                               {log.translation && (
-                                <div className={`mt-1.5 pt-1.5 border-t text-[11px] font-normal italic ${
-                                  log.sender === 'agent' ? 'border-blue-400/50 text-blue-100' : 'border-slate-100 text-indigo-600'
-                                }`}>
+                                <div className={`mt-1.5 pt-1.5 border-t text-[11px] font-normal italic ${log.sender === 'agent' ? 'border-blue-400/50 text-blue-100' : 'border-slate-100 text-indigo-600'
+                                  }`}>
                                   Translated: {log.translation}
                                 </div>
                               )}
@@ -1299,16 +1512,37 @@ export const AgentDashboard: React.FC = () => {
                         </div>
                       )}
 
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(copilotSuggestion.answer);
-                          alert('Copied suggestion to clipboard!');
-                        }}
-                        className="flex items-center gap-1.5 text-[11px] font-bold text-indigo-700 hover:text-indigo-900 pt-1 cursor-pointer"
-                      >
-                        <Copy className="w-3 h-3" />
-                        Copy talking point
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <button
+                          onClick={() => {
+                            voiceService.speak(copilotSuggestion.answer, undefined, copilotSuggestion.language);
+                            if (activeCall) {
+                              const socket = getSocket();
+                              socket.emit('call:live_speech', {
+                                callId: activeCall.callId,
+                                sender: 'agent',
+                                senderName: `${user?.name || 'Agent'} (AI Voice)`,
+                                text: copilotSuggestion.answer,
+                                language: copilotSuggestion.language
+                              });
+                            }
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold shadow-xs transition-colors cursor-pointer"
+                        >
+                          <Volume2 className="w-3.5 h-3.5" />
+                          Speak to Call
+                        </button>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(copilotSuggestion.answer);
+                            alert('Copied suggestion to clipboard!');
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold transition-colors cursor-pointer"
+                        >
+                          <Copy className="w-3 h-3" />
+                          Copy
+                        </button>
+                      </div>
                     </div>
                   )}
 
@@ -1374,6 +1608,7 @@ export const AgentDashboard: React.FC = () => {
                     <th className="py-3 px-4">Status</th>
                     <th className="py-3 px-4">Sentiment</th>
                     <th className="py-3 px-4">Notes</th>
+                    <th className="py-3 px-4 text-right">Intelligence</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -1398,11 +1633,10 @@ export const AgentDashboard: React.FC = () => {
                         </span>
                       </td>
                       <td className="py-3 px-4">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                          c.status === 'completed'
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${c.status === 'completed'
                             ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                             : 'bg-slate-100 text-slate-700'
-                        }`}>
+                          }`}>
                           {c.status}
                         </span>
                       </td>
@@ -1416,6 +1650,26 @@ export const AgentDashboard: React.FC = () => {
                       </td>
                       <td className="py-3 px-4 text-slate-600 max-w-xs truncate">
                         {c.callNotes || '-'}
+                      </td>
+                      <td className="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
+                        <button
+                          onClick={() => setSelectedCallIdForIntel(c.id)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold rounded-lg border border-purple-200 transition-colors cursor-pointer text-[11px]"
+                          title="View post-call AI intelligence, summary, and resolution analysis"
+                        >
+                          <Sparkles className="w-3 h-3" />
+                          AI Summary
+                        </button>
+                        {c.customerId && (
+                          <button
+                            onClick={() => setSelectedCustomerId(c.customerId!)}
+                            className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-[11px] cursor-pointer"
+                            title="View customer interaction history"
+                          >
+                            <Users className="w-3 h-3" />
+                            Profile
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -1485,6 +1739,36 @@ export const AgentDashboard: React.FC = () => {
           <SupportTickets />
         </div>
       )}
+
+      {/* 6. FOLLOW-UP TASKS TAB */}
+      {activeTab === 'tasks' && (
+        <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 space-y-6 shadow-xs">
+          <FollowUpTasksManager token={token} currentUserId={user?.id} isAgent={true} />
+        </div>
+      )}
+
+      {/* Customer Profile Modal */}
+      <CustomerProfileModal
+        customerId={selectedCustomerId}
+        isOpen={!!selectedCustomerId}
+        onClose={() => setSelectedCustomerId(null)}
+        token={token}
+      />
+
+      {/* Call Intelligence Modal */}
+      <CallIntelligenceModal
+        callId={selectedCallIdForIntel}
+        isOpen={!!selectedCallIdForIntel}
+        onClose={() => setSelectedCallIdForIntel(null)}
+        token={token}
+        onIntelligenceUpdated={fetchHistory}
+      />
+
+      {/* Audio Device Settings Modal */}
+      <AudioDeviceModal
+        isOpen={showAudioDeviceModal}
+        onClose={() => setShowAudioDeviceModal(false)}
+      />
     </div>
   );
 };

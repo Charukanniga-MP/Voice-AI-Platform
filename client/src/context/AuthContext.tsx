@@ -10,6 +10,7 @@ interface AuthContextType {
   sessionExpiredMessage: string | null;
   clearSessionExpiredMessage: () => void;
   login: (email: string, password: string, role?: 'admin' | 'agent' | 'customer') => Promise<User>;
+  loginCustomer: (email: string, password: string) => Promise<User>;
   loginAdmin: (email: string, password: string) => Promise<User>;
   loginAgent: (email: string, password: string) => Promise<User>;
   register: (data: { name: string; email: string; phone?: string; password: string; confirmPassword: string }) => Promise<User>;
@@ -90,7 +91,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         registerSocketUser(parsedUser.id, parsedUser.role, parsedUser.name);
         scheduleTokenExpiration(callbackToken);
 
-        // Clean up URL without reloading to root dashboard
         window.history.replaceState({}, document.title, '/');
         setIsLoading(false);
         return;
@@ -106,7 +106,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (savedToken && savedUser) {
       const exp = getJwtExpiration(savedToken);
       if (exp && exp * 1000 <= Date.now()) {
-        // Expired in storage
         localStorage.removeItem('kaira_token');
         localStorage.removeItem('kaira_user');
         setSessionExpiredMessage('Your previous session has expired. Please log in again.');
@@ -153,6 +152,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     registerSocketUser(data.user.id, data.user.role, data.user.name);
     scheduleTokenExpiration(data.token);
     return data.user;
+  };
+
+  const loginCustomer = async (email: string, password: string): Promise<User> => {
+    return login(email, password, 'customer');
   };
 
   const loginAdmin = async (email: string, password: string): Promise<User> => {
@@ -250,7 +253,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       window.location.href = data.authUrl;
     } else {
       throw new Error(
-        'Google OAuth 2.0 is not yet configured with your Google Cloud Client ID. Please add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to server/.env with the application name set to "KAIRA Technologies".'
+        'Google OAuth 2.0 is not configured on the backend. Please add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to server/.env.'
       );
     }
   };
@@ -284,6 +287,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         sessionExpiredMessage,
         clearSessionExpiredMessage,
         login,
+        loginCustomer,
         loginAdmin,
         loginAgent,
         register,

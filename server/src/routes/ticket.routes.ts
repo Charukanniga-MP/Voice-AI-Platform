@@ -5,7 +5,7 @@ import { validate, ticketCreateSchema, ticketUpdateSchema } from '../middleware/
 
 const router = Router();
 const statuses = ['open', 'in_progress', 'waiting', 'resolved', 'closed'];
-const priorities = ['low', 'normal', 'high', 'urgent'];
+const priorities = ['low', 'normal', 'medium', 'high', 'urgent'];
 
 router.use(authenticate);
 

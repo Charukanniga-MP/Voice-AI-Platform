@@ -35,7 +35,7 @@ declare global {
             ux_mode?: 'popup' | 'redirect';
             redirect_uri?: string;
             select_account?: boolean;
-            callback: (response: { code: string; error?: string; error_description?: string }) => void;
+            callback: (response: { code?: string; error?: string; error_description?: string }) => void;
             error_callback?: (error: any) => void;
           }) => {
             requestCode: () => void;
@@ -43,7 +43,7 @@ declare global {
           initTokenClient: (config: {
             client_id: string;
             scope: string;
-            callback: (response: { access_token: string; error?: string }) => void;
+            callback: (response: { access_token?: string; error?: string }) => void;
             error_callback?: (error: any) => void;
           }) => {
             requestAccessToken: (overrideConfig?: { prompt?: string }) => void;
