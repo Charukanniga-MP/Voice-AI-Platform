@@ -7,6 +7,7 @@ export const SUPPORTED_LANGUAGES: Record<string, { name: string; nativeName: str
   ta: { name: 'Tamil', nativeName: 'தமிழ்', bcp47: 'ta-IN' },
   te: { name: 'Telugu', nativeName: 'తెలుగు', bcp47: 'te-IN' },
   ml: { name: 'Malayalam', nativeName: 'മലയാളം', bcp47: 'ml-IN' },
+  kn: { name: 'Kannada', nativeName: 'ಕನ್ನಡ', bcp47: 'kn-IN' },
   hi: { name: 'Hindi', nativeName: 'हिन्दी', bcp47: 'hi-IN' }
 };
 
@@ -36,6 +37,8 @@ export class TranslationService {
     if (/[\u0C00-\u0C7F]/.test(trimmed)) return 'te';
     // Malayalam unicode range: U+0D00 to U+0D7F
     if (/[\u0D00-\u0D7F]/.test(trimmed)) return 'ml';
+    // Kannada unicode range: U+0C80 to U+0CFF
+    if (/[\u0C80-\u0CFF]/.test(trimmed)) return 'kn';
     // Devanagari / Hindi unicode range: U+0900 to U+097F
     if (/[\u0900-\u097F]/.test(trimmed)) return 'hi';
 

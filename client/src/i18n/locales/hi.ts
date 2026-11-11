@@ -75,7 +75,7 @@ export const hi: Record<TranslationKey, string> = {
 
   // Customer Dashboard Banner
   'dashboard.platform_badge': 'बहुभाषी वॉयस प्लेटफॉर्म',
-  'dashboard.supported_languages_badge': '5 भाषाएं समर्थित',
+  'dashboard.supported_languages_badge': '6 भाषाएं समर्थित',
   'dashboard.welcome_user': 'स्वागत है, {name}',
   'dashboard.banner_desc': 'अपनी पसंदीदा क्षेत्रीय भाषा में हमारे सहायता विशेषज्ञों और AI सहायक के साथ आसानी से संवाद करें। शुरू करने के लिए नीचे अपनी भाषा चुनें।',
   'dashboard.select_language_title': 'अपनी पसंदीदा संचार भाषा चुनें:',

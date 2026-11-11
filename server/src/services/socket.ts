@@ -29,10 +29,74 @@ interface QueuedCall {
   rejectedByAgents: Set<string>;
 }
 
+export interface AdminSession {
+  adminSessionId: string;
+  socketId: string;
+  adminId: string;
+  adminName: string;
+  operatorName: string;
+  status: 'available' | 'ringing' | 'busy' | 'offline';
+  activeCallId: string | null;
+  lastAssignedAt: number;
+  connectedAt: number;
+  supportedLanguages: string[];
+}
+
 export function initSocketServer(io: SocketIOServer) {
   const connectedUsers = new Map<string, ConnectedUser>(); // socketId -> User
+  const adminSessions = new Map<string, AdminSession>(); // adminSessionId -> AdminSession
+  const socketToAdminSession = new Map<string, string>(); // socketId -> adminSessionId
   const queuedCalls: QueuedCall[] = []; // In-memory FIFO queue for waiting customers
   const ringingTimers = new Map<string, NodeJS.Timeout>(); // callId -> timeout
+
+  // Helper to compile multi-admin presence & calling metrics
+  const getAdminStats = () => {
+    const all = Array.from(adminSessions.values()).filter(s => s.status !== 'offline');
+    const available = all.filter(s => s.status === 'available' && !s.activeCallId);
+    const busy = all.filter(s => s.status === 'busy' || s.status === 'ringing' || Boolean(s.activeCallId));
+    const activeCallsCount = all.filter(s => Boolean(s.activeCallId)).length;
+
+    return {
+      activeAdminSessions: all.length,
+      availableAdminSessions: available.length,
+      busyAdminSessions: busy.length,
+      activeCalls: activeCallsCount,
+      operators: all.map(s => ({
+        adminSessionId: s.adminSessionId,
+        operatorName: s.operatorName,
+        status: s.status,
+        activeCallId: s.activeCallId
+      }))
+    };
+  };
+
+  const broadcastAdminStats = () => {
+    const stats = getAdminStats();
+    io.to('role:admin').emit('admin:sessions_updated', stats);
+  };
+
+  // Helper to find available Admin session using language prioritization and least-recently-assigned (ACD)
+  const findNextAvailableAdminSession = (
+    preferredLang?: string,
+    excludeSessionIds: Set<string> = new Set()
+  ): AdminSession | null => {
+    const available = Array.from(adminSessions.values()).filter(
+      s => s.status === 'available' && !s.activeCallId && !excludeSessionIds.has(s.adminSessionId)
+    );
+
+    if (available.length === 0) return null;
+
+    // 1. Language match priority
+    if (preferredLang) {
+      const langMatches = available.filter(s => s.supportedLanguages.includes(preferredLang));
+      if (langMatches.length > 0) {
+        return langMatches.sort((a, b) => a.lastAssignedAt - b.lastAssignedAt)[0];
+      }
+    }
+
+    // 2. Least recently assigned overall (FIFO round-robin)
+    return available.sort((a, b) => a.lastAssignedAt - b.lastAssignedAt)[0];
+  };
 
   // Helper to find available agent matching language preference or fallback
   const findAvailableAgent = (
@@ -177,6 +241,132 @@ export function initSocketServer(io: SocketIOServer) {
       ringingTimers.set(callId, timer);
     } catch (err) {
       console.error('[CallDispatch] Error dispatching call:', err);
+    }
+  };
+
+  // Helper to dispatch a call to a specific Admin Operator Session (Atomic Session-Level Lock)
+  const dispatchCallToAdminSession = async (
+    callId: string,
+    session: AdminSession,
+    callData: {
+      customerId: string | null;
+      customerName: string;
+      customerPhone?: string;
+      preferredLanguage: string;
+      customerSocketId: string;
+      transferId?: string;
+      question?: string;
+      callRecordId?: string;
+      duration?: number;
+    }
+  ) => {
+    try {
+      console.log(`[AdminDispatch] Dispatching call ${callId} to Admin Operator ${session.operatorName} (${session.adminSessionId})`);
+
+      // Atomic lock on this operator session
+      session.status = 'ringing';
+      session.activeCallId = callId;
+      session.lastAssignedAt = Date.now();
+      broadcastAdminStats();
+
+      // Find or create CallRecord in DB
+      let record = await prisma.callRecord.findUnique({ where: { callId } });
+      if (!record) {
+        record = await prisma.callRecord.create({
+          data: {
+            callId,
+            customerId: callData.customerId,
+            customerName: callData.customerName,
+            customerPhone: callData.customerPhone || null,
+            adminId: session.adminId,
+            adminName: session.adminName,
+            adminSessionId: session.adminSessionId,
+            adminOperatorName: session.operatorName,
+            type: callData.transferId ? 'admin_transfer' : 'agent_voice',
+            direction: 'incoming',
+            status: 'ringing',
+            language: callData.preferredLanguage,
+            startTime: new Date()
+          }
+        });
+      } else {
+        record = await prisma.callRecord.update({
+          where: { id: record.id },
+          data: {
+            status: 'ringing',
+            adminId: session.adminId,
+            adminName: session.adminName,
+            adminSessionId: session.adminSessionId,
+            adminOperatorName: session.operatorName,
+            language: callData.preferredLanguage
+          }
+        });
+      }
+
+      // Send incoming call event ONLY to this assigned Admin session's socket
+      io.to(session.socketId).emit('admin:incoming_call', {
+        callId,
+        callRecordId: record.id,
+        transferId: callData.transferId,
+        customerId: callData.customerId,
+        customerName: callData.customerName,
+        customerPhone: callData.customerPhone || 'Not provided',
+        preferredLanguage: callData.preferredLanguage,
+        languageName: translationService.getLanguageName(callData.preferredLanguage),
+        question: callData.question || 'Customer Support Call',
+        customerSocketId: callData.customerSocketId,
+        adminSessionId: session.adminSessionId,
+        operatorName: session.operatorName,
+        duration: callData.duration || 0,
+        startTime: Date.now()
+      });
+
+      // Send ringing notification to Customer
+      io.to(callData.customerSocketId).emit('customer:call_ringing', {
+        callId,
+        agentName: session.operatorName,
+        preferredLanguage: callData.preferredLanguage,
+        languageName: translationService.getLanguageName(callData.preferredLanguage)
+      });
+
+      // Set ringing timeout (25 seconds) - automatically fails over to next available admin
+      if (ringingTimers.has(callId)) {
+        clearTimeout(ringingTimers.get(callId)!);
+      }
+
+      const timer = setTimeout(async () => {
+        ringingTimers.delete(callId);
+        console.log(`[AdminTimeout] Admin ${session.operatorName} did not answer call ${callId}`);
+
+        io.to(session.socketId).emit('admin:call_missed', { callId });
+        session.status = 'available';
+        session.activeCallId = null;
+        broadcastAdminStats();
+
+        // Reroute to next available Admin session
+        const nextAdmin = findNextAvailableAdminSession(callData.preferredLanguage, new Set([session.adminSessionId]));
+        if (nextAdmin) {
+          console.log(`[AdminTimeout] Rerouting call ${callId} to next Admin ${nextAdmin.operatorName}`);
+          await dispatchCallToAdminSession(callId, nextAdmin, callData);
+        } else {
+          console.log(`[AdminTimeout] All admins busy for call ${callId}, placing in queue`);
+          enqueueCall({
+            callId,
+            callRecordId: record.id,
+            customerId: callData.customerId,
+            customerName: callData.customerName,
+            customerPhone: callData.customerPhone,
+            preferredLanguage: callData.preferredLanguage,
+            socketId: callData.customerSocketId,
+            queuedAt: Date.now(),
+            rejectedByAgents: new Set([session.adminSessionId])
+          });
+        }
+      }, 25000);
+
+      ringingTimers.set(callId, timer);
+    } catch (err) {
+      console.error('[AdminDispatch] Error dispatching call to admin session:', err);
     }
   };
 
@@ -360,10 +550,28 @@ export function initSocketServer(io: SocketIOServer) {
           }
         }
 
-        // Search for an available support agent
+        // Intelligent ACD: Search for an available support agent or active admin operator
         const agent = findAvailableAgent(data.preferredLanguage);
+        const adminSession = findNextAvailableAdminSession(data.preferredLanguage);
 
-        if (agent) {
+        if (agent && agent.role === 'agent') {
+          await dispatchCallToAgent(data.callId, agent, {
+            customerId: validCustomerId,
+            customerName: data.customerName,
+            customerPhone: data.customerPhone,
+            preferredLanguage: data.preferredLanguage,
+            customerSocketId: socket.id
+          });
+        } else if (adminSession) {
+          console.log(`[SupportCall] Routing call directly to available Admin Operator ${adminSession.operatorName}`);
+          await dispatchCallToAdminSession(data.callId, adminSession, {
+            customerId: validCustomerId,
+            customerName: data.customerName,
+            customerPhone: data.customerPhone,
+            preferredLanguage: data.preferredLanguage,
+            customerSocketId: socket.id
+          });
+        } else if (agent) {
           await dispatchCallToAgent(data.callId, agent, {
             customerId: validCustomerId,
             customerName: data.customerName,
@@ -372,8 +580,8 @@ export function initSocketServer(io: SocketIOServer) {
             customerSocketId: socket.id
           });
         } else {
-          // No agent currently available -> place in FIFO waiting queue
-          console.log(`[SupportCall] No agent available for ${data.preferredLanguage}, placing customer in queue`);
+          // No agent or administrator currently available -> place in FIFO waiting queue
+          console.log(`[SupportCall] No staff available for ${data.preferredLanguage}, placing customer in queue`);
           await enqueueCall({
             callId: data.callId,
             customerId: validCustomerId,
@@ -850,20 +1058,37 @@ export function initSocketServer(io: SocketIOServer) {
             timestamp: new Date()
           });
 
-          // Broadcast transfer alert to admins
-          io.to('role:admin').emit('transfer:incoming', {
-            transferId: transferReq.id,
-            callId: data.callId,
-            callRecordId: call.id,
-            customerId: call.customerId,
-            customerName: call.customerName,
-            customerPhone: call.customerPhone || 'Not provided',
-            question: queryText,
-            reason: 'Information unavailable in approved Knowledge Base',
-            duration: data.duration || 0,
-            language: respLang,
-            createdAt: transferReq.createdAt
-          });
+          // Intelligent ACD: Route ungrounded question directly to an available Admin Operator session
+          const availableAdmin = findNextAvailableAdminSession(respLang);
+          if (availableAdmin) {
+            console.log(`[Transfer] Routing ungrounded query directly to available Admin Operator ${availableAdmin.operatorName}`);
+            await dispatchCallToAdminSession(data.callId, availableAdmin, {
+              customerId: call.customerId,
+              customerName: call.customerName,
+              customerPhone: call.customerPhone || 'Not provided',
+              preferredLanguage: respLang,
+              customerSocketId: socket.id,
+              transferId: transferReq.id,
+              question: queryText,
+              callRecordId: call.id,
+              duration: data.duration || 0
+            });
+          } else {
+            // Fallback: broadcast transfer alert to admins if all operators are currently busy
+            io.to('role:admin').emit('transfer:incoming', {
+              transferId: transferReq.id,
+              callId: data.callId,
+              callRecordId: call.id,
+              customerId: call.customerId,
+              customerName: call.customerName,
+              customerPhone: call.customerPhone || 'Not provided',
+              question: queryText,
+              reason: 'Information unavailable in approved Knowledge Base',
+              duration: data.duration || 0,
+              language: respLang,
+              createdAt: transferReq.createdAt
+            });
+          }
         } else {
           const respLang = response.language || callLang;
           const aiText = response.answer || FALLBACK_MESSAGE;
@@ -1158,6 +1383,254 @@ export function initSocketServer(io: SocketIOServer) {
       }
     });
 
+    // 14b. Multi-Admin Independent Operator Session Registration
+    socket.on('admin:register_session', async (data: {
+      adminSessionId: string;
+      adminId: string;
+      adminName: string;
+      operatorName?: string;
+      supportedLanguages?: string[];
+      status?: 'available' | 'busy' | 'offline';
+    }) => {
+      try {
+        const adminSessionId = data.adminSessionId || `admin_sess_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const operatorName = data.operatorName || data.adminName || 'Admin Operator';
+        const supportedLanguages = data.supportedLanguages || ['en', 'ta', 'te', 'ml', 'kn', 'hi'];
+        const status = data.status || 'available';
+
+        const session: AdminSession = {
+          adminSessionId,
+          socketId: socket.id,
+          adminId: data.adminId,
+          adminName: data.adminName || 'Admin',
+          operatorName,
+          status,
+          activeCallId: null,
+          lastAssignedAt: 0,
+          connectedAt: Date.now(),
+          supportedLanguages
+        };
+
+        adminSessions.set(adminSessionId, session);
+        socketToAdminSession.set(socket.id, adminSessionId);
+
+        socket.join(`session:${adminSessionId}`);
+        socket.join('role:admin');
+
+        console.log(`[AdminSession] Registered Operator: "${operatorName}" (Session: ${adminSessionId}, Status: ${status})`);
+
+        socket.emit('admin:session_registered', {
+          adminSessionId,
+          operatorName,
+          status,
+          stats: getAdminStats()
+        });
+
+        broadcastAdminStats();
+      } catch (err) {
+        console.error('[AdminSession] Error in admin:register_session:', err);
+      }
+    });
+
+    // 14c. Update Admin Operator Availability Status
+    socket.on('admin:update_status', (data: {
+      adminSessionId: string;
+      status: 'available' | 'busy' | 'offline';
+      operatorName?: string;
+    }) => {
+      const session = adminSessions.get(data.adminSessionId);
+      if (session) {
+        session.status = data.status;
+        if (data.operatorName) session.operatorName = data.operatorName;
+        console.log(`[AdminSession] ${session.operatorName} status updated to: ${data.status}`);
+        broadcastAdminStats();
+      }
+    });
+
+    // 14d. Admin Operator Accepts Assigned Incoming Call
+    socket.on('admin:accept_call', async (data: {
+      callId: string;
+      adminSessionId: string;
+      transferId?: string;
+    }) => {
+      try {
+        const session = adminSessions.get(data.adminSessionId) || Array.from(adminSessions.values()).find(s => s.socketId === socket.id);
+        if (!session) {
+          console.warn('[AdminSession] Cannot accept call: Session not found for socket', socket.id);
+          return;
+        }
+
+        console.log(`[AdminSession] Operator ${session.operatorName} (${session.adminSessionId}) accepted call ${data.callId}`);
+
+        if (ringingTimers.has(data.callId)) {
+          clearTimeout(ringingTimers.get(data.callId)!);
+          ringingTimers.delete(data.callId);
+        }
+
+        session.status = 'busy';
+        session.activeCallId = data.callId;
+        broadcastAdminStats();
+
+        socket.join(`call:${data.callId}`);
+
+        const call = await prisma.callRecord.findUnique({ where: { callId: data.callId } });
+        if (call) {
+          await prisma.callRecord.update({
+            where: { id: call.id },
+            data: {
+              status: 'active',
+              adminId: session.adminId,
+              adminName: session.adminName,
+              adminSessionId: session.adminSessionId,
+              adminOperatorName: session.operatorName,
+              transferred: Boolean(data.transferId)
+            }
+          });
+
+          if (data.transferId) {
+            await prisma.callTransferRequest.update({
+              where: { id: data.transferId },
+              data: {
+                status: 'connected',
+                adminId: session.adminId,
+                adminSessionId: session.adminSessionId,
+                adminOperatorName: session.operatorName,
+                respondedAt: new Date()
+              }
+            });
+          }
+
+          await prisma.callTranscript.create({
+            data: {
+              callRecordId: call.id,
+              sender: 'system',
+              senderName: 'System',
+              text: `Connected with Admin Operator ${session.operatorName}. Language: ${translationService.getLanguageName(call.language || 'en')}. Two-way voice established.`
+            }
+          });
+        }
+
+        // Send confirmation to this Admin session
+        socket.emit('admin:call_connected', {
+          callId: data.callId,
+          customerName: call?.customerName || 'Customer',
+          customerPhone: call?.customerPhone || 'Not provided',
+          preferredLanguage: call?.language || 'en',
+          languageName: translationService.getLanguageName(call?.language || 'en'),
+          operatorName: session.operatorName
+        });
+
+        // Notify customer
+        io.to(`call:${data.callId}`).emit('customer:call_accepted', {
+          callId: data.callId,
+          agentId: session.adminId,
+          agentName: session.operatorName,
+          agentSocketId: socket.id,
+          preferredLanguage: call?.language || 'en',
+          languageName: translationService.getLanguageName(call?.language || 'en')
+        });
+
+        io.to(`call:${data.callId}`).emit('transfer:connected', {
+          callId: data.callId,
+          adminId: session.adminId,
+          adminName: session.operatorName,
+          adminSocketId: socket.id
+        });
+      } catch (err) {
+        console.error('[AdminSession] Error in admin:accept_call:', err);
+      }
+    });
+
+    // 14e. Admin Operator Rejects Assigned Incoming Call -> Automatic Failover
+    socket.on('admin:reject_call', async (data: {
+      callId: string;
+      adminSessionId: string;
+      reason?: string;
+    }) => {
+      try {
+        const session = adminSessions.get(data.adminSessionId) || Array.from(adminSessions.values()).find(s => s.socketId === socket.id);
+        if (session) {
+          session.status = 'available';
+          session.activeCallId = null;
+          broadcastAdminStats();
+        }
+
+        if (ringingTimers.has(data.callId)) {
+          clearTimeout(ringingTimers.get(data.callId)!);
+          ringingTimers.delete(data.callId);
+        }
+
+        const call = await prisma.callRecord.findUnique({ where: { callId: data.callId } });
+        if (!call) return;
+
+        // Intelligent ACD: Attempt to reroute to the next available Admin session
+        const nextAdmin = findNextAvailableAdminSession(call.language || 'en', session ? new Set([session.adminSessionId]) : new Set());
+        if (nextAdmin) {
+          console.log(`[AdminACD] Rerouting rejected call ${data.callId} to next Admin ${nextAdmin.operatorName}`);
+          const customerSockets = Array.from(await io.in(`call:${data.callId}`).allSockets()).filter(s => s !== socket.id);
+          await dispatchCallToAdminSession(data.callId, nextAdmin, {
+            customerId: call.customerId,
+            customerName: call.customerName,
+            customerPhone: call.customerPhone || undefined,
+            preferredLanguage: call.language || 'en',
+            customerSocketId: customerSockets[0] || socket.id,
+            callRecordId: call.id
+          });
+        } else {
+          // If no other admin available, notify customer
+          io.to(`call:${data.callId}`).emit('customer:call_declined', {
+            callId: data.callId,
+            reason: data.reason || 'All administrators are currently engaged. Please try again shortly.'
+          });
+          await prisma.callRecord.update({
+            where: { id: call.id },
+            data: { status: 'rejected', endedBy: 'admin' }
+          });
+        }
+      } catch (err) {
+        console.error('[AdminSession] Error in admin:reject_call:', err);
+      }
+    });
+
+    // 14f. Customer Calls Admin Directly
+    socket.on('customer:call_admin', async (data: {
+      callId: string;
+      customerId: string;
+      customerName: string;
+      customerPhone?: string;
+      preferredLanguage: string;
+    }) => {
+      try {
+        console.log(`[CustomerCallAdmin] Customer ${data.customerName} calling Admin in ${data.preferredLanguage}`);
+        socket.join(`call:${data.callId}`);
+
+        const adminSession = findNextAvailableAdminSession(data.preferredLanguage);
+        if (adminSession) {
+          await dispatchCallToAdminSession(data.callId, adminSession, {
+            customerId: data.customerId,
+            customerName: data.customerName,
+            customerPhone: data.customerPhone,
+            preferredLanguage: data.preferredLanguage,
+            customerSocketId: socket.id
+          });
+        } else {
+          // No admin available -> queue call
+          await enqueueCall({
+            callId: data.callId,
+            customerId: data.customerId,
+            customerName: data.customerName,
+            customerPhone: data.customerPhone,
+            preferredLanguage: data.preferredLanguage,
+            socketId: socket.id,
+            queuedAt: Date.now(),
+            rejectedByAgents: new Set()
+          });
+        }
+      } catch (err) {
+        console.error('[CustomerCallAdmin] Error:', err);
+      }
+    });
+
     // 15. Agent initiates outgoing call to customer
     socket.on('agent:call:customer', async (data: {
       agentId: string;
@@ -1404,6 +1877,16 @@ export function initSocketServer(io: SocketIOServer) {
           }
         }
 
+        // Free admin session operator active call
+        for (const session of adminSessions.values()) {
+          if (session.activeCallId === data.callId) {
+            session.status = 'available';
+            session.activeCallId = null;
+            console.log(`[AdminACD] Freed Admin Operator ${session.operatorName} (${session.adminSessionId})`);
+          }
+        }
+        broadcastAdminStats();
+
         io.to('role:admin').to('role:agent').emit('call:status_changed', { callId: data.callId, status: 'completed' });
       } catch (err) {
         console.error('[Call] Error ending call:', err);
@@ -1423,6 +1906,24 @@ export function initSocketServer(io: SocketIOServer) {
 
     // Disconnect cleanup
     socket.on('disconnect', async () => {
+      // Clean up disconnected Admin Session
+      const adminSessId = socketToAdminSession.get(socket.id);
+      if (adminSessId) {
+        const session = adminSessions.get(adminSessId);
+        if (session) {
+          console.log(`[AdminSession] Operator session disconnected: ${session.operatorName} (${adminSessId})`);
+          if (session.activeCallId) {
+            io.to(`call:${session.activeCallId}`).emit('call:ended', {
+              callId: session.activeCallId,
+              reason: `Admin operator ${session.operatorName} disconnected.`
+            });
+          }
+          adminSessions.delete(adminSessId);
+        }
+        socketToAdminSession.delete(socket.id);
+        broadcastAdminStats();
+      }
+
       const user = connectedUsers.get(socket.id);
       if (user) {
         console.log(`[Socket] User disconnected: ${user.name} (${user.role})`);

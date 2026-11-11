@@ -75,7 +75,7 @@ export const ml: Record<TranslationKey, string> = {
 
   // Customer Dashboard Banner
   'dashboard.platform_badge': 'ബഹുഭാഷാ വോയ്‌സ് പ്ലാറ്റ്‌ഫോം',
-  'dashboard.supported_languages_badge': '5 ഭാഷകൾ പിന്തുണയ്ക്കുന്നു',
+  'dashboard.supported_languages_badge': '6 ഭാഷകൾ പിന്തുണയ്ക്കുന്നു',
   'dashboard.welcome_user': 'സ്വാഗതം, {name}',
   'dashboard.banner_desc': 'നിങ്ങളുടെ താൽപ്പര്യമുള്ള പ്രാദേശിക ഭാഷയിൽ ഞങ്ങളുടെ സപ്പോർട്ട് വിദഗ്ദ്ധരുമായും AI അസിസ്റ്റന്റുമായും എളുപ്പത്തിൽ ആശയവിനിമയം നടത്തുക. ആരംഭിക്കുന്നതിന് താഴെ നിന്ന് ഭാഷ തിരഞ്ഞെടുക്കുക.',
   'dashboard.select_language_title': 'നിങ്ങളുടെ ആശയവിനിമയ ഭാഷ തിരഞ്ഞെടുക്കുക:',

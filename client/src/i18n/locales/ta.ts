@@ -75,7 +75,7 @@ export const ta: Record<TranslationKey, string> = {
 
   // Customer Dashboard Banner
   'dashboard.platform_badge': 'பன்மொழி குரல் தளம்',
-  'dashboard.supported_languages_badge': '5 மொழிகள் ஆதரிக்கப்படுகின்றன',
+  'dashboard.supported_languages_badge': '6 மொழிகள் ஆதரிக்கப்படுகின்றன',
   'dashboard.welcome_user': 'வணக்கம், {name}',
   'dashboard.banner_desc': 'உங்கள் பிராந்திய மொழியில் எங்கள் ஆதரவு நிபுணர்கள் மற்றும் AI உதவியாளருடன் எளிதாக தொடர்பு கொள்ளுங்கள். தொடங்க கீழே உங்கள் மொழியைத் தேர்ந்தெடுக்கவும்.',
   'dashboard.select_language_title': 'நீங்கள் விரும்பும் தொடர்பு மொழியைத் தேர்ந்தெடுக்கவும்:',

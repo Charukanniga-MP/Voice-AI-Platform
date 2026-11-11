@@ -1,10 +1,11 @@
-export type LanguageCode = 'en' | 'ta' | 'te' | 'ml' | 'hi';
+export type LanguageCode = 'en' | 'ta' | 'te' | 'ml' | 'kn' | 'hi';
 
 export const SUPPORTED_LANGUAGES: Record<LanguageCode, { name: string; nativeName: string; bcp47: string }> = {
   en: { name: 'English', nativeName: 'English', bcp47: 'en-US' },
   ta: { name: 'Tamil', nativeName: 'தமிழ்', bcp47: 'ta-IN' },
   te: { name: 'Telugu', nativeName: 'తెలుగు', bcp47: 'te-IN' },
   ml: { name: 'Malayalam', nativeName: 'മലയാളം', bcp47: 'ml-IN' },
+  kn: { name: 'Kannada', nativeName: 'ಕನ್ನಡ', bcp47: 'kn-IN' },
   hi: { name: 'Hindi', nativeName: 'हिन्दी', bcp47: 'hi-IN' }
 };
 
@@ -58,6 +59,9 @@ export interface CallRecord {
   agentId?: string | null;
   agentName?: string | null;
   adminId?: string | null;
+  adminName?: string | null;
+  adminSessionId?: string | null;
+  adminOperatorName?: string | null;
   adminHandled?: boolean;
   type: 'ai_voice' | 'agent_voice' | 'admin_transfer';
   direction: 'incoming' | 'outgoing';

@@ -702,13 +702,13 @@ export const CustomerDashboard: React.FC = () => {
             {t('dashboard.banner_desc')}
           </p>
 
-          {/* 5 Languages Selector */}
+          {/* 6 Languages Selector */}
           <div className="pt-2">
             <div className="flex items-center gap-2 mb-2 text-xs font-semibold text-blue-200">
               <Globe className="w-4 h-4 text-blue-300" />
               <span>{t('dashboard.select_language_title')}</span>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
               {(Object.entries(SUPPORTED_LANGUAGES) as [LanguageCode, typeof SUPPORTED_LANGUAGES[LanguageCode]][]).map(([code, meta]) => {
                 const isSelected = selectedLanguage === code;
                 return (

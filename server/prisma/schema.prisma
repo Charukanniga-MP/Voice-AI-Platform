@@ -48,10 +48,13 @@ model CallRecord {
   agentName          String?
   adminId            String?
   admin              User?                 @relation("AdminCalls", fields: [adminId], references: [id], onDelete: SetNull)
+  adminName          String?
+  adminSessionId     String?
+  adminOperatorName  String?
   type               String                // "ai_voice" | "agent_voice" | "admin_transfer"
   direction          String                // "incoming" | "outgoing"
   status             String                // "queued" | "ringing" | "active" | "completed" | "missed" | "transferred" | "rejected"
-  language           String?               @default("en") // "ta" | "en" | "te" | "ml" | "hi"
+  language           String?               @default("en") // "ta" | "en" | "te" | "ml" | "kn" | "hi"
   startTime          DateTime              @default(now())
   endTime            DateTime?
   duration           Int                   @default(0) // seconds
@@ -106,21 +109,23 @@ model CallTranscript {
 }
 
 model CallTransferRequest {
-  id            String      @id @default(cuid())
-  callRecordId  String
-  callRecord    CallRecord  @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
-  customerId    String?
-  customer      User?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  customerName  String
-  customerPhone String?
-  question      String
-  reason        String
-  status        String      // "pending" | "ringing" | "accepted" | "connected" | "rejected" | "missed" | "completed"
-  adminId       String?
-  priority      String?     @default("normal") // "normal" | "urgent"
-  sentiment     String?     @default("NEUTRAL")
-  createdAt     DateTime    @default(now())
-  respondedAt   DateTime?
+  id                String      @id @default(cuid())
+  callRecordId      String
+  callRecord        CallRecord  @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  customerId        String?
+  customer          User?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerName      String
+  customerPhone     String?
+  question          String
+  reason            String
+  status            String      // "pending" | "ringing" | "accepted" | "connected" | "rejected" | "missed" | "completed"
+  adminId           String?
+  adminSessionId    String?
+  adminOperatorName String?
+  priority          String?     @default("normal") // "normal" | "urgent"
+  sentiment         String?     @default("NEUTRAL")
+  createdAt         DateTime    @default(now())
+  respondedAt       DateTime?
 }
 
 model KnowledgeDocument {

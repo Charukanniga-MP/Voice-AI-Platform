@@ -75,7 +75,7 @@ export const te: Record<TranslationKey, string> = {
 
   // Customer Dashboard Banner
   'dashboard.platform_badge': 'బహుభాషా వాయిస్ ప్లాట్‌ఫారమ్',
-  'dashboard.supported_languages_badge': '5 భాషలకు మద్దతు ఉంది',
+  'dashboard.supported_languages_badge': '6 భాషలకు మద్దతు ఉంది',
   'dashboard.welcome_user': 'స్వాగతం, {name}',
   'dashboard.banner_desc': 'మీ ప్రాధాన్య ప్రాంతీయ భాషలో మా సపోర్ట్ నిపుణులు మరియు AI అసిస్టెంట్‌తో సులభంగా సంభాషించండి. ప్రారంభించడానికి క్రింద మీ భాషను ఎంచుకోండి.',
   'dashboard.select_language_title': 'మీ ప్రాధాన్యత కమ్యూనికేషన్ భాషను ఎంచుకోండి:',

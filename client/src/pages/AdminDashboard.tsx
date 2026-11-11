@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext.js';
 import { getSocket } from '../services/socket.js';
 import { webrtcManager } from '../services/webrtc.js';
 import { voiceService } from '../services/voice.js';
+import { ringtoneService } from '../services/ringtone.js';
 import { SupportTickets } from './SupportTickets.js';
 import {
   User, CallRecord, CallTranscript, CallTransferRequest,
@@ -58,7 +59,69 @@ export const AdminDashboard: React.FC = () => {
     pendingTransfers: 0
   });
 
-  // Real-time Incoming Transfer Notification Modal
+  // Multi-Admin Operator Session State (Supports up to 10+ concurrent admins using shared admin credentials)
+  const [adminSessionId] = useState<string>(() => {
+    const existing = sessionStorage.getItem('kaira_admin_session_id');
+    if (existing) return existing;
+    const newId = 'adm_sess_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
+    sessionStorage.setItem('kaira_admin_session_id', newId);
+    return newId;
+  });
+
+  const [operatorName, setOperatorName] = useState<string>(() => {
+    return localStorage.getItem('kaira_admin_operator_name') || user?.name || 'Ravi Arun';
+  });
+  const [isEditingOperatorName, setIsEditingOperatorName] = useState(false);
+  const [tempOperatorName, setTempOperatorName] = useState(operatorName);
+  const [showRoster, setShowRoster] = useState(false);
+
+  // Multi-Admin Presence & ACD live stats
+  const [adminPresence, setAdminPresence] = useState<{
+    activeAdminSessions: number;
+    availableAdminSessions: number;
+    busyAdminSessions: number;
+    activeCalls: number;
+    operators: Array<{
+      adminSessionId: string;
+      operatorName: string;
+      status: 'available' | 'ringing' | 'busy' | 'offline';
+      activeCallId: string | null;
+    }>;
+  }>({
+    activeAdminSessions: 1,
+    availableAdminSessions: 1,
+    busyAdminSessions: 0,
+    activeCalls: 0,
+    operators: []
+  });
+
+  // Dedicated Incoming Call Notification Modal for THIS admin operator session
+  const [incomingAdminCall, setIncomingAdminCall] = useState<{
+    callId: string;
+    transferId?: string;
+    customerId?: string;
+    customerName: string;
+    customerPhone?: string;
+    preferredLanguage: string;
+    question?: string;
+    reason?: string;
+    duration?: number;
+    adminSessionId: string;
+    operatorName: string;
+  } | null>(null);
+
+  // Active Dedicated Voice Session for this Admin Operator
+  const [activeCall, setActiveCall] = useState<{
+    callId: string;
+    transferId?: string;
+    customerId?: string;
+    customerName: string;
+    customerPhone?: string;
+    preferredLanguage: string;
+    question?: string;
+  } | null>(null);
+
+  // Legacy Incoming Transfer Notification Modal (for backward compatibility)
   const [incomingTransfer, setIncomingTransfer] = useState<{
     transferId: string;
     callId: string;
@@ -69,13 +132,13 @@ export const AdminDashboard: React.FC = () => {
     duration: number;
   } | null>(null);
 
-  // Active Transferred Live Voice Session
+  // Active Transferred Live Voice Session (for backward compatibility)
   const [activeTransferredCall, setActiveTransferredCall] = useState<{
     callId: string;
-    transferId: string;
+    transferId?: string;
     customerName: string;
     customerPhone?: string;
-    question: string;
+    question?: string;
   } | null>(null);
   const [callDuration, setCallDuration] = useState(0);
   const [transcripts, setTranscripts] = useState<CallTranscript[]>([]);
@@ -88,6 +151,7 @@ export const AdminDashboard: React.FC = () => {
     triggerText: string;
     requiresHumanAssistance: boolean;
   } | null>(null);
+  const [replyText, setReplyText] = useState('');
 
   // Section B: Customer Management State
   const [customers, setCustomers] = useState<User[]>([]);
@@ -184,11 +248,11 @@ export const AdminDashboard: React.FC = () => {
   // Duration timer
   useEffect(() => {
     let timer: any;
-    if (activeTransferredCall) {
+    if (activeCall || activeTransferredCall) {
       timer = setInterval(() => setCallDuration(prev => prev + 1), 1000);
     }
     return () => clearInterval(timer);
-  }, [activeTransferredCall]);
+  }, [activeCall, activeTransferredCall]);
 
   // Fetch Stats from Database
   const fetchStats = async () => {
@@ -449,18 +513,123 @@ export const AdminDashboard: React.FC = () => {
     if (activeSection === 'intelligence') fetchIntelligenceStats();
   }, [activeSection, token, customerSearch, agentSearch, callFilter, callSearch, kbCategory, kbSearch]);
 
+  // Save Operator Name
+  const handleSaveOperatorName = () => {
+    const clean = tempOperatorName.trim();
+    if (!clean) return;
+    setOperatorName(clean);
+    localStorage.setItem('kaira_admin_operator_name', clean);
+    setIsEditingOperatorName(false);
+    const socket = getSocket();
+    socket.emit('admin:update_status', {
+      adminSessionId,
+      operatorName: clean,
+      status: activeCall ? 'busy' : 'available'
+    });
+  };
+
   // Socket setup with clean teardown
   useEffect(() => {
     const socket = getSocket();
 
+    const registerSession = () => {
+      socket.emit('admin:register_session', {
+        adminSessionId,
+        adminId: user?.id,
+        adminName: user?.name || 'Admin',
+        operatorName,
+        supportedLanguages: ['en', 'ta', 'te', 'ml', 'kn', 'hi']
+      });
+    };
+
+    // Register immediately and on socket reconnect
+    registerSession();
+    socket.on('connect', registerSession);
+
+    // Multi-admin session presence update
+    const handleSessionsUpdated = (data: any) => {
+      if (data) setAdminPresence(data);
+    };
+
+    // Incoming call assigned specifically to THIS admin session
+    const handleIncomingCall = (data: any) => {
+      console.log('[AdminDashboard] Incoming call assigned to session:', data);
+      if (data.adminSessionId && data.adminSessionId !== adminSessionId) {
+        return; // Directed to another admin session
+      }
+      setIncomingAdminCall(data);
+      ringtoneService.start(data.customerName || 'Customer');
+    };
+
+    // Call missed or rerouted to another admin
+    const handleCallMissed = (data: any) => {
+      ringtoneService.stop();
+      setIncomingAdminCall(prev => (prev && prev.callId === data.callId ? null : prev));
+      if (incomingTransfer && incomingTransfer.callId === data.callId) {
+        setIncomingTransfer(null);
+      }
+    };
+
+    // Live speech transcript relay (Customer <-> Admin) with real-time deduplication
+    const handleLiveTranscript = (data: {
+      sender: any;
+      senderName: string;
+      text: string;
+      translation?: string;
+      language?: string;
+      timestamp?: string;
+    }) => {
+      setTranscripts(prev => {
+        const isDuplicate = prev.some(t =>
+          t.sender === data.sender &&
+          t.text.trim().toLowerCase() === data.text.trim().toLowerCase() &&
+          Math.abs(Date.now() - new Date(t.timestamp).getTime()) < 3500
+        );
+        if (isDuplicate) return prev;
+        return [
+          ...prev,
+          {
+            id: 'tr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+            sender: data.sender,
+            senderName: data.senderName,
+            text: data.text,
+            translation: data.translation,
+            language: data.language,
+            timestamp: data.timestamp || new Date().toISOString()
+          }
+        ];
+      });
+    };
+
+    // Backward-compatibility transfer handler
     const handleIncomingTransfer = (data: any) => {
+      if (data.adminSessionId && data.adminSessionId !== adminSessionId) {
+        return;
+      }
       setIncomingTransfer(data);
+      setIncomingAdminCall({
+        callId: data.callId,
+        transferId: data.transferId,
+        customerName: data.customerName,
+        customerPhone: data.customerPhone,
+        preferredLanguage: data.preferredLanguage || 'en',
+        question: data.question,
+        reason: data.reason || 'AI Knowledge Escalation',
+        duration: data.duration || 0,
+        adminSessionId,
+        operatorName
+      });
+      ringtoneService.start(data.customerName);
       fetchStats();
     };
 
     const handleTransferUpdated = (data: any) => {
       if (incomingTransfer && incomingTransfer.transferId === data.transferId) {
         setIncomingTransfer(null);
+      }
+      if (incomingAdminCall && incomingAdminCall.transferId === data.transferId) {
+        ringtoneService.stop();
+        setIncomingAdminCall(null);
       }
       fetchTransfers();
       fetchStats();
@@ -474,8 +643,10 @@ export const AdminDashboard: React.FC = () => {
       }
     };
 
-    const handleCallEnded = () => {
-      if (activeTransferredCall) {
+    const handleCallEnded = (data: any) => {
+      if (activeCall && (!data?.callId || activeCall.callId === data.callId)) {
+        handleEndAdminCall(false);
+      } else if (activeTransferredCall && (!data?.callId || activeTransferredCall.callId === data.callId)) {
         handleEndTransferredCall();
       }
     };
@@ -484,6 +655,10 @@ export const AdminDashboard: React.FC = () => {
       setLiveSentiment(data);
     };
 
+    socket.on('admin:sessions_updated', handleSessionsUpdated);
+    socket.on('admin:incoming_call', handleIncomingCall);
+    socket.on('admin:call_missed', handleCallMissed);
+    socket.on('call:live_transcript', handleLiveTranscript);
     socket.on('transfer:incoming', handleIncomingTransfer);
     socket.on('transfer:status_updated', handleTransferUpdated);
     socket.on('call:status_changed', handleStatusChanged);
@@ -491,102 +666,149 @@ export const AdminDashboard: React.FC = () => {
     socket.on('call:sentiment_update', handleSentimentUpdate);
 
     return () => {
+      socket.off('connect', registerSession);
+      socket.off('admin:sessions_updated', handleSessionsUpdated);
+      socket.off('admin:incoming_call', handleIncomingCall);
+      socket.off('admin:call_missed', handleCallMissed);
+      socket.off('call:live_transcript', handleLiveTranscript);
       socket.off('transfer:incoming', handleIncomingTransfer);
       socket.off('transfer:status_updated', handleTransferUpdated);
       socket.off('call:status_changed', handleStatusChanged);
       socket.off('call:ended', handleCallEnded);
       socket.off('call:sentiment_update', handleSentimentUpdate);
+      ringtoneService.stop();
     };
-  }, [incomingTransfer, activeTransferredCall, activeSection]);
+  }, [adminSessionId, operatorName, incomingTransfer, incomingAdminCall, activeCall, activeTransferredCall, activeSection]);
 
-  // Handle Admin Accepting Live Transfer
-  const handleAcceptTransfer = async () => {
-    if (!incomingTransfer) return;
+  // Handle Admin Accepting Dedicated Call
+  const handleAcceptAdminCall = async () => {
+    if (!incomingAdminCall) return;
+    ringtoneService.stop();
 
     try {
+      webrtcManager.unlockAudio();
       await webrtcManager.getMicrophoneStream();
+
       const socket = getSocket();
-      socket.emit('transfer:accept', {
-        transferId: incomingTransfer.transferId,
+      socket.emit('admin:accept_call', {
+        callId: incomingAdminCall.callId,
+        adminSessionId,
         adminId: user?.id,
-        adminName: user?.name
+        operatorName,
+        transferId: incomingAdminCall.transferId
       });
 
-      setActiveTransferredCall({
-        callId: incomingTransfer.callId,
-        transferId: incomingTransfer.transferId,
-        customerName: incomingTransfer.customerName,
-        customerPhone: incomingTransfer.customerPhone,
-        question: incomingTransfer.question
-      });
+      const callDetails = {
+        callId: incomingAdminCall.callId,
+        transferId: incomingAdminCall.transferId,
+        customerId: incomingAdminCall.customerId,
+        customerName: incomingAdminCall.customerName,
+        customerPhone: incomingAdminCall.customerPhone,
+        preferredLanguage: incomingAdminCall.preferredLanguage || 'en',
+        question: incomingAdminCall.question
+      };
 
-      setCallDuration(incomingTransfer.duration || 0);
+      setActiveCall(callDetails);
+      setActiveTransferredCall(callDetails);
+      setCallDuration(incomingAdminCall.duration || 0);
+
+      const langMeta = SUPPORTED_LANGUAGES[(incomingAdminCall.preferredLanguage || 'en') as LanguageCode];
+      const langDisplayName = langMeta ? `${langMeta.nativeName} (${langMeta.name})` : 'English';
+
       setTranscripts([
         {
-          id: 't_' + Date.now(),
+          id: 't_init_' + Date.now(),
           sender: 'system',
           senderName: 'System',
-          text: `Live voice transfer accepted. Connected with ${incomingTransfer.customerName}.`,
+          text: `Call connected. Operator ${operatorName} speaking with ${incomingAdminCall.customerName}. Language: ${langDisplayName}. Two-way live voice channel active.`,
           timestamp: new Date().toISOString()
         },
-        {
+        ...(incomingAdminCall.question ? [{
           id: 't_q_' + Date.now(),
-          sender: 'customer',
-          senderName: incomingTransfer.customerName,
-          text: `[Original Question]: "${incomingTransfer.question}"`,
+          sender: 'customer' as const,
+          senderName: incomingAdminCall.customerName,
+          text: `[Escalated Query]: "${incomingAdminCall.question}"`,
           timestamp: new Date().toISOString()
-        }
+        }] : [])
       ]);
 
+      // Start live speech recognition for Admin operator
+      voiceService.setLanguage('en');
       voiceService.startListening((text, isFinal) => {
         if (isFinal && text.trim()) {
           socket.emit('call:live_speech', {
-            callId: incomingTransfer.callId,
+            callId: incomingAdminCall.callId,
             sender: 'admin',
-            senderName: user?.name || 'Admin',
+            senderName: `${operatorName} (Admin)`,
             text: text.trim()
           });
         }
       });
 
+      setIncomingAdminCall(null);
       setIncomingTransfer(null);
-      setActiveSection('transfers');
     } catch (err) {
-      console.error('Error accepting transfer:', err);
-      alert('Microphone access is required to take transferred voice calls.');
+      console.error('Error accepting admin call:', err);
+      alert('Microphone access is required to take voice calls.');
     }
   };
 
-  // Handle Admin Rejecting Live Transfer
-  const handleRejectTransfer = () => {
-    if (!incomingTransfer) return;
+  // Handle Admin Rejecting Dedicated Call (Triggers ACD Reroute)
+  const handleRejectAdminCall = () => {
+    if (!incomingAdminCall) return;
+    ringtoneService.stop();
+
     const socket = getSocket();
-    socket.emit('transfer:reject', {
-      transferId: incomingTransfer.transferId,
-      adminId: user?.id,
-      reason: 'Admin busy'
+    socket.emit('admin:reject_call', {
+      callId: incomingAdminCall.callId,
+      adminSessionId,
+      reason: 'Admin operator busy'
     });
+
+    setIncomingAdminCall(null);
     setIncomingTransfer(null);
-    fetchTransfers();
-    fetchStats();
   };
 
-  // End Active Transferred Call
-  const handleEndTransferredCall = () => {
-    if (activeTransferredCall) {
+  // End Active Admin Call
+  const handleEndAdminCall = (emitEndEvent: boolean = true) => {
+    ringtoneService.stop();
+    if (activeCall && emitEndEvent) {
       const socket = getSocket();
       socket.emit('call:end', {
-        callId: activeTransferredCall.callId,
-        duration: callDuration
+        callId: activeCall.callId,
+        duration: callDuration,
+        adminSessionId
       });
     }
 
+    setActiveCall(null);
     setActiveTransferredCall(null);
     setCallDuration(0);
     voiceService.stopListening();
     webrtcManager.endCall();
     fetchStats();
-    fetchTransfers();
+    if (activeSection === 'calls') fetchCalls();
+  };
+
+  // Legacy transfer handlers (delegate to new dedicated handlers)
+  const handleAcceptTransfer = handleAcceptAdminCall;
+  const handleRejectTransfer = handleRejectAdminCall;
+  const handleEndTransferredCall = () => handleEndAdminCall(true);
+
+  // Send typed message from Admin to Customer
+  const handleSendAdminMessage = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!replyText.trim() || !activeCall) return;
+
+    const socket = getSocket();
+    socket.emit('call:live_speech', {
+      callId: activeCall.callId,
+      sender: 'admin',
+      senderName: `${operatorName} (Admin)`,
+      text: replyText.trim()
+    });
+
+    setReplyText('');
   };
 
   // Customer Management Handlers
@@ -1018,6 +1240,293 @@ export const AdminDashboard: React.FC = () => {
       {/* 2. MAIN CONTENT AREA */}
       <main className="flex-1 p-6 md:p-8 space-y-8 overflow-y-auto max-w-7xl">
 
+        {/* MULTI-ADMIN CONCURRENCY & OPERATOR IDENTITY BANNER */}
+        <div className="bg-white rounded-3xl border border-slate-200/80 p-5 shadow-xs space-y-4">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            {/* Operator Identity & Status */}
+            <div className="flex items-center gap-3.5">
+              <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-purple-600 to-indigo-600 text-white flex items-center justify-center font-black text-base shadow-sm">
+                {operatorName.charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Active Operator Session:</span>
+                  <span className="font-extrabold text-slate-900 text-sm">{operatorName}</span>
+                  <button
+                    onClick={() => {
+                      setTempOperatorName(operatorName);
+                      setIsEditingOperatorName(true);
+                    }}
+                    className="p-1 text-slate-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors cursor-pointer"
+                    title="Change Operator Name (e.g. Ravi Arun, Arun, Kumar, Prem)"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5">
+                  <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-[10px] text-slate-600">
+                    ID: #{adminSessionId.slice(-6)}
+                  </span>
+                  <span>•</span>
+                  {activeCall ? (
+                    <span className="text-red-600 font-bold flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+                      In Active Call with {activeCall.customerName}
+                    </span>
+                  ) : incomingAdminCall ? (
+                    <span className="text-amber-600 font-bold flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-amber-500 animate-bounce" />
+                      Ringing ({incomingAdminCall.customerName})
+                    </span>
+                  ) : (
+                    <span className="text-emerald-600 font-bold flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      Available for Customer Calls
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Multi-Admin Live Concurrency Counters */}
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs flex items-center gap-2">
+                <Users className="w-3.5 h-3.5 text-purple-600" />
+                <span className="text-slate-500">Connected Admins:</span>
+                <span className="font-extrabold text-slate-900">{adminPresence.activeAdminSessions || 1}</span>
+              </div>
+
+              <div className="px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs flex items-center gap-2">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="text-emerald-700">Available:</span>
+                <span className="font-extrabold text-emerald-800">{adminPresence.availableAdminSessions ?? 1}</span>
+              </div>
+
+              <div className="px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-xs flex items-center gap-2">
+                <Activity className="w-3.5 h-3.5 text-amber-600" />
+                <span className="text-amber-700">Busy:</span>
+                <span className="font-extrabold text-amber-800">{adminPresence.busyAdminSessions ?? 0}</span>
+              </div>
+
+              <div className="px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-200 text-xs flex items-center gap-2">
+                <PhoneCall className="w-3.5 h-3.5 text-indigo-600" />
+                <span className="text-indigo-700">Live Calls:</span>
+                <span className="font-extrabold text-indigo-800">{adminPresence.activeCalls ?? 0}</span>
+              </div>
+
+              <button
+                onClick={() => setShowRoster(!showRoster)}
+                className="px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 flex items-center gap-1.5 cursor-pointer transition-colors"
+              >
+                <span>Operator Roster</span>
+                <span className="text-[10px] text-slate-400">({adminPresence.operators?.length || 1})</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Collapsible Operator Roster */}
+          {showRoster && (
+            <div className="pt-3 border-t border-slate-100 animate-fadeIn">
+              <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+                Active Concurrent Admin Operators (Shared Login • Independent Calling Sessions)
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
+                {(adminPresence.operators?.length ? adminPresence.operators : [
+                  { adminSessionId, operatorName, status: activeCall ? 'busy' : 'available', activeCallId: activeCall?.callId || null }
+                ]).map((op, idx) => {
+                  const isSelf = op.adminSessionId === adminSessionId;
+                  const isBusy = op.status === 'busy' || op.status === 'ringing' || Boolean(op.activeCallId);
+                  return (
+                    <div
+                      key={op.adminSessionId || idx}
+                      className={`p-2.5 rounded-xl border text-xs flex items-center justify-between ${
+                        isSelf ? 'bg-purple-50/70 border-purple-200' : 'bg-slate-50 border-slate-200'
+                      }`}
+                    >
+                      <div className="truncate">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-slate-900 truncate">{op.operatorName}</span>
+                          {isSelf && (
+                            <span className="text-[9px] font-extrabold px-1.5 py-0.2 bg-purple-600 text-white rounded">
+                              YOU
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] font-mono text-slate-400">#{op.adminSessionId?.slice(-6)}</span>
+                      </div>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          isBusy
+                            ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                            : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                        }`}
+                      >
+                        {isBusy ? (op.status === 'ringing' ? 'Ringing' : 'In Call') : 'Available'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* DEDICATED LIVE ACTIVE CALL CONSOLE (Visible across all tabs) */}
+        {activeCall && (
+          <div className="bg-white rounded-3xl border border-purple-200 shadow-xl overflow-hidden animate-fadeIn">
+            <div className="p-5 bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 text-white flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-purple-600 flex items-center justify-center text-white shadow-md">
+                  <PhoneForwarded className="w-6 h-6 animate-pulse" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base font-bold">{activeCall.customerName}</h2>
+                    <span className="px-2 py-0.5 rounded-full bg-purple-800 text-purple-200 text-[10px] font-semibold">
+                      {SUPPORTED_LANGUAGES[(activeCall.preferredLanguage || 'en') as LanguageCode]?.nativeName || activeCall.preferredLanguage}
+                    </span>
+                  </div>
+                  <p className="text-xs text-purple-200">
+                    {activeCall.customerPhone || 'WebRTC Call'} • Operator: <strong className="text-white">{operatorName}</strong>
+                    {activeCall.question ? ` • Escalated: "${activeCall.question}"` : ''}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="px-3.5 py-1.5 rounded-xl bg-purple-950/80 border border-purple-700 text-xs font-mono font-bold flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-purple-300" />
+                  {formatDuration(callDuration)}
+                </div>
+                <button
+                  onClick={() => handleEndAdminCall(true)}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-md cursor-pointer transition-colors"
+                >
+                  <PhoneOff className="w-4 h-4" />
+                  End Call
+                </button>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-purple-50/70 border-b border-purple-100 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    const m = webrtcManager.toggleMute();
+                    setIsMuted(m);
+                  }}
+                  className={`px-3 py-1.5 rounded-xl border font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                    isMuted ? 'bg-red-50 text-red-600 border-red-200' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  {isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4 text-emerald-600" />}
+                  {isMuted ? 'Unmute Mic' : 'Mute Mic'}
+                </button>
+
+                <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200">
+                  {volume === 0 ? <VolumeX className="w-4 h-4 text-slate-400" /> : <Volume2 className="w-4 h-4 text-slate-600" />}
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={volume}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      setVolume(val);
+                      webrtcManager.setVolume(val);
+                    }}
+                    className="w-20 accent-purple-600 cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              <span className="font-medium text-emerald-600 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                Live Two-Way Audio Active (Low Latency WebRTC • &lt;1.2s)
+              </span>
+            </div>
+
+            {/* REAL-TIME TWO-WAY CONVERSATION TRANSCRIPT & TRANSLATION */}
+            <div className="p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <MessageSquare className="w-3.5 h-3.5 text-purple-600" />
+                  Live Two-Way Conversation Transcript (Auto-Translated)
+                </h3>
+                <span className="text-[11px] text-slate-400">
+                  Real-time synchronization • Regional language support
+                </span>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 h-64 overflow-y-auto space-y-3">
+                {transcripts.map((t) => {
+                  const isCustomer = t.sender === 'customer';
+                  const isSystem = t.sender === 'system';
+                  return (
+                    <div
+                      key={t.id}
+                      className={`flex flex-col text-xs ${
+                        isSystem ? 'items-center text-center my-2' : isCustomer ? 'items-start' : 'items-end'
+                      }`}
+                    >
+                      {isSystem ? (
+                        <div className="px-3 py-1 rounded-full bg-slate-200/70 text-slate-600 text-[10px] font-semibold">
+                          {t.text}
+                        </div>
+                      ) : (
+                        <div className="max-w-[80%] space-y-1">
+                          <span className={`text-[10px] font-bold block ${isCustomer ? 'text-indigo-600' : 'text-purple-600 text-right'}`}>
+                            {t.senderName || (isCustomer ? 'Customer' : `Admin (${operatorName})`)}
+                          </span>
+                          <div
+                            className={`p-3 rounded-2xl leading-relaxed ${
+                              isCustomer
+                                ? 'bg-white border border-slate-200 text-slate-900 rounded-tl-xs shadow-2xs'
+                                : 'bg-purple-600 text-white rounded-tr-xs shadow-sm'
+                            }`}
+                          >
+                            <p className="font-medium">{t.text}</p>
+                            {t.translation && (
+                              <p className={`text-[11px] mt-1 pt-1 border-t ${
+                                isCustomer ? 'border-slate-100 text-slate-500 italic' : 'border-purple-500/50 text-purple-100 italic'
+                              }`}>
+                                🌐 {t.translation}
+                              </p>
+                            )}
+                          </div>
+                          <span className="text-[9px] text-slate-400 block px-1 text-right">
+                            {new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <div ref={transcriptEndRef} />
+              </div>
+
+              {/* Fast Reply / Speech Relay Box */}
+              <form onSubmit={handleSendAdminMessage} className="flex gap-2">
+                <input
+                  type="text"
+                  value={replyText}
+                  onChange={(e) => setReplyText(e.target.value)}
+                  placeholder="Type a message to customer (auto-translated into their language)..."
+                  className="flex-1 px-3.5 py-2 text-xs border border-slate-200 rounded-xl text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-purple-500 bg-white"
+                />
+                <button
+                  type="submit"
+                  disabled={!replyText.trim()}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 text-white text-xs font-bold rounded-xl cursor-pointer transition-colors shadow-2xs"
+                >
+                  Send
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
         {/* SECTION A: DASHBOARD OVERVIEW */}
         {activeSection === 'overview' && (
           <div className="space-y-8">
@@ -1171,18 +1680,19 @@ export const AdminDashboard: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <Globe className="w-5 h-5 text-indigo-600" />
                   <h3 className="font-extrabold text-slate-900 text-base">
-                    Multilingual Voice Call Distribution (5 Regional Languages)
+                    Multilingual Voice Call Distribution (6 Regional Languages)
                   </h3>
                 </div>
                 <span className="text-xs text-slate-400">Grounded real-time interpretation</span>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
                 {[
                   { code: 'en', name: 'English', native: 'English' },
                   { code: 'ta', name: 'Tamil', native: 'தமிழ்' },
                   { code: 'te', name: 'Telugu', native: 'తెలుగు' },
                   { code: 'ml', name: 'Malayalam', native: 'മലയാളം' },
+                  { code: 'kn', name: 'Kannada', native: 'ಕನ್ನಡ' },
                   { code: 'hi', name: 'Hindi', native: 'हिन्दी' }
                 ].map(l => {
                   const count = stats.callsByLanguage?.[l.code] || 0;
@@ -2864,51 +3374,118 @@ export const AdminDashboard: React.FC = () => {
 
       </main>
 
-      {/* 3. INCOMING TRANSFER NOTIFICATION MODAL */}
-      {incomingTransfer && (
+      {/* 3. INCOMING DEDICATED ADMIN CALL NOTIFICATION MODAL (WITH RINGTONE & ACD 25s FAILOVER) */}
+      {(incomingAdminCall || incomingTransfer) && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-purple-200 space-y-4">
             <div className="flex items-center gap-3 text-purple-700">
               <div className="w-12 h-12 rounded-2xl bg-purple-100 flex items-center justify-center">
-                <Radio className="w-6 h-6 animate-pulse" />
+                <Radio className="w-6 h-6 animate-pulse text-purple-600" />
               </div>
               <div>
-                <h3 className="font-extrabold text-slate-900 text-base">Incoming Call Transfer</h3>
-                <p className="text-xs text-slate-500">AI Voice Agent escalated to Admin</p>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-extrabold text-slate-900 text-base">Incoming Voice Call</h3>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                    Ringing...
+                  </span>
+                </div>
+                <p className="text-xs text-purple-600 font-medium">
+                  Assigned to Operator: <strong>{operatorName}</strong>
+                </p>
               </div>
             </div>
 
-            <div className="p-4 bg-purple-50/70 border border-purple-100 rounded-2xl text-xs space-y-2">
-              <div className="flex justify-between">
-                <span className="font-semibold text-slate-500">Customer:</span>
-                <span className="font-bold text-slate-900">{incomingTransfer.customerName}</span>
+            <div className="p-4 bg-purple-50/70 border border-purple-100 rounded-2xl text-xs space-y-2.5">
+              <div className="flex justify-between items-center">
+                <span className="font-semibold text-slate-500">Customer Name:</span>
+                <span className="font-extrabold text-slate-900 text-sm">
+                  {incomingAdminCall?.customerName || incomingTransfer?.customerName}
+                </span>
               </div>
-              <div className="flex justify-between">
-                <span className="font-semibold text-slate-500">Phone:</span>
-                <span className="font-mono text-slate-700">{incomingTransfer.customerPhone || 'N/A'}</span>
+              <div className="flex justify-between items-center">
+                <span className="font-semibold text-slate-500">Phone / Connection:</span>
+                <span className="font-mono text-slate-700 font-bold">
+                  {incomingAdminCall?.customerPhone || incomingTransfer?.customerPhone || 'WebRTC Live Audio'}
+                </span>
               </div>
-              <div>
-                <span className="font-semibold text-slate-500 block mb-1">Customer Question:</span>
-                <p className="p-2.5 bg-white rounded-xl border border-purple-200/80 font-medium text-slate-800">
-                  "{incomingTransfer.question}"
-                </p>
+              <div className="flex justify-between items-center">
+                <span className="font-semibold text-slate-500">Customer Language:</span>
+                <span className="px-2 py-0.5 rounded-md bg-purple-200/80 text-purple-900 font-bold text-[11px]">
+                  {SUPPORTED_LANGUAGES[((incomingAdminCall?.preferredLanguage || 'en') as LanguageCode)]?.nativeName || 'English'} ({SUPPORTED_LANGUAGES[((incomingAdminCall?.preferredLanguage || 'en') as LanguageCode)]?.name || 'English'})
+                </span>
+              </div>
+              {(incomingAdminCall?.question || incomingTransfer?.question) && (
+                <div>
+                  <span className="font-semibold text-slate-500 block mb-1">Escalated Question / Inquiries:</span>
+                  <p className="p-2.5 bg-white rounded-xl border border-purple-200/80 font-medium text-slate-800">
+                    "{incomingAdminCall?.question || incomingTransfer?.question}"
+                  </p>
+                </div>
+              )}
+              <div className="pt-1 text-[11px] text-amber-700 bg-amber-50 p-2 rounded-xl border border-amber-200/60 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
+                <span>ACD Ringing Timeout: 25s failover to next available administrator if unanswered.</span>
               </div>
             </div>
 
             <div className="flex items-center gap-2 pt-2">
               <button
-                onClick={handleRejectTransfer}
-                className="flex-1 py-2.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer"
+                onClick={handleRejectAdminCall}
+                className="flex-1 py-2.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer transition-colors"
               >
-                Decline
+                Decline / Reroute
               </button>
               <button
-                onClick={handleAcceptTransfer}
-                className="flex-1 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-md cursor-pointer flex items-center justify-center gap-1.5"
+                onClick={handleAcceptAdminCall}
+                className="flex-1 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-md cursor-pointer flex items-center justify-center gap-1.5 transition-colors"
               >
                 <PhoneCall className="w-4 h-4" />
                 Accept Voice Call
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3B. EDIT OPERATOR IDENTITY MODAL */}
+      {isEditingOperatorName && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="font-bold text-slate-900 text-sm">Customize Operator Identity</h3>
+              <button onClick={() => setIsEditingOperatorName(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">✕</button>
+            </div>
+            <div className="space-y-3 text-xs">
+              <p className="text-slate-500">
+                Set a distinct operator name for this device or browser session (e.g. <strong>Ravi Arun</strong>, <strong>Arun</strong>, <strong>Kumar</strong>, <strong>Prem</strong>). All admins share the same login, but your calls and caller transcripts are routed independently to this operator identity.
+              </p>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Operator Display Name</label>
+                <input
+                  type="text"
+                  value={tempOperatorName}
+                  onChange={(e) => setTempOperatorName(e.target.value)}
+                  placeholder="e.g. Ravi Arun"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-900 font-bold"
+                  autoFocus
+                />
+              </div>
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsEditingOperatorName(false)}
+                  className="flex-1 py-2 font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveOperatorName}
+                  className="flex-1 py-2 font-bold text-white bg-purple-600 hover:bg-purple-700 rounded-xl shadow-xs cursor-pointer"
+                >
+                  Save Identity
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -11,6 +11,7 @@ export const LANGUAGE_BCP47: Record<string, string> = {
   ta: 'ta-IN',
   te: 'te-IN',
   ml: 'ml-IN',
+  kn: 'kn-IN',
   hi: 'hi-IN'
 };
 
