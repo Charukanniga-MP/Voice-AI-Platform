@@ -48,13 +48,25 @@ export function initSocketServer(io: SocketIOServer) {
 
     if (agents.length === 0) return null;
 
-    // 1. First priority: agents supporting customer's preferred language directly
-    const directLangMatch = agents.find(a =>
+    // 1. First priority: dedicated support agents directly matching customer language
+    const directAgentMatch = agents.find(a =>
+      a.role === 'agent' && a.supportedLanguages.includes(preferredLang)
+    );
+    if (directAgentMatch) return directAgentMatch;
+
+    // 2. Second priority: any staff directly matching customer language
+    const directAnyMatch = agents.find(a =>
       a.supportedLanguages.includes(preferredLang)
     );
-    if (directLangMatch) return directLangMatch;
+    if (directAnyMatch) return directAnyMatch;
 
-    // 2. Second priority: any available agent with lowest active call load
+    // 3. Third priority: dedicated support agents with lowest call load
+    const dedicatedAgents = agents.filter(a => a.role === 'agent');
+    if (dedicatedAgents.length > 0) {
+      return dedicatedAgents.sort((a, b) => a.activeCalls.size - b.activeCalls.size)[0];
+    }
+
+    // 4. Fallback: administrators if no support agents are online
     return agents.sort((a, b) => a.activeCalls.size - b.activeCalls.size)[0] || null;
   };
 
