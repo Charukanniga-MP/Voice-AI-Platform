@@ -20,6 +20,8 @@ model User {
   supportedLanguages String?             @default("en,ta,te,ml,hi") // for agents
   agentStatus      String?               @default("available") // "available" | "busy" | "offline"
   maxConcurrentCalls Int                 @default(1)
+  failedLoginAttempts Int                 @default(0)
+  lockedUntil      DateTime?
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
 
@@ -27,6 +29,9 @@ model User {
   callsAsAgent     CallRecord[]          @relation("AgentCalls")
   callsAsAdmin     CallRecord[]          @relation("AdminCalls")
   transferRequests CallTransferRequest[]
+  passwordResetTokens PasswordResetToken[]
+  auditLogs        SecurityAuditLog[]
+  sentimentRecords SentimentAnalysis[]
 }
 
 model CallRecord {
@@ -58,10 +63,16 @@ model CallRecord {
   providerCallSid  String?               @unique
   providerName     String?               @default("twilio")
   failureReason    String?
+  overallSentiment String?               // "POSITIVE" | "NEGATIVE" | "NEUTRAL" | "FRUSTRATED"
+  sentimentScore   Float?
+  requiresAssistance Boolean             @default(false)
+  assistanceReason String?
+  assistanceStatus String?               @default("none") // "none" | "pending" | "accepted" | "dismissed"
   createdAt        DateTime              @default(now())
 
   transcripts      CallTranscript[]
   transferRequests CallTransferRequest[]
+  sentimentRecords SentimentAnalysis[]
 }
 
 model CallTranscript {
@@ -87,6 +98,8 @@ model CallTransferRequest {
   question      String
   reason        String
   status        String      // "pending" | "ringing" | "accepted" | "connected" | "rejected" | "missed" | "completed"
+  priority      String?     @default("normal") // "normal" | "urgent"
+  sentiment     String?     // "FRUSTRATED" | "NEGATIVE" | "NEUTRAL" | "POSITIVE"
   adminId       String?
   createdAt     DateTime    @default(now())
   respondedAt   DateTime?
@@ -134,4 +147,54 @@ model SupportTicket {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([tokenHash])
+  @@index([userId, expiresAt])
+}
+
+model SecurityAuditLog {
+  id        String   @id @default(cuid())
+  eventType String   // "LOGIN_FAILED" | "LOGIN_SUCCESS" | "RATE_LIMIT_EXCEEDED" | "PASSWORD_RESET_REQUESTED" | "PASSWORD_RESET_SUCCESS" | "UNAUTHORIZED_ACCESS_ATTEMPT"
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  email     String?
+  ipAddress String?
+  userAgent String?
+  details   String?
+  createdAt DateTime @default(now())
+
+  @@index([eventType, createdAt])
+  @@index([userId])
+}
+
+model SentimentAnalysis {
+  id                      String      @id @default(cuid())
+  callRecordId            String
+  callRecord              CallRecord  @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  customerId              String?
+  customer                User?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  sentiment               String      // "POSITIVE" | "NEGATIVE" | "NEUTRAL" | "FRUSTRATED"
+  confidenceScore         Float       // 0.0 to 1.0
+  reason                  String?
+  triggerText             String?
+  language                String?     @default("en") // "en" | "ta" | "te" | "ml" | "hi"
+  requiresHumanAssistance Boolean     @default(false)
+  isFinal                 Boolean     @default(false)
+  customerExperienceNote  String?
+  detectedAt              DateTime    @default(now())
+
+  @@index([callRecordId])
+  @@index([sentiment, detectedAt])
+  @@index([customerId])
+}
+
 

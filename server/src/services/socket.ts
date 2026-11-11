@@ -2,6 +2,7 @@ import { Server as SocketIOServer, Socket } from 'socket.io';
 import { prisma } from '../db.js';
 import { knowledgeService, FALLBACK_MESSAGE } from './knowledge.js';
 import { translationService, SUPPORTED_LANGUAGES } from './translation.js';
+import { sentimentService } from './sentiment.js';
 
 interface ConnectedUser {
   socketId: string;
@@ -700,6 +701,51 @@ export function initSocketServer(io: SocketIOServer) {
           }
         });
 
+        // AI Sentiment Analysis on customer query
+        const sentimentResult = await sentimentService.processCustomerUtterance({
+          callId: data.callId,
+          text: queryText,
+          language: callLang,
+          customerId: call.customerId
+        });
+
+        // Real-time sentiment update broadcast
+        io.to(`call:${data.callId}`).emit('call:sentiment_update', {
+          callId: data.callId,
+          sentiment: sentimentResult.sentiment,
+          confidenceScore: sentimentResult.confidenceScore,
+          reason: sentimentResult.reason,
+          triggerText: queryText,
+          requiresHumanAssistance: sentimentResult.requiresHumanAssistance,
+          timestamp: new Date()
+        });
+
+        io.to('role:admin').emit('sentiment:live_update', {
+          callId: data.callId,
+          customerName: call.customerName,
+          sentiment: sentimentResult.sentiment,
+          confidenceScore: sentimentResult.confidenceScore,
+          reason: sentimentResult.reason,
+          triggerText: queryText,
+          requiresHumanAssistance: sentimentResult.requiresHumanAssistance
+        });
+
+        if (sentimentResult.requiresHumanAssistance) {
+          const alertPayload = {
+            callId: data.callId,
+            customerName: call.customerName,
+            customerPhone: call.customerPhone || 'Not provided',
+            reason: sentimentResult.reason,
+            triggerText: queryText,
+            sentiment: sentimentResult.sentiment,
+            confidenceScore: sentimentResult.confidenceScore,
+            priority: 'urgent',
+            timestamp: new Date()
+          };
+          io.to('role:admin').emit('sentiment:assistance_alert', alertPayload);
+          io.to('role:agent').emit('sentiment:assistance_alert', alertPayload);
+        }
+
         // Multilingual grounded knowledge retrieval
         const response = await translationService.getAiAnswerSuggestion(queryText, callLang);
 
@@ -836,6 +882,52 @@ export function initSocketServer(io: SocketIOServer) {
           language: data.language || callLang,
           timestamp: new Date()
         });
+
+        // If the speaker is the customer, analyze real-time sentiment
+        if (data.sender === 'customer') {
+          const sentimentResult = await sentimentService.processCustomerUtterance({
+            callId: data.callId,
+            text,
+            language: data.language || callLang,
+            customerId: call?.customerId
+          });
+
+          io.to(`call:${data.callId}`).emit('call:sentiment_update', {
+            callId: data.callId,
+            sentiment: sentimentResult.sentiment,
+            confidenceScore: sentimentResult.confidenceScore,
+            reason: sentimentResult.reason,
+            triggerText: text,
+            requiresHumanAssistance: sentimentResult.requiresHumanAssistance,
+            timestamp: new Date()
+          });
+
+          io.to('role:admin').emit('sentiment:live_update', {
+            callId: data.callId,
+            customerName: call?.customerName,
+            sentiment: sentimentResult.sentiment,
+            confidenceScore: sentimentResult.confidenceScore,
+            reason: sentimentResult.reason,
+            triggerText: text,
+            requiresHumanAssistance: sentimentResult.requiresHumanAssistance
+          });
+
+          if (sentimentResult.requiresHumanAssistance) {
+            const alertPayload = {
+              callId: data.callId,
+              customerName: call?.customerName,
+              customerPhone: call?.customerPhone || 'Not provided',
+              reason: sentimentResult.reason,
+              triggerText: text,
+              sentiment: sentimentResult.sentiment,
+              confidenceScore: sentimentResult.confidenceScore,
+              priority: 'urgent',
+              timestamp: new Date()
+            };
+            io.to('role:admin').emit('sentiment:assistance_alert', alertPayload);
+            io.to('role:agent').emit('sentiment:assistance_alert', alertPayload);
+          }
+        }
       } catch (err) {
         console.error('[Call] Live speech error:', err);
       }
@@ -1163,6 +1255,23 @@ export function initSocketServer(io: SocketIOServer) {
           endedBy: data.endedBy || 'user'
         });
 
+        // Generate and persist post-call sentiment summary
+        const summary = await sentimentService.finalizeCall(data.callId);
+        if (summary) {
+          io.to(`call:${data.callId}`).emit('call:sentiment_summary', {
+            callId: data.callId,
+            summary
+          });
+          io.to('role:admin').emit('sentiment:call_finalized', {
+            callId: data.callId,
+            summary
+          });
+          io.to('role:agent').emit('sentiment:call_finalized', {
+            callId: data.callId,
+            summary
+          });
+        }
+
         // Free agent's active calls
         const user = connectedUsers.get(socket.id);
         if (user) {
@@ -1182,6 +1291,17 @@ export function initSocketServer(io: SocketIOServer) {
         io.to('role:admin').to('role:agent').emit('call:status_changed', { callId: data.callId, status: 'completed' });
       } catch (err) {
         console.error('[Call] Error ending call:', err);
+      }
+    });
+
+    // 18. Manual Sentiment Assistance Recommendation Override
+    socket.on('sentiment:override', async (data: { callId: string; status: 'accepted' | 'dismissed' }) => {
+      try {
+        await sentimentService.overrideAssistance(data.callId, data.status);
+        io.to('role:admin').emit('sentiment:override_updated', data);
+        io.to('role:agent').emit('sentiment:override_updated', data);
+      } catch (err) {
+        console.error('[Sentiment] Override error:', err);
       }
     });
 

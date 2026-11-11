@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
+import { validate, callRatingSchema, callNotesSchema } from '../middleware/validation.js';
 
 const router = Router();
 
@@ -127,7 +128,8 @@ router.get('/', authenticate, requireRole(['admin', 'agent']), async (req: Reque
         agent: { select: { id: true, name: true, supportedLanguages: true } },
         admin: { select: { id: true, name: true } },
         transcripts: { orderBy: { timestamp: 'asc' } },
-        transferRequests: true
+        transferRequests: true,
+        sentimentRecords: { orderBy: { detectedAt: 'asc' } }
       },
       orderBy: { startTime: 'desc' }
     });
@@ -160,7 +162,8 @@ router.get('/my-history', authenticate, async (req: Request, res: Response) => {
       include: {
         transcripts: { orderBy: { timestamp: 'asc' } },
         admin: { select: { name: true } },
-        agent: { select: { name: true } }
+        agent: { select: { name: true } },
+        sentimentRecords: { where: { isFinal: true } }
       },
       orderBy: { startTime: 'desc' }
     });
@@ -189,7 +192,8 @@ router.get('/transfers', authenticate, requireRole(['admin']), async (req: Reque
       include: {
         callRecord: {
           include: {
-            transcripts: { orderBy: { timestamp: 'asc' } }
+            transcripts: { orderBy: { timestamp: 'asc' } },
+            sentimentRecords: { orderBy: { detectedAt: 'asc' } }
           }
         },
         customer: true
@@ -232,7 +236,7 @@ router.get('/queue', authenticate, requireRole(['admin', 'agent']), async (req: 
 });
 
 // 6. Save Call Notes (Agent & Admin)
-router.post('/:id/notes', authenticate, requireRole(['admin', 'agent']), async (req: Request, res: Response) => {
+router.post('/:id/notes', authenticate, requireRole(['admin', 'agent']), validate(callNotesSchema), async (req: Request, res: Response) => {
   try {
     const { notes } = req.body;
     const call = await prisma.callRecord.update({
@@ -246,10 +250,28 @@ router.post('/:id/notes', authenticate, requireRole(['admin', 'agent']), async (
   }
 });
 
-// 7. Save Customer Rating (Customer only)
-router.post('/:id/rating', authenticate, async (req: Request, res: Response) => {
+// 7. Save Customer Rating (Customer only - with ownership verification)
+router.post('/:id/rating', authenticate, validate(callRatingSchema), async (req: Request, res: Response) => {
   try {
     const { rating } = req.body;
+
+    const existingCall = await prisma.callRecord.findUnique({
+      where: { id: req.params.id }
+    });
+
+    if (!existingCall) {
+      res.status(404).json({ error: 'Call record not found.' });
+      return;
+    }
+
+    if (req.user!.role === 'customer' && existingCall.customerId !== req.user!.id) {
+      res.status(403).json({
+        error: 'Access denied. You cannot submit ratings for another customer\'s call.',
+        code: 'FORBIDDEN'
+      });
+      return;
+    }
+
     await prisma.callRecord.update({
       where: { id: req.params.id },
       data: { rating: Number(rating) }
@@ -271,7 +293,8 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
         agent: true,
         admin: true,
         transcripts: { orderBy: { timestamp: 'asc' } },
-        transferRequests: true
+        transferRequests: true,
+        sentimentRecords: { orderBy: { detectedAt: 'asc' } }
       }
     });
 

@@ -11,8 +11,13 @@ import {
   PhoneCall, PhoneOutgoing, PhoneOff, Mic, MicOff,
   Volume2, VolumeX, Clock, Search, BookOpen,
   Smartphone, AlertCircle, CheckCircle2, Radio, Info,
-  Globe, Sparkles, MessageSquare, Pause, Play, Send, Copy, Users
+  Globe, Sparkles, MessageSquare, Pause, Play, Send, Copy, Users,
+  HeartPulse, Flame
 } from 'lucide-react';
+import { SentimentBadge } from '../components/SentimentBadge.js';
+import { LiveSentimentCard } from '../components/LiveSentimentCard.js';
+import { PostCallSentimentSummary } from '../components/PostCallSentimentSummary.js';
+import { SentimentType } from '../types.js';
 
 interface LogEntry {
   id: string;
@@ -88,6 +93,24 @@ export const AgentDashboard: React.FC = () => {
   // Live logs / transcript
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [callError, setCallError] = useState<string | null>(null);
+
+  // Sentiment Analysis State
+  const [liveSentiment, setLiveSentiment] = useState<{
+    sentiment: SentimentType;
+    confidenceScore: number;
+    reason: string;
+    triggerText: string;
+    requiresHumanAssistance: boolean;
+  } | null>(null);
+
+  const [assistanceAlert, setAssistanceAlert] = useState<{
+    callId: string;
+    customerName: string;
+    customerPhone: string;
+    reason: string;
+    triggerText: string;
+    priority: string;
+  } | null>(null);
 
   // Embedded Knowledge Base Copilot
   const [copilotSearch, setCopilotSearch] = useState('');
@@ -278,6 +301,18 @@ export const AgentDashboard: React.FC = () => {
       }
     });
 
+    // 7. Live Customer Sentiment Update
+    const handleSentimentUpdate = (data: any) => {
+      setLiveSentiment(data);
+    };
+    socket.on('call:sentiment_update', handleSentimentUpdate);
+
+    // 8. Human Assistance Recommendation Alert
+    const handleAssistanceAlert = (data: any) => {
+      setAssistanceAlert(data);
+    };
+    socket.on('sentiment:assistance_alert', handleAssistanceAlert);
+
     return () => {
       socket.off('agent:incoming_call');
       socket.off('agent:call_missed');
@@ -285,6 +320,8 @@ export const AgentDashboard: React.FC = () => {
       socket.off('call:live_transcript');
       socket.off('call:kb_suggestion');
       socket.off('call:ended');
+      socket.off('call:sentiment_update', handleSentimentUpdate);
+      socket.off('sentiment:assistance_alert', handleAssistanceAlert);
     };
   }, [incomingCall, activeCall]);
 
@@ -714,6 +751,47 @@ export const AgentDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* Real-Time Human Assistance Priority Warning Banner */}
+      {assistanceAlert && (
+        <div className="bg-rose-50 border-2 border-rose-300 rounded-3xl p-4 flex flex-wrap items-center justify-between gap-4 shadow-sm animate-fadeIn">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-rose-200">
+              <Flame className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-black text-rose-950">Customer May Require Human Assistance</h3>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-600 text-white uppercase tracking-wider">
+                  Urgent Priority
+                </span>
+              </div>
+              <p className="text-xs text-rose-800 mt-0.5">
+                <strong>{assistanceAlert.customerName}</strong> ({assistanceAlert.customerPhone}): {assistanceAlert.reason}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('incoming');
+                setAssistanceAlert(null);
+              }}
+              className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
+            >
+              View Call Queue
+            </button>
+            <button
+              type="button"
+              onClick={() => setAssistanceAlert(null)}
+              className="px-3 py-1.5 bg-white hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-xl text-xs font-semibold transition cursor-pointer"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Top Header & Agent Status Bar */}
       <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -1064,6 +1142,23 @@ export const AgentDashboard: React.FC = () => {
                   </div>
                 </div>
 
+                {/* Real-Time AI Customer Sentiment Indicator */}
+                <LiveSentimentCard
+                  sentiment={liveSentiment?.sentiment}
+                  confidenceScore={liveSentiment?.confidenceScore}
+                  reason={liveSentiment?.reason}
+                  triggerText={liveSentiment?.triggerText}
+                  requiresHumanAssistance={liveSentiment?.requiresHumanAssistance || Boolean(assistanceAlert && assistanceAlert.callId === activeCall.callId)}
+                  canManageOverride={true}
+                  onOverride={(status) => {
+                    const socket = getSocket();
+                    socket.emit('sentiment:override', { callId: activeCall.callId, status });
+                    if (status === 'dismissed') {
+                      setAssistanceAlert(null);
+                    }
+                  }}
+                />
+
                 {/* Live Multilingual Conversation Logs */}
                 <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
                   <div className="flex items-center justify-between">
@@ -1277,6 +1372,7 @@ export const AgentDashboard: React.FC = () => {
                     <th className="py-3 px-4">Duration</th>
                     <th className="py-3 px-4">Type</th>
                     <th className="py-3 px-4">Status</th>
+                    <th className="py-3 px-4">Sentiment</th>
                     <th className="py-3 px-4">Notes</th>
                   </tr>
                 </thead>
@@ -1309,6 +1405,14 @@ export const AgentDashboard: React.FC = () => {
                         }`}>
                           {c.status}
                         </span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <SentimentBadge
+                          sentiment={c.overallSentiment}
+                          score={c.sentimentScore}
+                          size="xs"
+                          requiresAssistance={c.requiresAssistance}
+                        />
                       </td>
                       <td className="py-3 px-4 text-slate-600 max-w-xs truncate">
                         {c.callNotes || '-'}

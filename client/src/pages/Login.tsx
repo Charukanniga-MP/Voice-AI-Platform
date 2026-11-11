@@ -24,9 +24,21 @@ import {
   Headset,
   Shield
 } from 'lucide-react';
+import { navigateToResetPassword } from '../utils/navigation.js';
 
 export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({ onAuthSuccess }) => {
-  const { login, register, loginAdmin, loginAgent, initiateGoogleLogin, loginWithGoogleIdToken, loginWithGoogleCode, getGoogleConfig } = useAuth();
+  const {
+    login,
+    register,
+    loginAdmin,
+    loginAgent,
+    initiateGoogleLogin,
+    loginWithGoogleIdToken,
+    loginWithGoogleCode,
+    getGoogleConfig,
+    sessionExpiredMessage,
+    clearSessionExpiredMessage
+  } = useAuth();
   const { t } = useLanguage();
 
   // Active Portal: 'customer' | 'agent' | 'admin'
@@ -59,8 +71,15 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
 
   // Google Identity Services (GIS) configuration
   const envClientId = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '';
-  const [isGoogleConfigured, setIsGoogleConfigured] = useState<boolean>(Boolean(envClientId));
-  const [googleClientId, setGoogleClientId] = useState<string | null>(envClientId || null);
+
+  const isClientIdValid = (cid: string | null | undefined): boolean => {
+    if (!cid) return false;
+    const clean = cid.trim();
+    return clean.length > 20 && clean.endsWith('.apps.googleusercontent.com') && !clean.includes('your-google-client-id');
+  };
+
+  const [isGoogleConfigured, setIsGoogleConfigured] = useState<boolean>(isClientIdValid(envClientId));
+  const [googleClientId, setGoogleClientId] = useState<string | null>(isClientIdValid(envClientId) ? envClientId : null);
   const [isVerifyingGoogle, setIsVerifyingGoogle] = useState<boolean>(false);
   const [showGoogleSetup, setShowGoogleSetup] = useState<boolean>(false);
 
@@ -78,11 +97,11 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
   const refreshGoogleConfig = async () => {
     try {
       const config = await getGoogleConfig();
-      if (config.configured && config.clientId) {
+      if (config.configured && config.clientId && isClientIdValid(config.clientId)) {
         setIsGoogleConfigured(true);
         setGoogleClientId(config.clientId);
         setSetupClientId(config.clientId);
-      } else if (envClientId) {
+      } else if (envClientId && isClientIdValid(envClientId)) {
         setIsGoogleConfigured(true);
         setGoogleClientId(envClientId);
         setSetupClientId(envClientId);
@@ -213,7 +232,8 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
   const handleGoogleClick = async (loginMode: 'popup' | 'redirect' = 'popup') => {
     setError(null);
 
-    if (!isGoogleConfigured || !googleClientId) {
+    if (!isGoogleConfigured || !googleClientId || !isClientIdValid(googleClientId)) {
+      setError('Google Sign-In requires a valid Google Cloud Web Client ID (ending in .apps.googleusercontent.com). Please enter your credentials in the setup guide or sign in using Email & Password.');
       setShowGoogleSetup(true);
       return;
     }
@@ -383,6 +403,12 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
     setSetupSuccess(null);
     setSetupSaving(true);
 
+    if (!setupClientId || !isClientIdValid(setupClientId)) {
+      setSetupError('Invalid Client ID format. Your Google OAuth Client ID must end with ".apps.googleusercontent.com" (e.g. 1234567890-abcdef.apps.googleusercontent.com). Note: A numeric project ID or phone number is not an OAuth Client ID.');
+      setSetupSaving(false);
+      return;
+    }
+
     try {
       const res = await fetch('/api/auth/google/configure', {
         method: 'POST',
@@ -509,6 +535,24 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
         </div>
 
         <div className="bg-white py-8 px-6 shadow-xl shadow-slate-200/50 rounded-2xl border border-slate-200/80 sm:px-10">
+
+          {/* Session Expiration Banner */}
+          {sessionExpiredMessage && (
+            <div className="mb-5 p-3.5 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-xs flex items-center justify-between gap-2.5 shadow-xs">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+                <span className="font-semibold">{sessionExpiredMessage}</span>
+              </div>
+              <button
+                type="button"
+                onClick={clearSessionExpiredMessage}
+                className="text-amber-500 hover:text-amber-700 p-0.5 rounded cursor-pointer"
+                title="Dismiss"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
 
           {/* Error Banner with Dismiss Button */}
           {error && (
@@ -640,7 +684,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                       </label>
                       <button
                         type="button"
-                        onClick={() => { setMode('forgot'); setError(null); }}
+                        onClick={() => navigateToResetPassword()}
                         className="text-xs text-blue-600 hover:text-blue-800 font-medium hover:underline cursor-pointer"
                       >
                         {t('auth.forgot_password')}
@@ -1012,7 +1056,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                     </label>
                     <button
                       type="button"
-                      onClick={() => { setMode('forgot'); setError(null); }}
+                      onClick={() => navigateToResetPassword()}
                       className="text-xs text-emerald-600 hover:text-emerald-800 font-medium hover:underline cursor-pointer"
                     >
                       {t('auth.forgot_password')}
@@ -1110,7 +1154,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                     </label>
                     <button
                       type="button"
-                      onClick={() => { setMode('forgot'); setError(null); }}
+                      onClick={() => navigateToResetPassword()}
                       className="text-xs text-indigo-600 hover:text-indigo-800 font-medium hover:underline cursor-pointer"
                     >
                       {t('auth.forgot_password')}
@@ -1176,7 +1220,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
               </div>
 
               {forgotSent ? (
-                <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs space-y-2">
+                <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs space-y-3">
                   <div className="flex items-center gap-2 font-semibold">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                     {t('auth.instructions_dispatched')}
@@ -1184,13 +1228,21 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                   <p>
                     {t('auth.recovery_sent_notice', { email: forgotEmail })}
                   </p>
-                  <div className="pt-2">
+                  <div className="pt-2 flex items-center justify-between gap-2 border-t border-emerald-200/60">
                     <button
                       type="button"
                       onClick={() => { setMode('login'); setForgotSent(false); }}
                       className="text-xs font-bold text-emerald-700 hover:underline cursor-pointer"
                     >
                       {t('auth.return_to_sign_in')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => navigateToResetPassword()}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold text-xs transition-colors cursor-pointer"
+                    >
+                      <span>Set New Password</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>

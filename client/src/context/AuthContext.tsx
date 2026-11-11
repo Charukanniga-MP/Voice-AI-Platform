@@ -1,11 +1,14 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { User } from '../types.js';
 import { registerSocketUser } from '../services/socket.js';
+import { setupFetchInterceptor, getJwtExpiration } from '../services/apiClient.js';
 
 interface AuthContextType {
   user: User | null;
   token: string | null;
   isLoading: boolean;
+  sessionExpiredMessage: string | null;
+  clearSessionExpiredMessage: () => void;
   login: (email: string, password: string, role?: 'admin' | 'agent' | 'customer') => Promise<User>;
   loginAdmin: (email: string, password: string) => Promise<User>;
   loginAgent: (email: string, password: string) => Promise<User>;
@@ -24,6 +27,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null);
+  const expiryTimerRef = useRef<any>(null);
+
+  const clearSessionExpiredMessage = () => {
+    setSessionExpiredMessage(null);
+  };
+
+  const handleSessionExpired = (message: string) => {
+    setUser(null);
+    setToken(null);
+    localStorage.removeItem('kaira_token');
+    localStorage.removeItem('kaira_user');
+    setSessionExpiredMessage(message);
+    if (expiryTimerRef.current) {
+      clearTimeout(expiryTimerRef.current);
+      expiryTimerRef.current = null;
+    }
+  };
+
+  // Setup token expiration timer
+  const scheduleTokenExpiration = (authToken: string) => {
+    if (expiryTimerRef.current) {
+      clearTimeout(expiryTimerRef.current);
+      expiryTimerRef.current = null;
+    }
+
+    const exp = getJwtExpiration(authToken);
+    if (!exp) return;
+
+    const expiresInMs = exp * 1000 - Date.now();
+    if (expiresInMs <= 0) {
+      handleSessionExpired('Your session has expired. Please log in again.');
+    } else {
+      expiryTimerRef.current = setTimeout(() => {
+        handleSessionExpired('Your session has expired. Please log in again.');
+      }, expiresInMs);
+    }
+  };
+
+  // Initialize global fetch interceptor on startup
+  useEffect(() => {
+    setupFetchInterceptor((msg) => {
+      handleSessionExpired(msg);
+    });
+  }, []);
 
   // Load session or handle OAuth callback on startup
   useEffect(() => {
@@ -31,7 +79,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const params = new URLSearchParams(window.location.search);
     const callbackToken = params.get('token');
     const callbackUser = params.get('user');
-    const callbackError = params.get('error');
 
     if (callbackToken && callbackUser) {
       try {
@@ -41,6 +88,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.setItem('kaira_token', callbackToken);
         localStorage.setItem('kaira_user', JSON.stringify(parsedUser));
         registerSocketUser(parsedUser.id, parsedUser.role, parsedUser.name);
+        scheduleTokenExpiration(callbackToken);
 
         // Clean up URL without reloading to root dashboard
         window.history.replaceState({}, document.title, '/');
@@ -56,20 +104,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const savedUser = localStorage.getItem('kaira_user');
 
     if (savedToken && savedUser) {
-      try {
-        const parsedUser = JSON.parse(savedUser);
-        setToken(savedToken);
-        setUser(parsedUser);
-        registerSocketUser(parsedUser.id, parsedUser.role, parsedUser.name);
-      } catch (err) {
+      const exp = getJwtExpiration(savedToken);
+      if (exp && exp * 1000 <= Date.now()) {
+        // Expired in storage
         localStorage.removeItem('kaira_token');
         localStorage.removeItem('kaira_user');
+        setSessionExpiredMessage('Your previous session has expired. Please log in again.');
+      } else {
+        try {
+          const parsedUser = JSON.parse(savedUser);
+          setToken(savedToken);
+          setUser(parsedUser);
+          registerSocketUser(parsedUser.id, parsedUser.role, parsedUser.name);
+          scheduleTokenExpiration(savedToken);
+        } catch {
+          localStorage.removeItem('kaira_token');
+          localStorage.removeItem('kaira_user');
+        }
       }
     }
     setIsLoading(false);
+
+    return () => {
+      if (expiryTimerRef.current) {
+        clearTimeout(expiryTimerRef.current);
+      }
+    };
   }, []);
 
   const login = async (email: string, password: string, role?: 'admin' | 'agent' | 'customer'): Promise<User> => {
+    setSessionExpiredMessage(null);
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -87,6 +151,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('kaira_user', JSON.stringify(data.user));
 
     registerSocketUser(data.user.id, data.user.role, data.user.name);
+    scheduleTokenExpiration(data.token);
     return data.user;
   };
 
@@ -99,6 +164,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const register = async (formData: { name: string; email: string; phone?: string; password: string; confirmPassword: string }): Promise<User> => {
+    setSessionExpiredMessage(null);
     const res = await fetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -116,6 +182,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('kaira_user', JSON.stringify(data.user));
 
     registerSocketUser(data.user.id, data.user.role, data.user.name);
+    scheduleTokenExpiration(data.token);
     return data.user;
   };
 
@@ -130,6 +197,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const loginWithGoogleIdToken = async (idToken: string): Promise<User> => {
+    setSessionExpiredMessage(null);
     const res = await fetch('/api/auth/google/verify-token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -147,10 +215,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('kaira_user', JSON.stringify(data.user));
 
     registerSocketUser(data.user.id, data.user.role, data.user.name);
+    scheduleTokenExpiration(data.token);
     return data.user;
   };
 
   const loginWithGoogleCode = async (code: string, redirectUri?: string): Promise<User> => {
+    setSessionExpiredMessage(null);
     const res = await fetch('/api/auth/google/code', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -168,6 +238,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('kaira_user', JSON.stringify(data.user));
 
     registerSocketUser(data.user.id, data.user.role, data.user.name);
+    scheduleTokenExpiration(data.token);
     return data.user;
   };
 
@@ -176,7 +247,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const data = await res.json();
 
     if (data.configured && data.authUrl) {
-      // Standard official Google OAuth 2.0 full-page redirect to Google's real account chooser
       window.location.href = data.authUrl;
     } else {
       throw new Error(
@@ -191,9 +261,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('kaira_token', newToken);
     localStorage.setItem('kaira_user', JSON.stringify(newUser));
     registerSocketUser(newUser.id, newUser.role, newUser.name);
+    scheduleTokenExpiration(newToken);
   };
 
   const logout = () => {
+    if (expiryTimerRef.current) {
+      clearTimeout(expiryTimerRef.current);
+      expiryTimerRef.current = null;
+    }
     setUser(null);
     setToken(null);
     localStorage.removeItem('kaira_token');
@@ -201,7 +276,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, isLoading, login, loginAdmin, loginAgent, register, initiateGoogleLogin, loginWithGoogleIdToken, loginWithGoogleCode, getGoogleConfig, setSession, logout }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        isLoading,
+        sessionExpiredMessage,
+        clearSessionExpiredMessage,
+        login,
+        loginAdmin,
+        loginAgent,
+        register,
+        initiateGoogleLogin,
+        loginWithGoogleIdToken,
+        loginWithGoogleCode,
+        getGoogleConfig,
+        setSession,
+        logout
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

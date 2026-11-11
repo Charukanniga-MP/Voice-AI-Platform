@@ -13,8 +13,12 @@ import {
   PhoneOff, Mic, MicOff, Volume2, VolumeX, Clock, Search,
   BookOpen, Plus, Trash2, Edit3, Upload, CheckCircle2, MessageSquare,
   AlertCircle, ShieldAlert, Eye, Headphones, Radio, RefreshCw, Globe,
-  Sparkles, Download, Lightbulb
+  Sparkles, Download, Lightbulb, HeartPulse
 } from 'lucide-react';
+import { SentimentDashboardSection } from '../components/SentimentDashboardSection.js';
+import { SentimentBadge } from '../components/SentimentBadge.js';
+import { PostCallSentimentSummary } from '../components/PostCallSentimentSummary.js';
+import { LiveSentimentCard } from '../components/LiveSentimentCard.js';
 
 // Pure deduplication utility function
 function deduplicate<T>(items: T[], keyFn: (item: T) => string): T[] {
@@ -34,7 +38,7 @@ export const AdminDashboard: React.FC = () => {
   const { user, token } = useAuth();
 
   // Active navigation section
-  const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'agents' | 'calls' | 'transfers' | 'knowledge' | 'tickets'>('overview');
+  const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'agents' | 'calls' | 'transfers' | 'knowledge' | 'tickets' | 'sentiment'>('overview');
 
   // Stats state
   const [stats, setStats] = useState<CallStats>({
@@ -72,6 +76,13 @@ export const AdminDashboard: React.FC = () => {
   const [transcripts, setTranscripts] = useState<CallTranscript[]>([]);
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(1);
+  const [liveSentiment, setLiveSentiment] = useState<{
+    sentiment: any;
+    confidenceScore: number;
+    reason: string;
+    triggerText: string;
+    requiresHumanAssistance: boolean;
+  } | null>(null);
 
   // Section B: Customer Management State
   const [customers, setCustomers] = useState<User[]>([]);
@@ -399,16 +410,22 @@ export const AdminDashboard: React.FC = () => {
       }
     };
 
+    const handleSentimentUpdate = (data: any) => {
+      setLiveSentiment(data);
+    };
+
     socket.on('transfer:incoming', handleIncomingTransfer);
     socket.on('transfer:status_updated', handleTransferUpdated);
     socket.on('call:status_changed', handleStatusChanged);
     socket.on('call:ended', handleCallEnded);
+    socket.on('call:sentiment_update', handleSentimentUpdate);
 
     return () => {
       socket.off('transfer:incoming', handleIncomingTransfer);
       socket.off('transfer:status_updated', handleTransferUpdated);
       socket.off('call:status_changed', handleStatusChanged);
       socket.off('call:ended', handleCallEnded);
+      socket.off('call:sentiment_update', handleSentimentUpdate);
     };
   }, [incomingTransfer, activeTransferredCall, activeSection]);
 
@@ -867,6 +884,17 @@ export const AdminDashboard: React.FC = () => {
             >
               <BookOpen className="w-4 h-4" />
               Knowledge Base
+            </button>
+
+            <button
+              onClick={() => setActiveSection('sentiment')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'sentiment'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                }`}
+            >
+              <HeartPulse className="w-4 h-4 text-rose-400" />
+              Sentiment Analysis
             </button>
           </nav>
         </div>
@@ -1390,6 +1418,7 @@ export const AdminDashboard: React.FC = () => {
                         <th className="py-3.5 px-4">Channel / Type</th>
                         <th className="py-3.5 px-4">Duration</th>
                         <th className="py-3.5 px-4">Call Status</th>
+                        <th className="py-3.5 px-4">Sentiment</th>
                         <th className="py-3.5 px-4">Transferred</th>
                         <th className="py-3.5 px-4 text-right">Transcript</th>
                       </tr>
@@ -1430,6 +1459,14 @@ export const AdminDashboard: React.FC = () => {
                               }`}>
                               {call.status}
                             </span>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <SentimentBadge
+                              sentiment={call.overallSentiment}
+                              score={call.sentimentScore}
+                              size="xs"
+                              requiresAssistance={call.requiresAssistance}
+                            />
                           </td>
                           <td className="py-3.5 px-4">
                             {call.transferred ? (
@@ -1544,6 +1581,22 @@ export const AdminDashboard: React.FC = () => {
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
                     Two-Way Audio Streaming (Admin &lt;--&gt; Customer)
                   </span>
+                </div>
+
+                {/* Live Real-Time Customer Sentiment */}
+                <div className="p-4 bg-slate-50/70 border-b border-purple-100">
+                  <LiveSentimentCard
+                    sentiment={liveSentiment?.sentiment}
+                    confidenceScore={liveSentiment?.confidenceScore}
+                    reason={liveSentiment?.reason}
+                    triggerText={liveSentiment?.triggerText}
+                    requiresHumanAssistance={liveSentiment?.requiresHumanAssistance}
+                    canManageOverride={true}
+                    onOverride={(status) => {
+                      const socket = getSocket();
+                      socket.emit('sentiment:override', { callId: activeTransferredCall.callId, status });
+                    }}
+                  />
                 </div>
 
                 {/* Transcripts in Active Transfer */}
@@ -1666,6 +1719,9 @@ export const AdminDashboard: React.FC = () => {
         )}
 
         {activeSection === 'tickets' && <SupportTickets />}
+
+        {/* SECTION: AI SENTIMENT ANALYSIS DASHBOARD */}
+        {activeSection === 'sentiment' && <SentimentDashboardSection />}
 
         {/* SECTION F: KNOWLEDGE BASE MANAGEMENT */}
         {activeSection === 'knowledge' && (
@@ -2291,6 +2347,16 @@ export const AdminDashboard: React.FC = () => {
                 </div>
               )}
             </div>
+
+            {/* Call Sentiment Summary */}
+            <PostCallSentimentSummary
+              overallSentiment={selectedCallDetails.overallSentiment}
+              sentimentScore={selectedCallDetails.sentimentScore}
+              customerExperience={selectedCallDetails.sentimentRecords?.find(r => r.isFinal)?.customerExperienceNote}
+              frustrationDetected={selectedCallDetails.overallSentiment === 'FRUSTRATED'}
+              requiresAssistance={selectedCallDetails.requiresAssistance}
+              assistanceReason={selectedCallDetails.assistanceReason}
+            />
 
             <div className="max-h-80 overflow-y-auto space-y-3 p-2">
               <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Conversation Transcript</h4>
