@@ -1204,7 +1204,7 @@ export const AgentDashboard: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div className="grid grid-cols-1 gap-2 pt-1">
                       <button
                         onClick={() => handleStartCall(c.name, c.phone || '', c.id)}
                         disabled={!c.phone || Boolean(activeCall && activeCall.state === 'connected')}
@@ -1213,16 +1213,6 @@ export const AgentDashboard: React.FC = () => {
                       >
                         <PhoneOutgoing className="w-3.5 h-3.5" />
                         Agent Call
-                      </button>
-
-                      <button
-                        onClick={() => handleStartAiCall(c.name, c.phone || '', c.id, c.preferredLanguage || 'en')}
-                        disabled={!c.phone || Boolean(activeCall && activeCall.state === 'connected')}
-                        className="py-2 px-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold text-[11px] flex items-center justify-center gap-1 shadow-xs transition-colors cursor-pointer"
-                        title="KAIRA Voice AI automated call to customer phone"
-                      >
-                        <Sparkles className="w-3.5 h-3.5" />
-                        AI Voice Call
                       </button>
                     </div>
                   </div>

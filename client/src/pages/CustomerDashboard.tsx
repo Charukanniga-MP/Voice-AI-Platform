@@ -830,8 +830,8 @@ export const CustomerDashboard: React.FC = () => {
         {/* Central Call Actions & Active UI */}
         <div className="p-8 text-center flex flex-col items-center justify-center">
           {callStatus === 'idle' && (
-            <div className="w-full max-w-3xl py-4 space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="w-full max-w-xl py-4 space-y-6">
+              <div className="grid grid-cols-1 gap-6">
                 {/* Option 1: Live Customer Support Specialist */}
                 <div className="p-6 rounded-3xl border-2 border-blue-100 hover:border-blue-400 bg-gradient-to-b from-blue-50/50 to-white text-left transition-all hover:shadow-lg space-y-4">
                   <div className="w-14 h-14 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-200">
@@ -857,27 +857,6 @@ export const CustomerDashboard: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Option 2: AI Voice Assistant */}
-                <div className="p-6 rounded-3xl border-2 border-indigo-100 hover:border-indigo-400 bg-gradient-to-b from-indigo-50/50 to-white text-left transition-all hover:shadow-lg space-y-4">
-                  <div className="w-14 h-14 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-200">
-                    <Sparkles className="w-7 h-7" />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-extrabold text-slate-900">
-                      {t('call.card_ai_title')}
-                    </h3>
-                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                      {t('call.card_ai_desc')}
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleStartAiCall}
-                    className="w-full py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-md shadow-indigo-200 hover:shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2"
-                  >
-                    <PhoneCall className="w-4 h-4" />
-                    {t('call.card_ai_btn')}
-                  </button>
-                </div>
               </div>
             </div>
           )}
