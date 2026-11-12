@@ -520,6 +520,12 @@ export class WebRTCManager {
     return this.isMuted;
   }
 
+  public sendDigits(digits: string): void {
+    if (!this.peerConnection || !/^[0-9*#]+$/.test(digits)) return;
+    const audioSender = this.peerConnection.getSenders().find(sender => sender.track?.kind === 'audio');
+    audioSender?.dtmf?.insertDTMF(digits);
+  }
+
   // Set speaker volume (0 to 1)
   public setVolume(volume: number) {
     if (this.remoteAudio) {

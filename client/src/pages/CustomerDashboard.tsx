@@ -850,7 +850,7 @@ export const CustomerDashboard: React.FC = () => {
                   </div>
                   <button
                     onClick={handleStartAgentCall}
-                    className="w-full py-3.5 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-md shadow-blue-200 hover:shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2"
+                    className="w-full py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-md shadow-emerald-200 hover:shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2"
                   >
                     <PhoneCall className="w-4 h-4" />
                     {t('call.card_agent_btn')}
@@ -873,7 +873,7 @@ export const CustomerDashboard: React.FC = () => {
                 </span>
                 <h3 className="text-xl font-extrabold text-slate-900">{t('queue.in_queue_title')}</h3>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                  {t('queue.in_queue_desc', { language: SUPPORTED_LANGUAGES[selectedLanguage]?.name })}
+                  Your call is a request until an agent accepts it. {t('queue.in_queue_desc', { language: SUPPORTED_LANGUAGES[selectedLanguage]?.name })}
                 </p>
               </div>
 

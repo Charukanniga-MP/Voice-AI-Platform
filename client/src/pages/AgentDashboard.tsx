@@ -14,7 +14,7 @@ import { AudioDeviceModal } from '../components/AudioDeviceModal.js';
 import { audioDeviceManager } from '../services/audioDevice.js';
 import { User, CallRecord, KnowledgeEntry, LanguageCode, SUPPORTED_LANGUAGES } from '../types.js';
 import {
-  PhoneCall, PhoneOutgoing, PhoneOff, Mic, MicOff,
+  PhoneCall, PhoneOutgoing, PhoneOff, Mic, MicOff, Grid3X3, MoreHorizontal,
   Volume2, VolumeX, Clock, Search, BookOpen,
   Smartphone, AlertCircle, CheckCircle2, Radio, Info,
   Globe, Sparkles, MessageSquare, Pause, Play, Send, Copy, Users, Settings, ListTodo,
@@ -96,6 +96,12 @@ export const AgentDashboard: React.FC = () => {
   const [callDuration, setCallDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(1);
+  const [isSpeakerOn, setIsSpeakerOn] = useState(true);
+  const [isKeypadOpen, setIsKeypadOpen] = useState(false);
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
+  const [dtmfInput, setDtmfInput] = useState('');
+  const [lastEndedCall, setLastEndedCall] = useState<{ name: string; phone: string } | null>(null);
+  const previousVolumeRef = useRef(1);
   const [isCallHeld, setIsCallHeld] = useState(false);
   const [callNotes, setCallNotes] = useState('');
   const [notesSaved, setNotesSaved] = useState(false);
@@ -160,7 +166,7 @@ export const AgentDashboard: React.FC = () => {
 
   // Check telephony provider status on load
   const checkStatus = async () => {
-    const status = await telephonyVoiceManager.checkProviderStatus();
+    const status = await telephonyVoiceManager.checkProviderStatus(token || undefined);
     setProviderStatus(status);
   };
 
@@ -433,8 +439,13 @@ export const AgentDashboard: React.FC = () => {
 
     const selectedCall = incomingCall;
     setIncomingCall(null);
+    setLastEndedCall(null);
     setCallDuration(0);
     setIsMuted(false);
+    setIsSpeakerOn(true);
+    setIsKeypadOpen(false);
+    setIsMoreOpen(false);
+    setDtmfInput('');
     setIsCallHeld(false);
     setCallNotes('');
     setCopilotSuggestion(null);
@@ -634,8 +645,13 @@ export const AgentDashboard: React.FC = () => {
     }
 
     setCallError(null);
+    setLastEndedCall(null);
     setCallDuration(0);
     setIsMuted(false);
+    setIsSpeakerOn(true);
+    setIsKeypadOpen(false);
+    setIsMoreOpen(false);
+    setDtmfInput('');
     setIsCallHeld(false);
     setCallNotes('');
 
@@ -705,6 +721,14 @@ export const AgentDashboard: React.FC = () => {
       return;
     }
 
+    const status = await telephonyVoiceManager.checkProviderStatus(token || undefined);
+    setProviderStatus(status);
+    if (!status.configured) {
+      setCallError(status.message || 'Mobile phone calling is not configured. Add the Twilio settings in server/.env.');
+      setActiveTab('outgoing');
+      return;
+    }
+
     // Check microphone access before placing call
     const hasMic = await audioDeviceManager.ensureMicrophoneAccess();
     if (!hasMic) {
@@ -713,8 +737,13 @@ export const AgentDashboard: React.FC = () => {
     }
 
     setCallError(null);
+    setLastEndedCall(null);
     setCallDuration(0);
     setIsMuted(false);
+    setIsSpeakerOn(true);
+    setIsKeypadOpen(false);
+    setIsMoreOpen(false);
+    setDtmfInput('');
     setIsCallHeld(false);
     setCallNotes('');
 
@@ -772,7 +801,12 @@ export const AgentDashboard: React.FC = () => {
       user?.id || '',
       {
         onStateChange: (state: TelephonyCallState, message?: string) => {
-          setActiveCall(prev => prev ? { ...prev, state, statusText: message || state } : null);
+          if (state === 'ended' || state === 'failed') {
+            setLastEndedCall({ name: targetName, phone: targetPhone });
+            setActiveCall(null);
+          } else {
+            setActiveCall(prev => prev ? { ...prev, state, statusText: message || state } : null);
+          }
           if (message) addLog('system', message);
           if (state === 'ended' || state === 'failed') {
             if (token) {
@@ -832,10 +866,13 @@ export const AgentDashboard: React.FC = () => {
   };
 
   const cleanupActiveCall = () => {
+    if (activeCall) setLastEndedCall({ name: activeCall.customerName, phone: activeCall.customerPhone });
     voiceService.stopListening();
     webrtcManager.endCall();
     setActiveCall(null);
     setIsCallHeld(false);
+    setIsKeypadOpen(false);
+    setIsMoreOpen(false);
     setCopilotSuggestion(null);
   };
 
@@ -849,9 +886,35 @@ export const AgentDashboard: React.FC = () => {
     }
   };
 
+  const handleToggleSpeaker = () => {
+    if (isSpeakerOn) {
+      previousVolumeRef.current = volume > 0 ? volume : previousVolumeRef.current;
+      setVolume(0);
+      if (activeCall?.isIncomingSupport) webrtcManager.setVolume(0);
+      else telephonyVoiceManager.setVolume(0);
+      setIsSpeakerOn(false);
+      return;
+    }
+
+    const restoredVolume = previousVolumeRef.current || 1;
+    setVolume(restoredVolume);
+    if (activeCall?.isIncomingSupport) webrtcManager.setVolume(restoredVolume);
+    else telephonyVoiceManager.setVolume(restoredVolume);
+    setIsSpeakerOn(true);
+  };
+
+  const handleSendDtmf = (digit: string) => {
+    if (!activeCall || !/^[0-9*#]$/.test(digit)) return;
+    if (activeCall.isIncomingSupport) webrtcManager.sendDigits(digit);
+    else telephonyVoiceManager.sendDigits(digit);
+    setDtmfInput(current => `${current}${digit}`.slice(-24));
+  };
+
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseFloat(e.target.value);
     setVolume(val);
+    setIsSpeakerOn(val > 0);
+    if (val > 0) previousVolumeRef.current = val;
     if (activeCall?.isIncomingSupport) {
       webrtcManager.setVolume(val);
     } else {
@@ -1092,6 +1155,13 @@ export const AgentDashboard: React.FC = () => {
       {/* 1. OUTGOING CALLS TAB */}
       {activeTab === 'outgoing' && (
         <div className="space-y-6">
+          {(callError || (providerStatus && !providerStatus.configured)) && (
+            <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900">
+              <p className="font-bold">Mobile phone calling is unavailable</p>
+              <p className="mt-1">{callError || providerStatus?.message || 'Configure Twilio in server/.env before placing PSTN calls.'}</p>
+              <p className="mt-1 text-xs text-amber-800">In-app Support Specialist calls use the Incoming Calls tab and require an agent to be signed in and available.</p>
+            </div>
+          )}
           {/* Direct Dial Any Phone Number Card */}
           <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1226,7 +1296,17 @@ export const AgentDashboard: React.FC = () => {
       {/* 2. ACTIVE LIVE CALL CONSOLE TAB */}
       {activeTab === 'console' && (
         <div className="space-y-6">
-          {!activeCall ? (
+          {!activeCall ? lastEndedCall ? (
+            <div className="min-h-[70vh] rounded-[2rem] border border-blue-100 bg-gradient-to-b from-blue-50 via-sky-50 to-white p-8 flex flex-col items-center justify-center text-center">
+              <span className="text-sm font-bold tracking-wide text-slate-500">Ended</span>
+              <div className="mt-7 flex h-28 w-28 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-5xl font-bold text-white shadow-xl shadow-blue-200">
+                {lastEndedCall.name.charAt(0).toUpperCase()}
+              </div>
+              <h2 className="mt-5 text-3xl font-bold text-slate-900">{lastEndedCall.name}</h2>
+              <p className="mt-2 text-base text-slate-500">{lastEndedCall.phone || 'Phone number unavailable'}</p>
+              {callError && <p role="alert" className="mt-5 max-w-lg rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{callError}</p>}
+            </div>
+          ) : (
             <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center space-y-4">
               <PhoneOff className="w-12 h-12 text-slate-300 mx-auto" />
               <h3 className="text-base font-bold text-slate-900">No Active Voice Call</h3>
@@ -1238,114 +1318,107 @@ export const AgentDashboard: React.FC = () => {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Left 2 Cols: Main Voice Console & Transcripts */}
               <div className="lg:col-span-2 space-y-6">
-                {/* Active Session Header Card */}
-                <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-600 text-white flex items-center justify-center font-bold text-lg shadow-md shadow-emerald-200">
-                        {activeCall.customerName.charAt(0).toUpperCase()}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h2 className="text-lg font-black text-slate-900">{activeCall.customerName}</h2>
-                          {activeCall.preferredLanguage && (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                              {SUPPORTED_LANGUAGES[activeCall.preferredLanguage as LanguageCode]?.name}
-                            </span>
-                          )}
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                            {activeCall.isIncomingSupport ? 'WebRTC Real-time Voice' : 'PSTN Outbound Call'}
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-500 font-mono mt-0.5">{activeCall.customerPhone}</p>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
-                      {/* Call Quality Indicator */}
+                {/* Modern mobile-style live call screen */}
+                <div className="relative min-h-[560px] overflow-hidden rounded-[2rem] border border-blue-100 bg-gradient-to-b from-[#eaf4ff] via-[#f3f8ff] to-white px-5 py-5 shadow-sm sm:px-8 sm:py-7">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
                       <CallQualityIndicator isCallActive={!!activeCall && activeCall.state !== 'ended'} />
-
-                      {/* In-call Audio Settings Button */}
+                    </div>
+                    <div className="flex items-center gap-2">
                       <button
                         onClick={() => setShowAudioDeviceModal(true)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 text-slate-700 hover:text-blue-700 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                        className="flex items-center gap-2 rounded-full border border-blue-100 bg-white/80 px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-white"
                         title="Configure audio devices"
                       >
-                        <Settings className="w-3.5 h-3.5 text-slate-500" />
-                        <span className="hidden sm:inline">Audio</span>
+                        <Settings className="h-4 w-4 text-blue-600" />
+                        <span>Audio</span>
                       </button>
-
-                      {/* Timer */}
-                      <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-slate-50 border border-slate-200 rounded-2xl font-mono text-sm font-black text-slate-800">
-                        <Clock className="w-4 h-4 text-slate-400" />
+                      <div className="flex items-center gap-2 rounded-full border border-blue-100 bg-white/80 px-3 py-2 font-mono text-xs font-bold text-slate-700 shadow-sm">
+                        <Clock className="h-4 w-4 text-blue-500" />
                         {formatDuration(callDuration)}
                       </div>
                     </div>
                   </div>
 
-                  {/* Soundwave animation */}
-                  <div className="h-16 flex items-center justify-center gap-1.5 py-2">
-                    <span className="w-1.5 rounded-full bg-emerald-500 animate-soundwave-1" />
-                    <span className="w-1.5 rounded-full bg-emerald-500 animate-soundwave-2" />
-                    <span className="w-1.5 rounded-full bg-emerald-500 animate-soundwave-3" />
-                    <span className="w-1.5 rounded-full bg-emerald-500 animate-soundwave-4" />
-                    <span className="w-1.5 rounded-full bg-emerald-500 animate-soundwave-5" />
-                    <span className="w-1.5 rounded-full bg-emerald-500 animate-soundwave-2" />
-                    <span className="w-1.5 rounded-full bg-emerald-500 animate-soundwave-4" />
+                  <div className="flex min-h-[280px] flex-col items-center justify-center py-7 text-center">
+                    <p className={`mb-6 text-sm font-semibold tracking-wide ${activeCall.state === 'connected' || activeCall.state === 'on_hold' ? 'text-emerald-700' : activeCall.state === 'ended' || activeCall.state === 'failed' ? 'text-slate-500' : 'text-blue-700'}`}>
+                      {activeCall.state === 'ringing' ? 'Calling...'
+                        : activeCall.state === 'connected' || activeCall.state === 'on_hold' ? 'Connected'
+                          : activeCall.state === 'ended' || activeCall.state === 'failed' ? 'Ended'
+                            : 'Connecting...'}
+                    </p>
+                    <div className="flex h-28 w-28 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-5xl font-bold text-white shadow-xl shadow-blue-200 ring-8 ring-white/70 sm:h-32 sm:w-32">
+                      {activeCall.customerName.charAt(0).toUpperCase()}
+                    </div>
+                    <h2 className="mt-6 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">{activeCall.customerName}</h2>
+                    <p className="mt-2 text-base font-medium text-slate-500">{activeCall.customerPhone || 'Phone number unavailable'}</p>
+                    <span className="mt-3 rounded-full border border-blue-100 bg-white/70 px-3 py-1 text-[11px] font-semibold text-blue-700">
+                      {activeCall.isIncomingSupport ? 'Support call' : 'PSTN outbound call'}
+                    </span>
+                    <div className="mt-7 flex h-12 items-center justify-center gap-1.5" aria-hidden="true">
+                      {['animate-soundwave-1', 'animate-soundwave-2', 'animate-soundwave-3', 'animate-soundwave-4', 'animate-soundwave-5', 'animate-soundwave-2', 'animate-soundwave-4'].map((animation, index) => (
+                        <span key={index} style={{ animationDelay: `${index * 90}ms` }} className={`w-1.5 rounded-full bg-emerald-500 ${animation}`} />
+                      ))}
+                    </div>
                   </div>
 
-                  {isCallHeld && (
-                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800 text-xs font-bold text-center animate-pulse">
-                      Call is currently on hold. Customer cannot hear you.
+                  {(isKeypadOpen || isMoreOpen) && (
+                    <div className="mx-auto mb-6 max-w-sm rounded-3xl border border-blue-100 bg-white/90 p-4 shadow-sm">
+                      {isKeypadOpen ? (
+                        <>
+                          <div className="mb-3 flex items-center justify-between border-b border-slate-100 pb-3">
+                            <span className="text-xs font-semibold text-slate-500">Touch tones</span>
+                            <span className="font-mono text-sm font-bold tracking-widest text-slate-800">{dtmfInput || ' '}</span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            {['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map(digit => (
+                              <button key={digit} onClick={() => handleSendDtmf(digit)} className="h-11 rounded-xl bg-blue-50 text-lg font-semibold text-blue-900 transition hover:bg-blue-100 active:scale-95">{digit}</button>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="flex flex-wrap items-center justify-center gap-3">
+                          <button onClick={handleToggleHold} className="flex items-center gap-2 rounded-xl bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 transition hover:bg-amber-100">
+                            {isCallHeld ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+                            {isCallHeld ? 'Resume call' : 'Hold call'}
+                          </button>
+                          <button onClick={() => setShowAudioDeviceModal(true)} className="flex items-center gap-2 rounded-xl bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800 transition hover:bg-blue-100">
+                            <Settings className="h-4 w-4" /> Audio devices
+                          </button>
+                          <label className="flex w-full items-center gap-3 px-2 pt-2 text-xs font-medium text-slate-600">
+                            <VolumeX className="h-4 w-4" />
+                            <input type="range" min="0" max="1" step="0.05" value={volume} onChange={handleVolumeChange} className="flex-1 accent-blue-600" />
+                            <Volume2 className="h-4 w-4" />
+                          </label>
+                        </div>
+                      )}
                     </div>
                   )}
 
-                  {/* In-Call Controls */}
-                  <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-                    {/* Mute Button */}
-                    <button
-                      onClick={handleToggleMute}
-                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${isMuted ? 'bg-red-50 border-red-200 text-red-600' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
-                        }`}
-                      title={isMuted ? 'Unmute Mic' : 'Mute Mic'}
-                    >
-                      {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-                    </button>
+                  {isCallHeld && <p className="mb-4 text-center text-xs font-semibold text-amber-700">Call on hold</p>}
 
-                    {/* Hold / Resume Button */}
-                    <button
-                      onClick={handleToggleHold}
-                      className={`flex items-center gap-2 px-4 py-3.5 rounded-2xl border font-bold text-xs transition-all cursor-pointer ${isCallHeld
-                          ? 'bg-amber-500 text-white border-amber-500 shadow-md shadow-amber-200'
-                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
-                        }`}
-                    >
-                      {isCallHeld ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
-                      {isCallHeld ? 'Resume Call' : 'Hold Call'}
-                    </button>
-
-                    {/* End Call Button */}
-                    <button
-                      onClick={handleEndCall}
-                      className="flex items-center gap-2 px-6 py-3.5 rounded-2xl bg-red-600 hover:bg-red-700 text-white font-black text-xs shadow-lg shadow-red-200 transition-all cursor-pointer hover:scale-[1.02]"
-                    >
-                      <PhoneOff className="w-4 h-4" />
-                      End Call
-                    </button>
-
-                    {/* Volume Slider */}
-                    <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl">
-                      {volume === 0 ? <VolumeX className="w-4 h-4 text-slate-400" /> : <Volume2 className="w-4 h-4 text-slate-600" />}
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.05"
-                        value={volume}
-                        onChange={handleVolumeChange}
-                        className="w-20 accent-indigo-600 cursor-pointer"
-                      />
+                  <div className="mx-auto flex max-w-md flex-col items-center gap-5">
+                    <div className="grid w-full grid-cols-4 gap-2 sm:gap-4">
+                      <button onClick={() => { setIsKeypadOpen(value => !value); setIsMoreOpen(false); }} className={`flex flex-col items-center gap-2 rounded-2xl py-2 text-xs font-medium transition ${isKeypadOpen ? 'text-blue-700' : 'text-slate-600 hover:text-blue-700'}`} aria-pressed={isKeypadOpen}>
+                        <span className={`flex h-14 w-14 items-center justify-center rounded-full border shadow-sm transition ${isKeypadOpen ? 'border-blue-300 bg-blue-100 text-blue-700' : 'border-blue-100 bg-white text-slate-700 hover:bg-blue-50'}`}><Grid3X3 className="h-5 w-5" /></span>
+                        Keypad
+                      </button>
+                      <button onClick={handleToggleMute} className={`flex flex-col items-center gap-2 rounded-2xl py-2 text-xs font-medium transition ${isMuted ? 'text-red-700' : 'text-slate-600 hover:text-blue-700'}`} aria-pressed={isMuted}>
+                        <span className={`flex h-14 w-14 items-center justify-center rounded-full border shadow-sm transition ${isMuted ? 'border-red-200 bg-red-50 text-red-600' : 'border-blue-100 bg-white text-slate-700 hover:bg-blue-50'}`}>{isMuted ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}</span>
+                        {isMuted ? 'Unmute' : 'Mute'}
+                      </button>
+                      <button onClick={handleToggleSpeaker} className={`flex flex-col items-center gap-2 rounded-2xl py-2 text-xs font-medium transition ${isSpeakerOn ? 'text-blue-700' : 'text-slate-600 hover:text-blue-700'}`} aria-pressed={isSpeakerOn}>
+                        <span className={`flex h-14 w-14 items-center justify-center rounded-full border shadow-sm transition ${isSpeakerOn ? 'border-blue-300 bg-blue-100 text-blue-700' : 'border-blue-100 bg-white text-slate-500 hover:bg-blue-50'}`}>{isSpeakerOn ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5" />}</span>
+                        Speaker
+                      </button>
+                      <button onClick={() => { setIsMoreOpen(value => !value); setIsKeypadOpen(false); }} className={`flex flex-col items-center gap-2 rounded-2xl py-2 text-xs font-medium transition ${isMoreOpen ? 'text-blue-700' : 'text-slate-600 hover:text-blue-700'}`} aria-pressed={isMoreOpen}>
+                        <span className={`flex h-14 w-14 items-center justify-center rounded-full border shadow-sm transition ${isMoreOpen ? 'border-blue-300 bg-blue-100 text-blue-700' : 'border-blue-100 bg-white text-slate-700 hover:bg-blue-50'}`}><MoreHorizontal className="h-5 w-5" /></span>
+                        More
+                      </button>
                     </div>
+                    <button onClick={handleEndCall} className="flex h-14 w-16 items-center justify-center rounded-full bg-red-600 text-white shadow-lg shadow-red-200 transition hover:bg-red-700 active:scale-95" aria-label="End call" title="End call">
+                      <PhoneOff className="h-6 w-6" />
+                    </button>
                   </div>
                 </div>
 

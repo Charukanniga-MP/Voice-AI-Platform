@@ -28,14 +28,16 @@ class TelephonyVoiceManager {
   private callbacks: TelephonyCallCallbacks | null = null;
 
   // Check backend telephony provider configuration status
-  public async checkProviderStatus(): Promise<{
+  public async checkProviderStatus(authToken?: string): Promise<{
     configured: boolean;
     provider: string;
     callerId?: string;
     message?: string;
   }> {
     try {
-      const res = await fetch('/api/telephony/status');
+      const res = await fetch('/api/telephony/status', {
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
+      });
       return await res.json();
     } catch (err: any) {
       return {
@@ -235,6 +237,12 @@ class TelephonyVoiceManager {
 
   public getIsMuted(): boolean {
     return this.isMuted;
+  }
+
+  public sendDigits(digits: string): void {
+    if (this.activeCall && /^[0-9*#]+$/.test(digits)) {
+      this.activeCall.sendDigits(digits);
+    }
   }
 
   // Hang up the active call
