@@ -368,3 +368,121 @@ export interface SentimentAnalyticsData {
   };
 }
 
+// Business Intelligence Reports Types
+export interface BiKpis {
+  totalCalls: number;
+  completedCalls: number;
+  missedCalls: number;
+  transferredCalls: number;
+  rejectedCalls: number;
+  averageDurationSeconds: number;
+  averageDurationFormatted: string;
+  totalDurationSeconds: number;
+  uniqueCustomers: number;
+  positiveSentimentPct: number;
+  negativeSentimentPct: number;
+  neutralSentimentPct: number;
+  frustratedSentimentPct: number;
+  totalCallsRequiringAssistance: number;
+  totalActiveAgents: number;
+}
+
+export interface BiIssueCategory {
+  category: string;
+  count: number;
+  percentage: number;
+}
+
+export interface BiAgentPerformance {
+  agentId: string;
+  name: string;
+  email: string;
+  role: string;
+  status: string;
+  callsHandled: number;
+  completed: number;
+  transferred: number;
+  missed: number;
+  avgDurationSeconds: number;
+  avgDurationFormatted: string;
+  sentimentDistribution: {
+    positive: number;
+    neutral: number;
+    negative: number;
+    frustrated: number;
+  };
+}
+
+export interface BiHourlyVolume {
+  hour: number;
+  label: string;
+  total: number;
+  completed: number;
+  missed: number;
+  transferred: number;
+}
+
+export interface BiDailyTrend {
+  date: string;
+  label: string;
+  totalCalls: number;
+  completed: number;
+  missed: number;
+  transferred: number;
+  avgDurationSeconds: number;
+}
+
+export interface BiComparison {
+  current: number;
+  previous: number;
+  changePct: number;
+  isPositiveChange: boolean;
+  comparisonAvailable: boolean;
+}
+
+export interface BiOverviewData {
+  period: {
+    startDate: string;
+    endDate: string;
+    reportType: 'daily' | 'monthly' | 'custom';
+    daysCovered: number;
+  };
+  kpis: BiKpis;
+  sentiment: {
+    positiveCount: number;
+    neutralCount: number;
+    negativeCount: number;
+    frustratedCount: number;
+    totalAnalyzed: number;
+    callsRequiringAssistance: number;
+    topDissatisfactionReasons: Array<{ reason: string; count: number }>;
+  };
+  issues: BiIssueCategory[];
+  agentPerformance: BiAgentPerformance[];
+  hourlyVolume: BiHourlyVolume[];
+  dailyTrends: BiDailyTrend[];
+  peakCallHours: string;
+  comparisons?: {
+    totalCalls: BiComparison;
+    completedCalls: BiComparison;
+    averageDuration: BiComparison;
+    uniqueCustomers: BiComparison;
+    frustratedPct: BiComparison;
+  };
+  executiveSummary: string[];
+}
+
+export interface BusinessReportRecord {
+  id: string;
+  title: string;
+  reportType: 'daily' | 'monthly' | 'custom';
+  startDate: string;
+  endDate: string;
+  generatedAt: string;
+  generatedBy: string;
+  status: string;
+  hasPdf: boolean;
+  hasCsv: boolean;
+}
+
+

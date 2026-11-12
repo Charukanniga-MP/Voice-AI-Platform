@@ -22,6 +22,8 @@ client/.env.*
 
 # Local SQLite Databases & Media Uploads
 uploads/
+reports/
+server/reports/
 *.db
 *.db-journal
 

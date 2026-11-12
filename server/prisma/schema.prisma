@@ -290,3 +290,23 @@ model SentimentAnalysis {
   @@index([sentiment, detectedAt])
   @@index([customerId])
 }
+
+model BusinessReport {
+  id               String   @id @default(cuid())
+  reportType       String   // "daily" | "monthly" | "custom"
+  title            String
+  startDate        DateTime
+  endDate          DateTime
+  generatedAt      DateTime @default(now())
+  generatedBy      String   @default("system") // "system" | "admin"
+  status           String   @default("completed") // "completed" | "processing" | "failed"
+  reportData       String   // JSON string containing all calculated KPIs, charts data, and tables
+  executiveSummary String?
+  pdfPath          String?
+  csvPath          String?
+  createdAt        DateTime @default(now())
+
+  @@index([reportType, startDate, endDate])
+  @@index([generatedAt])
+}
+

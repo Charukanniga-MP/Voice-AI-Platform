@@ -19,12 +19,13 @@ import {
   BookOpen, Plus, Trash2, Edit3, Upload, CheckCircle2, MessageSquare,
   AlertCircle, ShieldAlert, Eye, Headphones, Radio, RefreshCw, Globe,
   Activity, Wifi, WifiOff, Signal, Zap, AlertTriangle, XCircle, BarChart3, Sliders, ShieldCheck,
-  Sparkles, ListTodo, Download, Lightbulb, HeartPulse
+  Sparkles, ListTodo, Download, Lightbulb, HeartPulse, TrendingUp
 } from 'lucide-react';
 import { SentimentDashboardSection } from '../components/SentimentDashboardSection.js';
 import { SentimentBadge } from '../components/SentimentBadge.js';
 import { PostCallSentimentSummary } from '../components/PostCallSentimentSummary.js';
 import { LiveSentimentCard } from '../components/LiveSentimentCard.js';
+import { BiReportsSection } from '../components/BiReportsSection.js';
 
 // Pure deduplication utility function
 function deduplicate<T>(items: T[], keyFn: (item: T) => string): T[] {
@@ -44,7 +45,7 @@ export const AdminDashboard: React.FC = () => {
   const { user, token } = useAuth();
 
   // Active navigation section
-  const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'agents' | 'calls' | 'intelligence' | 'tasks' | 'transfers' | 'knowledge' | 'tickets' | 'quality' | 'sentiment'>('overview');
+  const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'agents' | 'calls' | 'intelligence' | 'tasks' | 'transfers' | 'knowledge' | 'tickets' | 'quality' | 'sentiment' | 'bi'>('overview');
 
   // Stats state
   const [stats, setStats] = useState<CallStats>({
@@ -1227,6 +1228,17 @@ export const AdminDashboard: React.FC = () => {
             >
               <HeartPulse className="w-4 h-4 text-rose-400" />
               Sentiment Analysis
+            </button>
+
+            <button
+              onClick={() => setActiveSection('bi')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'bi'
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                }`}
+            >
+              <TrendingUp className="w-4 h-4 text-blue-400" />
+              Business Intelligence
             </button>
           </nav>
         </div>
@@ -2416,6 +2428,9 @@ export const AdminDashboard: React.FC = () => {
 
         {/* SECTION: AI SENTIMENT ANALYSIS DASHBOARD */}
         {activeSection === 'sentiment' && <SentimentDashboardSection />}
+
+        {/* SECTION: AUTOMATED BUSINESS INTELLIGENCE REPORTS & ANALYTICS */}
+        {activeSection === 'bi' && <BiReportsSection token={token} />}
 
         {/* SECTION F: KNOWLEDGE BASE MANAGEMENT */}
         {activeSection === 'knowledge' && (
