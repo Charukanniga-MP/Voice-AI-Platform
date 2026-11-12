@@ -83,7 +83,7 @@ export const Navbar: React.FC = () => {
           <button
             type="button"
             onClick={handleOpenResetPassword}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors cursor-pointer border border-indigo-200"
+            className="min-h-[38px] flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-xl transition-all active:scale-95 cursor-pointer border border-indigo-200 shadow-2xs"
             title="Reset or Change Password"
           >
             <KeyRound className="w-4 h-4 text-indigo-600" />
@@ -92,7 +92,7 @@ export const Navbar: React.FC = () => {
 
           <button
             onClick={logout}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-red-200"
+            className="min-h-[38px] flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all active:scale-95 cursor-pointer border border-transparent hover:border-red-200"
             title={t('nav.sign_out')}
           >
             <LogOut className="w-4 h-4" />

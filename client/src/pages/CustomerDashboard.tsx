@@ -44,6 +44,10 @@ export const CustomerDashboard: React.FC = () => {
   const [transcripts, setTranscripts] = useState<CallTranscript[]>([]);
   const [interimText, setInterimText] = useState('');
   const [aiIsSpeaking, setAiIsSpeaking] = useState(false);
+  const aiIsSpeakingRef = useRef(false);
+  const [wasInterrupted, setWasInterrupted] = useState(false);
+  const currentAiSpeechTextRef = useRef('');
+  const [textInput, setTextInput] = useState('');
 
   // Agent/Admin details
   const [activePartner, setActivePartner] = useState<{
@@ -76,6 +80,7 @@ export const CustomerDashboard: React.FC = () => {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [showAudioDeviceModal, setShowAudioDeviceModal] = useState(false);
 
+
   // Live Sentiment Telemetry State
   const [liveSentiment, setLiveSentiment] = useState<{
     sentiment: SentimentType;
@@ -84,6 +89,7 @@ export const CustomerDashboard: React.FC = () => {
     triggerText: string;
     requiresHumanAssistance: boolean;
   } | null>(null);
+
 
   // Auto-scroll transcript
   const transcriptEndRef = useRef<HTMLDivElement>(null);
@@ -166,6 +172,8 @@ export const CustomerDashboard: React.FC = () => {
       }
     }
   };
+
+
   // Duration timer: runs continuously without artificial limit
   useEffect(() => {
     let timer: any;
@@ -196,6 +204,31 @@ export const CustomerDashboard: React.FC = () => {
     fetchHistory();
   }, [token]);
 
+  // Send typed query to active AI call
+  const handleSendTextQuery = (qText: string) => {
+    const clean = qText.trim();
+    if (!clean || !callId) return;
+    setTextInput('');
+    setTranscripts(prev => [
+      ...prev,
+      {
+        id: 'user_' + Date.now(),
+        sender: 'customer',
+        senderName: user?.name || 'You',
+        text: clean,
+        language: selectedLanguage,
+        timestamp: new Date().toISOString()
+      }
+    ]);
+    const socket = getSocket();
+    socket.emit('call:query', {
+      callId,
+      query: clean,
+      customerId: user?.id,
+      duration,
+      language: selectedLanguage
+    });
+  };
   // Socket event listeners
   useEffect(() => {
     const socket = getSocket();
@@ -284,8 +317,13 @@ export const CustomerDashboard: React.FC = () => {
       ]);
 
       setAiIsSpeaking(true);
+      aiIsSpeakingRef.current = true;
+      currentAiSpeechTextRef.current = data.greeting;
+
       voiceService.speak(data.greeting, () => {
         setAiIsSpeaking(false);
+        aiIsSpeakingRef.current = false;
+        currentAiSpeechTextRef.current = '';
         startSpeechRecognition(data.callId, false);
       }, data.language);
     });
@@ -322,6 +360,8 @@ export const CustomerDashboard: React.FC = () => {
       // Play synthesized natural speech in customer's preferred language
       voiceService.speak(data.answer, () => {
         setAiIsSpeaking(false);
+        aiIsSpeakingRef.current = false;
+        currentAiSpeechTextRef.current = '';
         if (!data.isTransferring) {
           startSpeechRecognition(callId || '', false);
         }
@@ -440,18 +480,33 @@ export const CustomerDashboard: React.FC = () => {
     };
   }, [callId, callStatus, user, selectedLanguage]);
 
-  // Speech recognition helper with automatic interruption handling
+  // Speech recognition helper with automatic interruption and Echo Guard
   const startSpeechRecognition = (activeCallId: string, isHumanCall: boolean = false) => {
     voiceService.setLanguage(selectedLanguage);
     voiceService.startListening((text, isFinal) => {
-      // Interruption: If customer starts speaking, cut off AI speech and indicator
-      setAiIsSpeaking(false);
+      const trimmed = text.trim();
+
+      // --- ECHO GUARD & NATURAL VOICE INTERRUPTION (BARGE-IN) ---
+      if (!isHumanCall && trimmed.length > 0 && (aiIsSpeakingRef.current || (typeof window !== 'undefined' && window.speechSynthesis?.speaking))) {
+        const isAiEcho = currentAiSpeechTextRef.current &&
+          currentAiSpeechTextRef.current.toLowerCase().trim().startsWith(trimmed.toLowerCase()) &&
+          trimmed.length < 6;
+
+        if (!isAiEcho) {
+          voiceService.cancelSpeech();
+          setAiIsSpeaking(false);
+          aiIsSpeakingRef.current = false;
+          currentAiSpeechTextRef.current = '';
+          setWasInterrupted(true);
+          setTimeout(() => setWasInterrupted(false), 3000);
+        }
+      }
 
       if (!isFinal) {
         setInterimText(text);
       } else {
         setInterimText('');
-        if (!text.trim()) return;
+        if (!trimmed) return;
 
         setTranscripts(prev => {
           const isDup = prev.some(t =>
@@ -622,6 +677,9 @@ export const CustomerDashboard: React.FC = () => {
     setCallStatus('idle');
     setCallId(null);
     setAiIsSpeaking(false);
+    aiIsSpeakingRef.current = false;
+    currentAiSpeechTextRef.current = '';
+    setWasInterrupted(false);
     setInterimText('');
     setIsCallHeld(false);
     setQueueInfo(null);
@@ -850,7 +908,7 @@ export const CustomerDashboard: React.FC = () => {
                   </div>
                   <button
                     onClick={handleStartAgentCall}
-                    className="w-full py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-md shadow-emerald-200 hover:shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2"
+                    className="w-full min-h-[48px] py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-sm shadow-md shadow-blue-500/20 hover:shadow-lg active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-2"
                   >
                     <PhoneCall className="w-4 h-4" />
                     {t('call.card_agent_btn')}
@@ -955,28 +1013,34 @@ export const CustomerDashboard: React.FC = () => {
               )}
 
               {/* In-Call Controls */}
-              <div className="flex flex-wrap items-center justify-center gap-4 pt-2">
-                {/* Mute Button */}
+              <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 pt-2">
+                {/* Mute Button with 48px touch target */}
                 <button
+                  type="button"
                   onClick={handleToggleMute}
-                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${isMuted ? 'bg-red-50 border-red-200 text-red-600' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
-                    }`}
+                  className={`min-h-[48px] min-w-[48px] px-4 py-3 rounded-2xl border font-semibold text-xs transition-all cursor-pointer flex items-center gap-2 active:scale-95 shadow-xs ${
+                    isMuted
+                      ? 'bg-red-50 border-red-300 text-red-700 hover:bg-red-100 ring-2 ring-red-500/20'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
+                  }`}
                   title={isMuted ? t('call.unmute') : t('call.mute')}
                 >
-                  {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                  {isMuted ? <MicOff className="w-5 h-5 text-red-600" /> : <Mic className="w-5 h-5 text-emerald-600" />}
+                  <span>{isMuted ? t('call.unmute') : t('call.mute')}</span>
                 </button>
 
-                {/* End Call Button */}
+                {/* End Call Button with 48px touch target */}
                 <button
+                  type="button"
                   onClick={handleEndCall}
-                  className="flex items-center gap-2 px-6 py-3.5 rounded-2xl bg-red-600 hover:bg-red-700 text-white font-semibold text-sm shadow-lg shadow-red-200 transition-all cursor-pointer"
+                  className="min-h-[48px] min-w-[140px] flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white font-bold text-sm shadow-lg shadow-red-500/25 active:scale-95 transition-all cursor-pointer border border-red-500/30"
                 >
                   <PhoneOff className="w-5 h-5" />
-                  {t('call.end_call')}
+                  <span>{t('call.end_call')}</span>
                 </button>
 
                 {/* Speaker Volume */}
-                <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl" title={t('call.speaker_volume')}>
+                <div className="flex items-center gap-2 px-3.5 py-2.5 bg-white border border-slate-200 rounded-2xl shadow-xs" title={t('call.speaker_volume')}>
                   {volume === 0 ? <VolumeX className="w-4 h-4 text-slate-400" /> : <Volume2 className="w-4 h-4 text-slate-600" />}
                   <input
                     type="range"
@@ -985,10 +1049,57 @@ export const CustomerDashboard: React.FC = () => {
                     step="0.05"
                     value={volume}
                     onChange={handleVolumeChange}
-                    className="w-20 accent-indigo-600 cursor-pointer"
+                    className="w-20 sm:w-24 accent-indigo-600 cursor-pointer"
+                    aria-label="Volume slider"
                   />
                 </div>
               </div>
+
+              {/* Suggested Questions for AI Call */}
+              {callStatus === 'active_ai' && (
+                <div className="pt-4 space-y-3 w-full">
+                  <div className="flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-500">
+                    <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Suggested Questions (Click to Ask):</span>
+                  </div>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {SUGGESTED_QUESTIONS.map((q) => (
+                      <button
+                        key={q}
+                        onClick={() => handleSendTextQuery(q)}
+                        className="px-3 py-1.5 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-xl text-xs text-slate-700 hover:text-indigo-700 transition-all cursor-pointer font-medium"
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Text Input Option for Quiet Environments */}
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      handleSendTextQuery(textInput);
+                    }}
+                    className="flex gap-2 max-w-md mx-auto pt-2"
+                  >
+                    <input
+                      type="text"
+                      placeholder="Type a question to the AI..."
+                      value={textInput}
+                      onChange={(e) => setTextInput(e.target.value)}
+                      className="flex-1 px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!textInput.trim()}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Send</span>
+                    </button>
+                  </form>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1268,6 +1379,7 @@ export const CustomerDashboard: React.FC = () => {
                             {call.status}
                           </span>
                         )}
+
                       </td>
                       <td className="py-3 px-4">
                         <SentimentBadge
@@ -1275,6 +1387,7 @@ export const CustomerDashboard: React.FC = () => {
                           score={call.sentimentScore}
                           size="xs"
                         />
+
                       </td>
                       <td className="py-3 px-4 text-slate-700">
                         {call.transferred ? (
@@ -1341,6 +1454,7 @@ export const CustomerDashboard: React.FC = () => {
               </div>
             </div>
 
+
             {/* Post-Call Sentiment Evaluation */}
             <PostCallSentimentSummary
               overallSentiment={selectedHistoryCall.overallSentiment}
@@ -1350,6 +1464,7 @@ export const CustomerDashboard: React.FC = () => {
               requiresAssistance={selectedHistoryCall.requiresAssistance}
               assistanceReason={selectedHistoryCall.assistanceReason}
             />
+
 
             {/* AI Call Intelligence Summary if generated */}
             {selectedHistoryCall.intelligence && (

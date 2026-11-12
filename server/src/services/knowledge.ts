@@ -31,6 +31,8 @@ const STOP_WORDS = new Set([
   'know', 'please', 'like', 'want'
 ]);
 
+const STEM = (w: string) => w.toLowerCase().replace(/(ies|es|s|ing|ed)$/, '');
+
 function normalizeToken(token: string): string {
   let t = token.toLowerCase().trim();
   if (t.endsWith('ing') && t.length > 5) t = t.slice(0, -3);
@@ -39,6 +41,23 @@ function normalizeToken(token: string): string {
   else if (t.endsWith('s') && t.length > 3) t = t.slice(0, -1);
   return t;
 }
+
+const SYNONYMS: Record<string, string[]> = {
+  service: ['product', 'capabilit', 'offer', 'solution'],
+  services: ['product', 'capabilit', 'offer', 'solution'],
+  product: ['service', 'capabilit', 'offer', 'solution'],
+  products: ['service', 'capabilit', 'offer', 'solution'],
+  cost: ['price', 'pricing', 'plan', 'rate', 'fee'],
+  price: ['cost', 'pricing', 'plan', 'rate', 'fee'],
+  pricing: ['cost', 'price', 'plan', 'rate', 'fee'],
+  hour: ['schedule', 'time', 'availability', 'support'],
+  hours: ['schedule', 'time', 'availability', 'support'],
+  support: ['help', 'assist', 'contact', 'availability'],
+  help: ['support', 'assist', 'contact'],
+  security: ['safety', 'privacy', 'complianc'],
+  cancel: ['refund', 'cancellation'],
+  refund: ['cancel', 'cancellation']
+};
 
 class KnowledgeService {
   private openai: OpenAI | null = null;
@@ -49,60 +68,80 @@ class KnowledgeService {
     }
   }
 
-  // Tokenize and clean text for lexical relevance
+  // Tokenize and clean text for lexical relevance (Full Unicode support for all languages)
   private tokenize(text: string): string[] {
     return text
       .toLowerCase()
-      .replace(/[^\w\s]/g, ' ')
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
       .split(/\s+/)
       .map(w => normalizeToken(w))
       .filter(w => w.length > 1);
   }
 
-  // Filter meaningful content tokens (ignoring conversational filler words)
-  private extractContentTokens(text: string): string[] {
-    return this.tokenize(text).filter(w => !STOP_WORDS.has(w));
+  // Significant tokens excluding common grammatical stopwords
+  private getSignificantTokens(tokens: string[]): string[] {
+    const filtered = tokens.filter(t => !STOP_WORDS.has(t) && t.length > 1);
+    return filtered.length > 0 ? filtered : tokens;
+  }
+
+  // Helper to match token or its stem or domain synonyms
+  private matchToken(t: string, targets: string[]): boolean {
+    if (targets.includes(t)) return true;
+    const stemmedT = STEM(t);
+    if (targets.some(target => STEM(target) === stemmedT)) return true;
+    const syns = SYNONYMS[t] || SYNONYMS[stemmedT] || [];
+    return targets.some(target => {
+      const s = STEM(target);
+      return syns.some(syn => s === syn || target.includes(syn));
+    });
   }
 
   // Calculate similarity between customer query and a KB entry
   private calculateScore(query: string, entry: any): number {
-    const rawQueryTokens = this.tokenize(query);
-    if (rawQueryTokens.length === 0) return 0;
+    const rawTokens = this.tokenize(query);
+    if (rawTokens.length === 0) return 0;
 
-    const contentQueryTokens = this.extractContentTokens(query);
-    const tokensToMatch = contentQueryTokens.length > 0 ? contentQueryTokens : rawQueryTokens;
-
+    const significantTokens = this.getSignificantTokens(rawTokens);
     const titleTokens = this.tokenize(entry.title || '');
     const questionTokens = this.tokenize(entry.question || '');
     const contentTokens = this.tokenize(entry.content || '');
     const keywordTokens = this.tokenize(entry.keywords || '');
 
+    // Strict zero-hallucination requirement: At least one significant keyword MUST match title, question, or keywords
+    const hasCoreMatch = significantTokens.some(
+      t => this.matchToken(t, titleTokens) || this.matchToken(t, questionTokens) || this.matchToken(t, keywordTokens)
+    );
+    if (!hasCoreMatch) {
+      return 0;
+    }
+
     let score = 0;
-    const cleanQuery = query.toLowerCase().replace(/[^\w\s]/g, ' ').trim();
+    const cleanQuery = query.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').trim();
 
     // Check direct substring matches
     if (entry.question) {
-      const cleanQ = entry.question.toLowerCase().replace(/[^\w\s]/g, ' ').trim();
+      const cleanQ = entry.question.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').trim();
       if (cleanQuery.includes(cleanQ) || cleanQ.includes(cleanQuery)) {
         score += 0.8;
       }
     }
     if (entry.title) {
-      const cleanT = entry.title.toLowerCase().replace(/[^\w\s]/g, ' ').trim();
+      const cleanT = entry.title.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').trim();
       if (cleanQuery.includes(cleanT) || cleanT.includes(cleanQuery)) {
         score += 0.6;
       }
     }
 
+    // Significant tokens match weights heavily
     let qMatches = 0;
-    for (const token of tokensToMatch) {
-      if (questionTokens.includes(token)) qMatches += 2.5;
-      else if (titleTokens.includes(token)) qMatches += 2.0;
-      else if (keywordTokens.includes(token)) qMatches += 2.0;
-      else if (contentTokens.includes(token)) qMatches += 1.0;
+    for (const token of significantTokens) {
+      if (this.matchToken(token, questionTokens)) qMatches += 2.5;
+      else if (this.matchToken(token, titleTokens)) qMatches += 2.0;
+      else if (this.matchToken(token, keywordTokens)) qMatches += 2.0;
+      else if (this.matchToken(token, contentTokens)) qMatches += 1.0;
     }
 
-    const maxPossible = tokensToMatch.length * 2.5;
+    const maxPossible = significantTokens.length * 2.5;
     const matchRatio = Math.min(1.0, qMatches / Math.max(1, maxPossible));
     score += matchRatio;
 

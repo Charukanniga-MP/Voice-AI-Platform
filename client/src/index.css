@@ -5,13 +5,152 @@
     --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   }
 
+  html {
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+  }
+
   body {
     font-family: var(--font-sans);
     background-color: #f8fafc;
     color: #0f172a;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
   }
+
+  /* Responsive touch targets meeting WCAG 2.1 AAA */
+  button, a, input, select, textarea {
+    touch-action: manipulation;
+  }
+}
+
+/* -------------------------------------------------------------
+ * Premium Button System Design Tokens
+ * ------------------------------------------------------------- */
+.kaira-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0.625rem 1.25rem;
+  border-radius: 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+  color: #ffffff;
+  background-color: #2563eb;
+  background-image: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  box-shadow: 0 4px 14px 0 rgba(37, 99, 235, 0.25);
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+.kaira-btn-primary:hover {
+  background-image: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  box-shadow: 0 6px 20px 0 rgba(37, 99, 235, 0.35);
+  transform: translateY(-1px);
+}
+.kaira-btn-primary:active {
+  transform: scale(0.98);
+  box-shadow: 0 2px 8px 0 rgba(37, 99, 235, 0.2);
+}
+.kaira-btn-primary:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+.kaira-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.kaira-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0.625rem 1.25rem;
+  border-radius: 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #1e293b;
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+}
+.kaira-btn-secondary:hover {
+  background-color: #f8fafc;
+  border-color: #cbd5e1;
+  color: #0f172a;
+  transform: translateY(-1px);
+}
+.kaira-btn-secondary:active {
+  transform: scale(0.98);
+  background-color: #f1f5f9;
+}
+.kaira-btn-secondary:focus-visible {
+  outline: 2px solid #64748b;
+  outline-offset: 2px;
+}
+
+.kaira-btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0.625rem 1.25rem;
+  border-radius: 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #ffffff;
+  background-color: #dc2626;
+  background-image: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  box-shadow: 0 4px 14px 0 rgba(220, 38, 38, 0.25);
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+}
+.kaira-btn-danger:hover {
+  background-image: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+  box-shadow: 0 6px 20px 0 rgba(220, 38, 38, 0.35);
+  transform: translateY(-1px);
+}
+.kaira-btn-danger:active {
+  transform: scale(0.98);
+}
+
+/* Call Control Action Button */
+.kaira-call-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  min-height: 48px;
+  border-radius: 1rem;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+}
+.kaira-call-btn:active {
+  transform: scale(0.94);
+}
+
+/* Card Surface Utilities */
+.kaira-card {
+  background: #ffffff;
+  border-radius: 1.25rem;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.kaira-card-hover:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01);
 }
 
 /* Custom scrollbar for transcripts and lists */

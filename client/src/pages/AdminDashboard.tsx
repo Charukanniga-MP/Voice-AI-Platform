@@ -19,7 +19,7 @@ import {
   BookOpen, Plus, Trash2, Edit3, Upload, CheckCircle2, MessageSquare,
   AlertCircle, ShieldAlert, Eye, Headphones, Radio, RefreshCw, Globe,
   Activity, Wifi, WifiOff, Signal, Zap, AlertTriangle, XCircle, BarChart3, Sliders, ShieldCheck,
-  Sparkles, ListTodo, Download, Lightbulb, HeartPulse, TrendingUp
+  Sparkles, ListTodo, Download, Lightbulb, HeartPulse, TrendingUp, Menu, X
 } from 'lucide-react';
 import { SentimentDashboardSection } from '../components/SentimentDashboardSection.js';
 import { SentimentBadge } from '../components/SentimentBadge.js';
@@ -46,6 +46,7 @@ export const AdminDashboard: React.FC = () => {
 
   // Active navigation section
   const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'agents' | 'calls' | 'intelligence' | 'tasks' | 'transfers' | 'knowledge' | 'tickets' | 'quality' | 'sentiment' | 'bi'>('overview');
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   // Stats state
   const [stats, setStats] = useState<CallStats>({
@@ -217,6 +218,13 @@ export const AdminDashboard: React.FC = () => {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadTitle, setUploadTitle] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+
+
+  // Knowledge Base Query Playground State
+  const [testQuery, setTestQuery] = useState('');
+  const [testingQuery, setTestingQuery] = useState(false);
+  const [testResult, setTestResult] = useState<any | null>(null);
+  const [seedingDefaults, setSeedingDefaults] = useState(false);
 
   // Section G: Call Quality Monitoring State
   const [qualityStats, setQualityStats] = useState<CallQualityStats | null>(null);
@@ -413,6 +421,84 @@ export const AdminDashboard: React.FC = () => {
     } finally {
       setLoadingKb(false);
     }
+  };
+
+
+  // Test Knowledge Query in Playground
+  const handleTestQuery = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!testQuery.trim() || !token) return;
+    setTestingQuery(true);
+    setTestResult(null);
+    try {
+      const res = await fetch('/api/knowledge/test-query', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ query: testQuery.trim() })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setTestResult(data);
+      } else {
+        alert(data.error || 'Failed to test query.');
+      }
+    } catch (err: any) {
+      alert('Error testing query: ' + err.message);
+    } finally {
+      setTestingQuery(false);
+    }
+  };
+
+  // Restore Default FAQs
+  const handleSeedDefaultFaqs = async () => {
+    if (!window.confirm('Restore / update the official 28 KAIRA Knowledge Base entries? This ensures full voice AI coverage for customers.')) return;
+    if (!token) return;
+    setSeedingDefaults(true);
+    try {
+      const res = await fetch('/api/knowledge/seed-defaults', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        fetchKnowledge();
+        alert(data.message || 'Seeded successfully.');
+      } else {
+        alert(data.error || 'Failed to seed defaults.');
+      }
+    } catch (err: any) {
+      alert('Error: ' + err.message);
+    } finally {
+      setSeedingDefaults(false);
+    }
+  };
+
+  // Export Call Transcript as .txt
+  const handleDownloadAdminTranscript = (transcriptList: CallTranscript[], title: string = 'KAIRA-Admin-Call') => {
+    if (!transcriptList || transcriptList.length === 0) return;
+    const header = `=================================================\nKAIRA Voice Platform - Official Call Record\nExported: ${new Date().toLocaleString()}\n=================================================\n\n`;
+    const formatted = transcriptList
+      .map(
+        (t) =>
+          `[${new Date(t.timestamp).toLocaleTimeString()}] ${t.senderName || t.sender.toUpperCase()}: ${t.text}${
+            t.translation ? `\n   [Translation]: ${t.translation}` : ''
+          }`
+      )
+      .join('\n\n');
+
+    const fullContent = header + formatted;
+    const blob = new Blob([fullContent], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}_${Date.now()}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   // Fetch Call Quality Stats & Telemetry
@@ -1078,23 +1164,63 @@ export const AdminDashboard: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
       {/* 1. SIDEBAR NAVIGATION */}
-      <aside className="w-full md:w-64 bg-slate-900 text-slate-300 flex-shrink-0 flex flex-col justify-between p-4 md:min-h-screen border-r border-slate-800">
-        <div className="space-y-6">
-          <div className="px-3 py-2">
+      <aside className="w-full md:w-64 bg-slate-900 text-slate-300 flex-shrink-0 flex flex-col justify-between p-3 sm:p-4 md:min-h-screen border-r border-slate-800">
+        <div className="space-y-3 md:space-y-6">
+          <div className="px-2 py-1 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <img
                 src="/kaira-logo.png"
                 alt="KAIRA Technologies"
-                className="h-10 w-10 object-contain bg-white rounded-xl p-1 shadow-md shadow-slate-950/40"
+                className="h-9 w-9 md:h-10 md:w-10 object-contain bg-white rounded-xl p-1 shadow-md shadow-slate-950/40"
               />
               <div>
-                <span className="text-base font-bold text-white tracking-tight">Admin Console</span>
+                <span className="text-sm md:text-base font-bold text-white tracking-tight">Admin Console</span>
                 <p className="text-[10px] text-purple-400 font-semibold uppercase tracking-wider">Full Authorization</p>
               </div>
             </div>
+
+            {/* Mobile menu toggle (min 44x44 touch target) */}
+            <button
+              type="button"
+              onClick={() => setMobileNavOpen(!mobileNavOpen)}
+              className="md:hidden flex items-center justify-center min-w-[44px] min-h-[44px] rounded-xl bg-slate-800 text-slate-300 hover:text-white"
+              aria-label="Toggle Navigation"
+            >
+              {mobileNavOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            </button>
           </div>
 
-          <nav className="space-y-1">
+          {/* Quick horizontal scrollable navigation pills for mobile */}
+          <div className="md:hidden flex overflow-x-auto gap-1.5 pb-2 pt-1 border-t border-slate-800/80 scrollbar-none">
+            {[
+              { id: 'overview', label: 'Overview' },
+              { id: 'customers', label: 'Customers' },
+              { id: 'agents', label: 'Agents' },
+              { id: 'calls', label: 'Calls' },
+              { id: 'transfers', label: 'Transfers' },
+              { id: 'knowledge', label: 'KB' },
+              { id: 'quality', label: 'Quality' },
+              { id: 'sentiment', label: 'Sentiment' },
+              { id: 'tickets', label: 'Tickets' },
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => {
+                  setActiveSection(tab.id as any);
+                  setMobileNavOpen(false);
+                }}
+                className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 transition-colors ${
+                  activeSection === tab.id
+                    ? 'bg-purple-600 text-white font-bold'
+                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          <nav className={`space-y-1 ${mobileNavOpen ? 'block' : 'hidden md:block'}`}>
             <button
               onClick={() => setActiveSection('overview')}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'overview'
@@ -2319,7 +2445,19 @@ export const AdminDashboard: React.FC = () => {
 
                 {/* Transcripts in Active Transfer */}
                 <div className="p-6">
-                  <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">Live Transcript</h3>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Live Transcript</h3>
+                    {transcripts.length > 0 && (
+                      <button
+                        onClick={() => handleDownloadAdminTranscript(transcripts, `KAIRA-Transfer-${activeTransferredCall?.callId}`)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg text-[11px] font-semibold text-slate-600 cursor-pointer shadow-2xs transition-colors"
+                        title="Download transcript as text"
+                      >
+                        <Download className="w-3 h-3 text-slate-500" />
+                        Export .txt
+                      </button>
+                    )}
+                  </div>
                   <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 h-64 overflow-y-auto space-y-3">
                     {transcripts.map((t) => (
                       <div key={t.id} className="text-xs">
@@ -2445,6 +2583,16 @@ export const AdminDashboard: React.FC = () => {
 
               <div className="flex items-center gap-3">
                 <button
+                  onClick={handleSeedDefaultFaqs}
+                  disabled={seedingDefaults}
+                  className="inline-flex items-center gap-2 px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-semibold rounded-xl shadow-xs cursor-pointer transition-colors disabled:opacity-50"
+                  title="Populate/update all 28 default official FAQs"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${seedingDefaults ? 'animate-spin' : ''}`} />
+                  {seedingDefaults ? 'Restoring...' : 'Restore Default FAQs'}
+                </button>
+
+                <button
                   onClick={() => {
                     setEditingKbEntry(null);
                     setKbTitle('');
@@ -2461,6 +2609,68 @@ export const AdminDashboard: React.FC = () => {
                   Add Knowledge Entry
                 </button>
               </div>
+            </div>
+
+            {/* Knowledge Base Query Playground */}
+            <div className="bg-gradient-to-br from-indigo-50/70 to-purple-50/70 rounded-3xl border border-indigo-200/80 p-6 shadow-xs space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-indigo-600" />
+                  <h3 className="font-bold text-slate-900 text-sm">AI Voice Agent Grounding Playground</h3>
+                </div>
+                <span className="text-[11px] font-medium text-indigo-700 bg-indigo-100/80 px-2.5 py-0.5 rounded-full">
+                  Real-time Test Console
+                </span>
+              </div>
+              <p className="text-xs text-slate-600">
+                Test any question to preview what the voice agent would speak and verify if the answer is grounded or would escalate to Admin.
+              </p>
+
+              <form onSubmit={handleTestQuery} className="flex gap-2">
+                <input
+                  type="text"
+                  value={testQuery}
+                  onChange={(e) => setTestQuery(e.target.value)}
+                  placeholder="Ask a customer question (e.g. 'What are your pricing plans?', 'Where is your office?')..."
+                  className="flex-1 px-4 py-2.5 text-xs bg-white border border-indigo-200 rounded-xl text-slate-900 focus:outline-indigo-500 shadow-2xs"
+                />
+                <button
+                  type="submit"
+                  disabled={testingQuery || !testQuery.trim()}
+                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-xs rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5 transition-colors"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  {testingQuery ? 'Testing...' : 'Test Question'}
+                </button>
+              </form>
+
+              {testResult && (
+                <div className="p-4 bg-white rounded-2xl border border-indigo-100 space-y-2.5 shadow-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700">Test Query Result:</span>
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${testResult.isGrounded ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                        {testResult.isGrounded ? 'Grounded & Verified' : 'Escalates to Admin'}
+                      </span>
+                      <span className="text-[11px] text-slate-500 font-mono">
+                        Confidence: {(testResult.confidence * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  </div>
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-800 leading-relaxed">
+                    <span className="font-semibold text-indigo-700 block mb-1">Spoken Voice Response:</span>
+                    {testResult.answer}
+                  </div>
+                  {testResult.sources && testResult.sources.length > 0 && (
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                      <span className="font-medium">Matched Source:</span>
+                      <span className="bg-purple-50 text-purple-700 px-2 py-0.5 rounded-md font-semibold">
+                        {testResult.sources[0]?.title}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Document Upload Card */}
@@ -3809,6 +4019,7 @@ export const AdminDashboard: React.FC = () => {
               )}
             </div>
 
+
             {/* Call Sentiment Summary */}
             <PostCallSentimentSummary
               overallSentiment={selectedCallDetails.overallSentiment}
@@ -3882,12 +4093,23 @@ export const AdminDashboard: React.FC = () => {
               )}
             </div>
 
-            <button
-              onClick={() => setSelectedCallDetails(null)}
-              className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl cursor-pointer"
-            >
-              Close
-            </button>
+            <div className="flex items-center gap-2">
+              {selectedCallDetails.transcripts && selectedCallDetails.transcripts.length > 0 && (
+                <button
+                  onClick={() => handleDownloadAdminTranscript(selectedCallDetails.transcripts as any, `KAIRA-Call-${selectedCallDetails.callId}`)}
+                  className="w-1/2 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download .txt
+                </button>
+              )}
+              <button
+                onClick={() => setSelectedCallDetails(null)}
+                className={`${selectedCallDetails.transcripts && selectedCallDetails.transcripts.length > 0 ? 'w-1/2' : 'w-full'} py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl cursor-pointer`}
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

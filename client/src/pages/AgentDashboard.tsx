@@ -111,6 +111,7 @@ export const AgentDashboard: React.FC = () => {
   const [callError, setCallError] = useState<string | null>(null);
   const [showAudioDeviceModal, setShowAudioDeviceModal] = useState(false);
 
+
   // Sentiment Analysis State
   const [liveSentiment, setLiveSentiment] = useState<{
     sentiment: SentimentType;
@@ -128,6 +129,7 @@ export const AgentDashboard: React.FC = () => {
     triggerText: string;
     priority: string;
   } | null>(null);
+
 
   // Embedded Knowledge Base Copilot
   const [copilotSearch, setCopilotSearch] = useState('');
@@ -325,6 +327,7 @@ export const AgentDashboard: React.FC = () => {
       }
     });
 
+
     // 7. Live Customer Sentiment Update
     const handleSentimentUpdate = (data: any) => {
       setLiveSentiment(data);
@@ -338,6 +341,7 @@ export const AgentDashboard: React.FC = () => {
     socket.on('sentiment:assistance_alert', handleAssistanceAlert);
 
     // 9. Automatic call reconnection updates
+
     socket.on('call:reconnecting', (data: { callId: string; attempt: number; maxAttempts: number }) => {
       setLogs(prev => [
         ...prev,
@@ -974,7 +978,7 @@ export const AgentDashboard: React.FC = () => {
             <div className="grid grid-cols-2 gap-3 pt-2">
               <button
                 onClick={handleRejectIncomingCall}
-                className="py-3.5 px-4 rounded-2xl bg-slate-100 hover:bg-red-50 hover:text-red-600 hover:border-red-200 border border-slate-200 text-slate-700 font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-2"
+                className="min-h-[48px] py-3.5 px-4 rounded-2xl bg-slate-100 hover:bg-red-50 hover:text-red-600 hover:border-red-300 border border-slate-200 text-slate-700 font-bold text-xs active:scale-[0.97] transition-all cursor-pointer flex items-center justify-center gap-2"
               >
                 <PhoneOff className="w-4 h-4 text-red-500" />
                 Reject
@@ -982,7 +986,7 @@ export const AgentDashboard: React.FC = () => {
 
               <button
                 onClick={handleAcceptIncomingCall}
-                className="py-3.5 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-lg shadow-emerald-200 transition-all cursor-pointer flex items-center justify-center gap-2 hover:scale-[1.02]"
+                className="min-h-[48px] py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white font-black text-xs shadow-lg shadow-emerald-500/25 active:scale-[0.97] transition-all cursor-pointer flex items-center justify-center gap-2"
               >
                 <PhoneCall className="w-4 h-4" />
                 Accept Call
