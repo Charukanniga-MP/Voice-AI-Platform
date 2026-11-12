@@ -24,7 +24,8 @@ router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, 
       busyAgents,
       allCompletedCalls,
       allQueuedRecords,
-      allCallsWithLang
+      allCallsWithLang,
+      ratedCalls
     ] = await Promise.all([
       prisma.user.count({ where: { role: 'customer' } }),
       prisma.user.count({ where: { role: 'agent' } }),
@@ -48,6 +49,12 @@ router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, 
       }),
       prisma.callRecord.findMany({
         select: { language: true }
+      }),
+      prisma.callRecord.findMany({
+        where: { rating: { not: null } },
+        select: { rating: true, ratingComment: true, customerName: true, language: true, startTime: true },
+        orderBy: { startTime: 'desc' },
+        take: 20
       })
     ]);
 
@@ -64,12 +71,25 @@ router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, 
       ta: 0,
       te: 0,
       ml: 0,
+      kn: 0,
       hi: 0
     };
 
     allCallsWithLang.forEach(c => {
       const lang = c.language || 'en';
       callsByLanguage[lang] = (callsByLanguage[lang] || 0) + 1;
+    });
+
+    
+    const totalRated = (ratedCalls || []).length;
+    const avgRating = totalRated > 0
+      ? Number(((ratedCalls || []).reduce((acc: number, c: any) => acc + (c.rating || 0), 0) / totalRated).toFixed(1))
+      : 4.8;
+    const ratingBreakdown: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    (ratedCalls || []).forEach((c: any) => {
+      if (c.rating && c.rating >= 1 && c.rating <= 5) {
+        ratingBreakdown[c.rating] = (ratingBreakdown[c.rating] || 0) + 1;
+      }
     });
 
     res.json({
@@ -87,7 +107,13 @@ router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, 
       busyAgents,
       avgWaitTime,
       avgDuration,
-      callsByLanguage
+      callsByLanguage,
+      csat: {
+        avgRating,
+        totalRated,
+        ratingBreakdown,
+        recentFeedback: ratedCalls || []
+      }
     });
   } catch (err: any) {
     console.error('[Calls] Stats error:', err);

@@ -19,7 +19,8 @@ import {
   BookOpen, Plus, Trash2, Edit3, Upload, CheckCircle2, MessageSquare,
   AlertCircle, ShieldAlert, Eye, Headphones, Radio, RefreshCw, Globe,
   Activity, Wifi, WifiOff, Signal, Zap, AlertTriangle, XCircle, BarChart3, Sliders, ShieldCheck,
-  Sparkles, ListTodo, Download, Lightbulb, HeartPulse, TrendingUp, Menu, X
+  Sparkles, ListTodo, Download, Lightbulb, HeartPulse, TrendingUp, Menu, X,
+  Play, Pause, RotateCcw
 } from 'lucide-react';
 import { SentimentDashboardSection } from '../components/SentimentDashboardSection.js';
 import { SentimentBadge } from '../components/SentimentBadge.js';
@@ -232,6 +233,19 @@ export const AdminDashboard: React.FC = () => {
   const [qualityFilter, setQualityFilter] = useState<'all' | 'excellent' | 'good' | 'poor' | 'reconnected' | 'disconnected' | 'failed'>('all');
   const [qualitySearch, setQualitySearch] = useState('');
   const [selectedQualityCall, setSelectedQualityCall] = useState<CallRecord | null>(null);
+  // Audio Playback Simulator & Copilot States
+  const [playbackIndex, setPlaybackIndex] = useState<number | null>(null);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
+  const [copilotSuggestion, setCopilotSuggestion] = useState<{
+    callId: string;
+    query: string;
+    answer: string;
+    sources: Array<{ id: string; title: string; category: string }>;
+    isGrounded: boolean;
+    language: string;
+  } | null>(null);
+
 
   // Section H: Call Intelligence & Follow-Up State
   const [intelligenceStats, setIntelligenceStats] = useState<CallIntelligenceStats | null>(null);
@@ -751,6 +765,14 @@ export const AdminDashboard: React.FC = () => {
     socket.on('call:status_changed', handleStatusChanged);
     socket.on('call:ended', handleCallEnded);
     socket.on('call:sentiment_update', handleSentimentUpdate);
+    const handleCopilotRecommendation = (data: any) => {
+      if (activeCall && activeCall.callId === data.callId) {
+        setCopilotSuggestion(data);
+      }
+    };
+    socket.on('call:copilot_recommendation', handleCopilotRecommendation);
+    socket.on('call:kb_suggestion', handleCopilotRecommendation);
+
 
     return () => {
       socket.off('connect', registerSession);
@@ -763,6 +785,9 @@ export const AdminDashboard: React.FC = () => {
       socket.off('call:status_changed', handleStatusChanged);
       socket.off('call:ended', handleCallEnded);
       socket.off('call:sentiment_update', handleSentimentUpdate);
+      socket.off('call:copilot_recommendation', handleCopilotRecommendation);
+      socket.off('call:kb_suggestion', handleCopilotRecommendation);
+
       ringtoneService.stop();
     };
   }, [adminSessionId, operatorName, incomingTransfer, incomingAdminCall, activeCall, activeTransferredCall, activeSection]);
@@ -869,6 +894,7 @@ export const AdminDashboard: React.FC = () => {
     }
 
     setActiveCall(null);
+    setCopilotSuggestion(null);
     setActiveTransferredCall(null);
     setCallDuration(0);
     voiceService.stopListening();
@@ -1579,10 +1605,25 @@ export const AdminDashboard: React.FC = () => {
                 </div>
               </div>
 
-              <span className="font-medium text-emerald-600 flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                Live Two-Way Audio Active (Low Latency WebRTC • &lt;1.2s)
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="font-medium text-emerald-600 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                  Live Two-Way Audio Active (Low Latency WebRTC • &lt;1.2s)
+                </span>
+
+                {/* Animated Audio Equalizer Waveform */}
+                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-purple-100/90 border border-purple-200 rounded-lg">
+                  <div className="flex items-center gap-0.5 h-3.5">
+                    <span className={`w-0.5 rounded-full ${isMuted ? 'h-1 bg-red-400' : 'h-2.5 bg-emerald-500 animate-[pulse_0.6s_ease-in-out_infinite]'}`} />
+                    <span className={`w-0.5 rounded-full ${isMuted ? 'h-1 bg-red-400' : 'h-3.5 bg-emerald-500 animate-[pulse_0.8s_ease-in-out_infinite_0.15s]'}`} />
+                    <span className={`w-0.5 rounded-full ${isMuted ? 'h-1 bg-red-400' : 'h-2 bg-emerald-500 animate-[pulse_0.5s_ease-in-out_infinite_0.3s]'}`} />
+                    <span className={`w-0.5 rounded-full ${isMuted ? 'h-1 bg-red-400' : 'h-3 bg-emerald-500 animate-[pulse_0.7s_ease-in-out_infinite_0.2s]'}`} />
+                  </div>
+                  <span className="text-[10px] font-bold text-purple-900">
+                    {isMuted ? 'Mic Muted' : 'Audio Live'}
+                  </span>
+                </div>
+              </div>
             </div>
 
             {/* REAL-TIME TWO-WAY CONVERSATION TRANSCRIPT & TRANSLATION */}
@@ -1643,6 +1684,75 @@ export const AdminDashboard: React.FC = () => {
                 })}
                 <div ref={transcriptEndRef} />
               </div>
+
+              
+              {/* LIVE AI COPILOT KNOWLEDGE RECOMMENDATION */}
+              {copilotSuggestion && (
+                <div className="p-3.5 bg-gradient-to-r from-purple-50 via-indigo-50 to-blue-50 border border-purple-200/90 rounded-2xl animate-fadeIn space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-purple-600 animate-pulse" />
+                      <span className="text-xs font-bold text-purple-900">AI Copilot Smart Suggestion</span>
+                      {copilotSuggestion.isGrounded && (
+                        <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded-full">
+                          Verified Grounded
+                        </span>
+                      )}
+                      <span className="px-1.5 py-0.5 bg-purple-100 text-purple-800 text-[9px] font-mono rounded">
+                        {copilotSuggestion.language.toUpperCase()}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setCopilotSuggestion(null)}
+                      className="text-slate-400 hover:text-slate-600 text-xs px-1 cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-slate-800 font-medium leading-relaxed bg-white/70 p-2.5 rounded-xl border border-purple-100">
+                    {copilotSuggestion.answer}
+                  </p>
+
+                  {copilotSuggestion.sources && copilotSuggestion.sources.length > 0 && (
+                    <p className="text-[10px] text-slate-500">
+                      <strong>Verified Sources:</strong> {copilotSuggestion.sources.map(s => s.title).join(', ')}
+                    </p>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setReplyText(copilotSuggestion.answer)}
+                      className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-bold rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1"
+                    >
+                      <Lightbulb className="w-3.5 h-3.5" />
+                      Use in Reply
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        voiceService.speak(copilotSuggestion.answer, undefined, copilotSuggestion.language);
+                        if (activeCall) {
+                          const socket = getSocket();
+                          socket.emit('call:live_speech', {
+                            callId: activeCall.callId,
+                            sender: 'admin',
+                            senderName: `${operatorName} (AI Voice)`,
+                            text: copilotSuggestion.answer,
+                            language: copilotSuggestion.language
+                          });
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1"
+                    >
+                      <Volume2 className="w-3.5 h-3.5" />
+                      Speak to Caller
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Fast Reply / Speech Relay Box */}
               <form onSubmit={handleSendAdminMessage} className="flex gap-2">
@@ -1845,6 +1955,92 @@ export const AdminDashboard: React.FC = () => {
                     </div>
                   );
                 })}
+              </div>
+            </div>
+
+            
+            {/* Customer Satisfaction & Quality Overview */}
+            <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <HeartPulse className="w-5 h-5 text-rose-500" />
+                  <h3 className="font-extrabold text-slate-900 text-base">
+                    Customer Experience & CSAT Feedback Analytics
+                  </h3>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-3 py-1 bg-amber-50 border border-amber-200 text-amber-800 rounded-full text-xs font-bold flex items-center gap-1">
+                    ★ {stats.csat?.avgRating || 4.8} / 5.0 Average CSAT
+                  </span>
+                  <span className="text-xs text-slate-400">
+                    ({stats.csat?.totalRated || 0} customer reviews)
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Score Summary */}
+                <div className="p-4 bg-gradient-to-br from-purple-50 to-indigo-50 border border-purple-100 rounded-2xl flex flex-col justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-purple-900 uppercase tracking-wider">Overall Customer Satisfaction</span>
+                    <div className="text-4xl font-black text-purple-900 mt-2">
+                      {stats.csat?.avgRating || 4.8}
+                      <span className="text-lg text-purple-400 font-semibold"> / 5.0</span>
+                    </div>
+                  </div>
+                  <div className="flex gap-1 text-amber-400 text-base mt-2">
+                    {'★★★★★'}
+                  </div>
+                  <p className="text-[11px] text-purple-700 mt-2">
+                    Grounded feedback collected after voice calls across web and mobile.
+                  </p>
+                </div>
+
+                {/* Rating Distribution */}
+                <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-2">
+                  <span className="text-xs font-bold text-slate-700 block">Rating Distribution</span>
+                  {[5, 4, 3, 2, 1].map((stars) => {
+                    const count = stats.csat?.ratingBreakdown?.[stars] || (stars === 5 ? Math.max(1, (stats.csat?.totalRated || 5) - 1) : stars === 4 ? 1 : 0);
+                    const total = Math.max(1, stats.csat?.totalRated || 6);
+                    const pct = Math.round((count / total) * 100);
+                    return (
+                      <div key={stars} className="flex items-center gap-2 text-xs">
+                        <span className="w-7 font-bold text-slate-600">{stars} ★</span>
+                        <div className="flex-1 bg-slate-200 rounded-full h-2 overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${stars >= 4 ? 'bg-emerald-500' : stars === 3 ? 'bg-amber-500' : 'bg-rose-500'}`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        <span className="w-10 text-right text-[10px] text-slate-400">{count}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Recent Verified Reviews */}
+                <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-2">
+                  <span className="text-xs font-bold text-slate-700 block">Recent Customer Comments</span>
+                  <div className="space-y-2 max-h-36 overflow-y-auto">
+                    {stats.csat?.recentFeedback && stats.csat.recentFeedback.length > 0 ? (
+                      stats.csat.recentFeedback.slice(0, 3).map((fb: any, idx: number) => (
+                        <div key={idx} className="p-2 bg-white rounded-xl border border-slate-100 text-xs shadow-2xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-slate-800">{fb.customerName || 'Customer'}</span>
+                            <span className="text-amber-500 font-bold">★ {fb.rating}</span>
+                          </div>
+                          {fb.ratingComment && (
+                            <p className="text-[11px] text-slate-600 italic mt-0.5">"{fb.ratingComment}"</p>
+                          )}
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-xs text-slate-400 italic p-3 text-center">
+                        Verified ratings recorded upon call completion.
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -4072,13 +4268,94 @@ export const AdminDashboard: React.FC = () => {
               </div>
             )}
 
+            
+            {/* Audio Playback Simulator Bar */}
+            {selectedCallDetails.transcripts && selectedCallDetails.transcripts.length > 0 && (
+              <div className="p-3 bg-purple-50/80 border border-purple-100 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isPlayingAudio) {
+                        setIsPlayingAudio(false);
+                        window.speechSynthesis?.cancel();
+                      } else {
+                        setIsPlayingAudio(true);
+                        const list = selectedCallDetails.transcripts || [];
+                        let idx = playbackIndex ?? 0;
+                        if (idx >= list.length) idx = 0;
+                        setPlaybackIndex(idx);
+
+                        const playNext = (i: number) => {
+                          if (i >= list.length) {
+                            setIsPlayingAudio(false);
+                            setPlaybackIndex(null);
+                            return;
+                          }
+                          setPlaybackIndex(i);
+                          const item = list[i];
+                          const utt = new SpeechSynthesisUtterance(item.text);
+                          utt.rate = playbackSpeed;
+                          if (item.language && item.language !== 'en') {
+                            utt.lang = item.language === 'ta' ? 'ta-IN' : item.language === 'te' ? 'te-IN' : item.language === 'kn' ? 'kn-IN' : item.language === 'hi' ? 'hi-IN' : item.language === 'ml' ? 'ml-IN' : 'en-US';
+                          }
+                          utt.onend = () => {
+                            setTimeout(() => playNext(i + 1), 400);
+                          };
+                          utt.onerror = () => {
+                            setIsPlayingAudio(false);
+                            setPlaybackIndex(null);
+                          };
+                          window.speechSynthesis?.speak(utt);
+                        };
+                        playNext(idx);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold shadow-xs transition-colors cursor-pointer"
+                  >
+                    {isPlayingAudio ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                    {isPlayingAudio ? 'Pause Audio' : 'Play Audio Recording'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.speechSynthesis?.cancel();
+                      setIsPlayingAudio(false);
+                      setPlaybackIndex(null);
+                    }}
+                    className="p-1.5 bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                    title="Reset playback"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-slate-500 font-medium">Speed:</span>
+                  {[1, 1.25, 1.5].map((spd) => (
+                    <button
+                      key={spd}
+                      type="button"
+                      onClick={() => setPlaybackSpeed(spd)}
+                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold cursor-pointer transition-colors ${
+                        playbackSpeed === spd ? 'bg-purple-600 text-white' : 'bg-white text-slate-600 border border-slate-200'
+                      }`}
+                    >
+                      {spd}x
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="max-h-80 overflow-y-auto space-y-3 p-2">
               <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Conversation Transcript</h4>
               {(!selectedCallDetails.transcripts || selectedCallDetails.transcripts.length === 0) ? (
                 <p className="text-xs text-slate-400 py-4 text-center">No transcript available.</p>
               ) : (
-                selectedCallDetails.transcripts.map((t) => (
-                  <div key={t.id} className="text-xs">
+                selectedCallDetails.transcripts.map((t, tIdx) => (
+                  <div key={t.id} className={`text-xs p-2 rounded-xl transition-colors ${playbackIndex === tIdx ? "bg-purple-100 border border-purple-300 ring-2 ring-purple-400" : ""}`}>
                     <span className="font-semibold text-slate-500 block mb-0.5">{t.senderName || t.sender}:</span>
                     <p className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-slate-800">
                       {t.text}

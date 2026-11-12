@@ -149,6 +149,12 @@ export interface CallStats {
   avgWaitTime?: number; // in seconds
   avgDuration?: number; // in seconds
   callsByLanguage?: Record<string, number>;
+  csat?: {
+    avgRating: number;
+    totalRated: number;
+    ratingBreakdown: Record<number, number>;
+    recentFeedback: any[];
+  };
   successfulCalls?: number;
   failedCalls?: number;
   disconnectedCalls?: number;

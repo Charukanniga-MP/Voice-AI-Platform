@@ -1218,6 +1218,24 @@ export function initSocketServer(io: SocketIOServer) {
             io.to('role:admin').emit('sentiment:assistance_alert', alertPayload);
             io.to('role:agent').emit('sentiment:assistance_alert', alertPayload);
           }
+
+          // AI Copilot Live Assistance: Query verified Knowledge Base for smart recommendation
+          translationService.getAiAnswerSuggestion(text, data.language || callLang).then((copilotResp) => {
+            if (copilotResp && copilotResp.answer) {
+              const copilotPayload = {
+                callId: data.callId,
+                query: text,
+                answer: copilotResp.answer,
+                sources: copilotResp.sources || [],
+                isGrounded: copilotResp.isGrounded,
+                language: copilotResp.language || callLang,
+                timestamp: new Date()
+              };
+              io.to(`call:${data.callId}`).emit('call:kb_suggestion', copilotPayload);
+              io.to(`call:${data.callId}`).emit('call:copilot_recommendation', copilotPayload);
+            }
+          }).catch(err => console.error('[Copilot] Live speech recommendation error:', err));
+
         }
       } catch (err) {
         console.error('[Call] Live speech error:', err);
