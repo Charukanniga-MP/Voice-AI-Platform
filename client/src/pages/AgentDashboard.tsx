@@ -1134,7 +1134,7 @@ export const AgentDashboard: React.FC = () => {
               }`}
             >
               <MessageSquare className="w-3.5 h-3.5 text-purple-600" />
-              Support Tickets
+              Tickets
             </button>
             <button
               onClick={() => setActiveTab('tasks')}
@@ -1148,28 +1148,6 @@ export const AgentDashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Supported Languages Multi-select Pills */}
-        <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2">
-          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 mr-1">
-            <Globe className="w-3.5 h-3.5 text-indigo-600" />
-            My Fluent Languages:
-          </span>
-          {(Object.entries(SUPPORTED_LANGUAGES) as [LanguageCode, typeof SUPPORTED_LANGUAGES[LanguageCode]][]).map(([code, meta]) => {
-            const isSupported = supportedLanguages.includes(code);
-            return (
-              <button
-                key={code}
-                onClick={() => handleToggleLanguage(code)}
-                className={`px-2.5 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer ${isSupported
-                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
-                    : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'
-                  }`}
-              >
-                {meta.nativeName} ({meta.name})
-              </button>
-            );
-          })}
-        </div>
       </div>
 
       {/* 1. OUTGOING CALLS TAB */}
@@ -1831,7 +1809,7 @@ export const AgentDashboard: React.FC = () => {
       {/* 5. SUPPORT TICKETS TAB */}
       {activeTab === 'tickets' && (
         <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 space-y-6 shadow-xs">
-          <SupportTickets />
+          <SupportTickets isAgentView />
         </div>
       )}
 

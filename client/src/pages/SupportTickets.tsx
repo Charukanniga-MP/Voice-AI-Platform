@@ -43,7 +43,7 @@ const statusColors: Record<string, string> = {
   closed: 'bg-slate-100 text-slate-600 border-slate-200'
 };
 
-export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCustomerView = false }) => {
+export const SupportTickets: React.FC<{ isCustomerView?: boolean; isAgentView?: boolean }> = ({ isCustomerView = false, isAgentView = false }) => {
   const { user, token } = useAuth();
   const { t } = useLanguage();
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -65,6 +65,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
   const [sendingReply, setSendingReply] = useState(false);
 
   const isCustomer = isCustomerView || user?.role === 'customer';
+  const canAssignTickets = !isCustomer && !isAgentView;
 
   const getStatusLabel = (status: string) => {
     switch (status) {
@@ -202,7 +203,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
           subject,
           description,
           priority,
-          assignedTo: isCustomer ? undefined : (assignedTo || undefined),
+          assignedTo: canAssignTickets ? (assignedTo || undefined) : undefined,
           followUpAt: isCustomer ? undefined : (followUpAt || undefined)
         })
       });
@@ -235,12 +236,14 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
       <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">
-            {isCustomer ? 'My Support Tickets' : 'Support Tickets'}
+            {isCustomer ? 'My Support Tickets' : isAgentView ? 'Tickets' : 'Support Tickets'}
           </h1>
           <p className="mt-1 text-xs text-slate-500">
             {isCustomer
               ? 'Track your inquiries, reported issues, and responses from support agents.'
-              : 'Track customer issues, ownership, priority, and follow-up across all channels.'}
+              : isAgentView
+                ? 'View customer issues, ticket conversations, and status updates.'
+                : 'Track customer issues, ownership, priority, and follow-up across all channels.'}
           </p>
         </div>
         <div className="flex gap-2">
@@ -354,9 +357,8 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
             </select>
           </label>
 
-          {!isCustomer && (
-            <>
-              <label className="space-y-1 text-xs font-medium text-slate-600">
+          {canAssignTickets && (
+            <label className="space-y-1 text-xs font-medium text-slate-600">
                 Assign to
                 <input
                   value={assignedTo}
@@ -365,6 +367,9 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
                   className="block w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
                 />
               </label>
+          )}
+          {!isCustomer && (
+            <>
               <label className="space-y-1 text-xs font-medium text-slate-600">
                 Follow-up date
                 <input
@@ -410,7 +415,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
               <tr>
                 <th className="px-4 py-3">Issue / Customer</th>
                 <th className="px-4 py-3">Priority</th>
-                {!isCustomer && <th className="px-4 py-3">Assigned to</th>}
+                {canAssignTickets && <th className="px-4 py-3">Assigned to</th>}
                 <th className="px-4 py-3">Follow-up</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Updated</th>
@@ -463,7 +468,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
                       )}
                     </td>
 
-                    {!isCustomer && (
+                    {canAssignTickets && (
                       <td className="px-4 py-3">
                         <input
                           aria-label={`Assignee for ${ticket.subject}`}
@@ -530,7 +535,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
                   </tr>
                   {openConversationId === ticket.id && (
                     <tr>
-                      <td colSpan={isCustomer ? 5 : 7} className="bg-slate-50 px-5 py-4">
+                      <td colSpan={isCustomer ? 5 : isAgentView ? 6 : 7} className="bg-slate-50 px-5 py-4">
                         <div className="mx-auto max-w-3xl space-y-3">
                           <h3 className="font-bold text-slate-900">Ticket conversation</h3>
                           {ticket.messages?.length ? ticket.messages.map(message => (
