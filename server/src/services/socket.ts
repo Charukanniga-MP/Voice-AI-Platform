@@ -30,6 +30,13 @@ interface QueuedCall {
   rejectedByAgents: Set<string>;
 }
 
+let activeSocketServer: SocketIOServer | null = null;
+
+export function emitTicketNotification(rooms: string[], notification: { ticketId: string; kind: string; title: string; message: string }) {
+  if (!activeSocketServer) return;
+  for (const room of new Set(rooms)) activeSocketServer.to(room).emit('ticket:notification', notification);
+}
+
 export interface AdminSession {
   adminSessionId: string;
   socketId: string;
@@ -44,6 +51,7 @@ export interface AdminSession {
 }
 
 export function initSocketServer(io: SocketIOServer) {
+  activeSocketServer = io;
   const connectedUsers = new Map<string, ConnectedUser>(); // socketId -> User
   const adminSessions = new Map<string, AdminSession>(); // adminSessionId -> AdminSession
   const socketToAdminSession = new Map<string, string>(); // socketId -> adminSessionId

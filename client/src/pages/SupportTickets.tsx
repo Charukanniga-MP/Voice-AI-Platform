@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, Plus, RefreshCw, Trash2, CheckCircle2, Clock, Filter, User as UserIcon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.js';
 import { useLanguage } from '../context/LanguageContext.js';
+import { getSocket } from '../services/socket.js';
 
 interface Ticket {
   id: string;
@@ -123,6 +124,15 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
   }, [token]);
 
   useEffect(() => { void fetchTickets(); }, [fetchTickets]);
+
+  useEffect(() => {
+    const socket = getSocket();
+    const handleTicketNotification = () => {
+      void fetchTickets();
+    };
+    socket.on('ticket:notification', handleTicketNotification);
+    return () => { socket.off('ticket:notification', handleTicketNotification); };
+  }, [fetchTickets]);
 
   const updateTicket = async (id: string, updates: Partial<Pick<Ticket, 'status' | 'priority' | 'assignedTo' | 'followUpAt'>>) => {
     try {
@@ -279,6 +289,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
           <span>{error}</span>
         </div>
       )}
+
 
       {!isCustomer && overdueCount > 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-800 flex items-center gap-2">

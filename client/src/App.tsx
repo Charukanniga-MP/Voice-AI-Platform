@@ -5,6 +5,38 @@ import { Navbar } from './components/Navbar.js';
 import { LoginPage } from './pages/Login.js';
 import { ResetPasswordPage } from './pages/ResetPassword.js';
 import { DevSyncMonitor } from './components/DevSyncMonitor.js';
+import { getSocket } from './services/socket.js';
+
+interface TicketAlert {
+  title: string;
+  message: string;
+}
+
+const TicketNotificationToast: React.FC = () => {
+  const { user } = useAuth();
+  const [alert, setAlert] = useState<TicketAlert | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    const socket = getSocket();
+    const onTicketNotification = (notification: TicketAlert) => {
+      setAlert(notification);
+      window.setTimeout(() => setAlert(current => current === notification ? null : current), 8000);
+    };
+    socket.on('ticket:notification', onTicketNotification);
+    return () => { socket.off('ticket:notification', onTicketNotification); };
+  }, [user?.id]);
+
+  if (!alert) return null;
+  return (
+    <div role="status" className="fixed right-4 top-20 z-[100] w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-purple-200 bg-white p-4 text-sm shadow-xl">
+      <div className="flex items-start justify-between gap-3">
+        <div><strong className="text-slate-900">{alert.title}</strong><p className="mt-1 text-slate-600">{alert.message}</p></div>
+        <button type="button" onClick={() => setAlert(null)} aria-label="Dismiss notification" className="rounded px-2 py-1 text-slate-500 hover:bg-slate-100">×</button>
+      </div>
+    </div>
+  );
+};
 
 // Lazy-loaded role dashboards for optimal initial bundle loading speed and memory efficiency
 const CustomerDashboard = lazy(() =>
@@ -94,6 +126,7 @@ const MainApp: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
       <Navbar />
+      <TicketNotificationToast />
 
       <div className="flex-1">
         <Suspense fallback={<RoleLoader roleName={role} />}>

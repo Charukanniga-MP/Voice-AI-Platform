@@ -3,11 +3,42 @@ import { prisma } from '../db.js';
 import { authenticate } from '../middleware/auth.js';
 import { validate, ticketCreateSchema, ticketUpdateSchema, ticketMessageSchema } from '../middleware/validation.js';
 import { sendEmail } from '../services/email.js';
+import { emitTicketNotification } from '../services/socket.js';
 
 const router = Router();
 const statuses = ['open', 'in_progress', 'waiting', 'resolved', 'closed'];
 const priorities = ['low', 'normal', 'medium', 'high', 'urgent'];
 const escapeHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+async function ticketStaffRooms(assignedTo?: string | null) {
+  const rooms = ['role:admin'];
+  if (!assignedTo?.trim()) return rooms;
+  const agents = await prisma.user.findMany({ where: { role: 'agent' }, select: { id: true, name: true } });
+  const matchingAgent = agents.find(agent => agent.name.trim().toLowerCase() === assignedTo.trim().toLowerCase());
+  if (matchingAgent) rooms.push(`user:${matchingAgent.id}`);
+  return rooms;
+}
+
+async function notifyTicket(ticket: { id: string; customerId: string | null; customerEmail?: string | null; assignedTo: string | null }, kind: string, title: string, message: string, options: { customer?: boolean; staff?: boolean } = {}) {
+  try {
+    const rooms: string[] = [];
+    if (options.customer) {
+      let customerId = ticket.customerId;
+      if (!customerId && ticket.customerEmail) {
+        const customer = await prisma.user.findFirst({
+          where: { role: 'customer', email: ticket.customerEmail.toLowerCase().trim() },
+          select: { id: true }
+        });
+        customerId = customer?.id || null;
+      }
+      if (customerId) rooms.push(`user:${customerId}`);
+    }
+    if (options.staff !== false) rooms.push(...await ticketStaffRooms(ticket.assignedTo));
+    emitTicketNotification(rooms, { ticketId: ticket.id, kind, title, message });
+  } catch (notificationError) {
+    console.error('[Tickets] Live notification failed:', notificationError);
+  }
+}
 
 router.use(authenticate);
 
@@ -62,6 +93,13 @@ router.post('/:id/messages', validate(ticketMessageSchema), async (req: Request,
       }
     });
     await prisma.supportTicket.update({ where: { id: ticket.id }, data: { updatedAt: new Date() } });
+    await notifyTicket(
+      ticket,
+      'reply',
+      'New ticket reply',
+      `${message.senderName} replied to “${ticket.subject}”.`,
+      { customer: user.role !== 'customer' }
+    );
 
     // A reply from support should notify the customer by email when an address exists.
     // Email problems must not undo or hide the message already saved to the ticket.
@@ -118,6 +156,15 @@ router.post('/', validate(ticketCreateSchema), async (req: Request, res: Respons
         followUpAt: user.role !== 'customer' && followUpAt ? new Date(followUpAt) : null
       }
     });
+    emitTicketNotification(['role:admin'], {
+      ticketId: ticket.id,
+      kind: 'created',
+      title: 'New support ticket',
+      message: `${ticket.customerName} submitted “${ticket.subject}”.`
+    });
+    if (ticket.assignedTo) {
+      await notifyTicket(ticket, 'assigned', 'Ticket assigned', `“${ticket.subject}” was assigned to ${ticket.assignedTo}.`, { customer: true });
+    }
     res.status(201).json({ ticket });
   } catch (err) {
     console.error('[Tickets] Create error:', err);
@@ -166,6 +213,12 @@ router.patch('/:id', validate(ticketUpdateSchema), async (req: Request, res: Res
       where: { id: req.params.id },
       data: updateData
     });
+    if (status !== undefined && status !== existing.status) {
+      await notifyTicket(ticket, 'status', 'Ticket status updated', `“${ticket.subject}” is now ${status.replace('_', ' ')}.`, { customer: true });
+    }
+    if (assignedTo !== undefined && assignedTo !== existing.assignedTo) {
+      await notifyTicket(ticket, 'assigned', 'Ticket assignment updated', ticket.assignedTo ? `“${ticket.subject}” was assigned to ${ticket.assignedTo}.` : `“${ticket.subject}” is now unassigned.`, { customer: true });
+    }
     res.json({ ticket });
   } catch (err) {
     console.error('[Tickets] Update error:', err);
