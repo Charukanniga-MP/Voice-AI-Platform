@@ -51,7 +51,10 @@ export const CustomerDashboard: React.FC = () => {
   const [interimText, setInterimText] = useState('');
   const [aiIsSpeaking, setAiIsSpeaking] = useState(false);
   const aiIsSpeakingRef = useRef(false);
+  const [isCustomerSpeaking, setIsCustomerSpeaking] = useState(false);
   const [wasInterrupted, setWasInterrupted] = useState(false);
+  const [liveLatency, setLiveLatency] = useState<number | null>(null);
+  const speechEndTimeRef = useRef<number | null>(null);
   const currentAiSpeechTextRef = useRef('');
   const [textInput, setTextInput] = useState('');
 
@@ -248,7 +251,18 @@ export const CustomerDashboard: React.FC = () => {
       query: clean,
       customerId: user?.id,
       duration,
-      language: selectedLanguage
+      language: selectedLanguage,
+      clientSentAt: Date.now()
+    });
+  };
+
+  // Manually request human specialist escalation during AI call
+  const handleEscalateToHuman = () => {
+    if (!callId) return;
+    const socket = getSocket();
+    socket.emit('call:escalate', {
+      callId,
+      reason: 'Customer requested live human specialist'
     });
   };
   // Socket event listeners
@@ -324,7 +338,7 @@ export const CustomerDashboard: React.FC = () => {
     });
 
     // 6. AI Voice call ready
-    socket.on('call:ready', (data: { callId: string; greeting: string; language: string }) => {
+    socket.on('call:ready', (data: { callId: string; greeting: string; language: string; audioUrl?: string }) => {
       setCallStatus('active_ai');
       setActivePartner({ name: 'KAIRA AI', role: 'ai', language: data.language });
       setTranscripts(prev => [
@@ -334,6 +348,7 @@ export const CustomerDashboard: React.FC = () => {
           sender: 'ai',
           senderName: 'KAIRA AI',
           text: data.greeting,
+          language: data.language,
           timestamp: new Date().toISOString()
         }
       ]);
@@ -342,18 +357,32 @@ export const CustomerDashboard: React.FC = () => {
       aiIsSpeakingRef.current = true;
       currentAiSpeechTextRef.current = data.greeting;
 
+      // Start listening right away so customer can interrupt or speak naturally
+      startSpeechRecognition(data.callId, false);
+
       voiceService.speak(data.greeting, () => {
         setAiIsSpeaking(false);
         aiIsSpeakingRef.current = false;
         currentAiSpeechTextRef.current = '';
-        startSpeechRecognition(data.callId, false);
       }, data.language);
     });
 
     // 7. AI response
-    socket.on('call:ai_response', (data: { answer: string; isTransferring: boolean; sources?: any[]; language?: string; audioUrl?: string }) => {
+    socket.on('call:ai_response', (data: {
+      answer: string;
+      isTransferring: boolean;
+      sources?: any[];
+      language?: string;
+      audioUrl?: string;
+      latency?: { aiMs: number; totalRoundTripMs: number };
+    }) => {
+      // Calculate true round-trip latency
+      const roundTrip = speechEndTimeRef.current ? (Date.now() - speechEndTimeRef.current) : (data.latency?.totalRoundTripMs || data.latency?.aiMs || 0);
+      setLiveLatency(roundTrip);
+
       setAiIsSpeaking(true);
-      voiceService.stopListening();
+      aiIsSpeakingRef.current = true;
+      currentAiSpeechTextRef.current = data.answer;
 
       setTranscripts(prev => {
         const isDuplicate = prev.some(t =>
@@ -379,14 +408,16 @@ export const CustomerDashboard: React.FC = () => {
         setCallStatus('transferring');
       }
 
+      // Ensure listening stays active for continuous dialogue and barge-in
+      if (!data.isTransferring) {
+        startSpeechRecognition(callId || '', false);
+      }
+
       // Play synthesized natural speech in customer's preferred language
       voiceService.speak(data.answer, () => {
         setAiIsSpeaking(false);
         aiIsSpeakingRef.current = false;
         currentAiSpeechTextRef.current = '';
-        if (!data.isTransferring) {
-          startSpeechRecognition(callId || '', false);
-        }
       }, data.language || selectedLanguage);
     });
 
@@ -540,6 +571,22 @@ export const CustomerDashboard: React.FC = () => {
   // Speech recognition helper with automatic interruption and Echo Guard
   const startSpeechRecognition = (activeCallId: string, isHumanCall: boolean = false) => {
     voiceService.setLanguage(selectedLanguage);
+
+    voiceService.onInterruption = () => {
+      voiceService.cancelSpeech();
+      setAiIsSpeaking(false);
+      aiIsSpeakingRef.current = false;
+      currentAiSpeechTextRef.current = '';
+      setWasInterrupted(true);
+      setTimeout(() => setWasInterrupted(false), 2500);
+      const socket = getSocket();
+      socket.emit('call:interrupt', { callId: activeCallId });
+    };
+
+    voiceService.onSpeechStart = () => {
+      setIsCustomerSpeaking(true);
+    };
+
     voiceService.startListening((text, isFinal) => {
       const trimmed = text.trim();
 
@@ -555,7 +602,9 @@ export const CustomerDashboard: React.FC = () => {
           aiIsSpeakingRef.current = false;
           currentAiSpeechTextRef.current = '';
           setWasInterrupted(true);
-          setTimeout(() => setWasInterrupted(false), 3000);
+          setTimeout(() => setWasInterrupted(false), 2500);
+          const socket = getSocket();
+          socket.emit('call:interrupt', { callId: activeCallId });
         }
       }
 
@@ -563,7 +612,10 @@ export const CustomerDashboard: React.FC = () => {
         setInterimText(text);
       } else {
         setInterimText('');
+        setIsCustomerSpeaking(false);
         if (!trimmed) return;
+
+        speechEndTimeRef.current = Date.now();
 
         setTranscripts(prev => {
           const isDup = prev.some(t =>
@@ -600,7 +652,8 @@ export const CustomerDashboard: React.FC = () => {
             query: text.trim(),
             customerId: user?.id,
             duration,
-            language: selectedLanguage
+            language: selectedLanguage,
+            clientSentAt: speechEndTimeRef.current
           });
         }
       }
@@ -739,6 +792,9 @@ export const CustomerDashboard: React.FC = () => {
     aiIsSpeakingRef.current = false;
     currentAiSpeechTextRef.current = '';
     setWasInterrupted(false);
+    setLiveLatency(null);
+    setIsCustomerSpeaking(false);
+    speechEndTimeRef.current = null;
     setInterimText('');
     setIsCallHeld(false);
     setQueueInfo(null);
@@ -806,10 +862,10 @@ export const CustomerDashboard: React.FC = () => {
         <div className="relative z-10 max-w-3xl space-y-4">
           <div className="flex items-center gap-2">
 
-              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-rose-50 border border-rose-200 rounded-lg">
-                <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping" />
-                <span className="text-[10px] font-bold text-rose-700 uppercase tracking-wider">REC</span>
-              </div>
+            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-rose-50 border border-rose-200 rounded-lg">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping" />
+              <span className="text-[10px] font-bold text-rose-700 uppercase tracking-wider">REC</span>
+            </div>
 
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-white/20 text-white backdrop-blur-xs border border-white/20">
               <Sparkles className="w-3.5 h-3.5" />
@@ -928,33 +984,73 @@ export const CustomerDashboard: React.FC = () => {
         {/* Central Call Actions & Active UI */}
         <div className="p-8 text-center flex flex-col items-center justify-center">
           {callStatus === 'idle' && (
-            <div className="w-full max-w-xl py-4 space-y-6">
-              <div className="grid grid-cols-1 gap-6">
-                {/* Option 1: Live Customer Support Specialist */}
-                <div className="p-6 rounded-3xl border-2 border-emerald-100 hover:border-emerald-400 bg-gradient-to-b from-emerald-50/40 to-white text-left transition-all hover:shadow-lg space-y-4">
-                  <div className="w-14 h-14 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-200">
-                    <Headphones className="w-7 h-7" />
+            <div className="w-full max-w-2xl py-4 space-y-6">
+              {/* PRIMARY HERO: Call AI Voice Agent */}
+              <div className="p-8 rounded-3xl border-2 border-indigo-200/80 bg-gradient-to-br from-indigo-50/80 via-white to-blue-50/50 text-left shadow-xl shadow-indigo-100/50 relative overflow-hidden transition-all hover:border-indigo-400">
+                <div className="absolute -top-12 -right-12 w-48 h-48 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+
+                <div className="relative z-10 space-y-5">
+                  <div className="flex items-center justify-between">
+                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-600 to-blue-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/30">
+                      <Sparkles className="w-8 h-8 animate-pulse" />
+                    </div>
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      AI Voice Online (24/7)
+                    </span>
                   </div>
+
                   <div>
-                    <h3 className="text-base font-extrabold text-slate-900">
-                      {t('call.card_agent_title')}
+                    <h3 className="text-xl font-extrabold text-slate-900 tracking-tight">
+                      Call KAIRA AI Voice Agent
                     </h3>
-                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                      {t('call.card_agent_desc', {
-                        language: SUPPORTED_LANGUAGES[selectedLanguage]?.name,
-                        nativeName: SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName
-                      })}
+                    <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
+                      Instant, human-like voice conversation in <strong>{SUPPORTED_LANGUAGES[selectedLanguage]?.name} ({SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName})</strong>. Get real-time answers on pricing, products, services, and policies with continuous dialogue and voice interruption.
                     </p>
                   </div>
+
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-500">
+                    <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-indigo-700 flex items-center gap-1 shadow-2xs">
+                      ⚡ Ultra-fast speech (&lt;1.2s)
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 flex items-center gap-1 shadow-2xs">
+                      🌐 6 Regional Languages
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 flex items-center gap-1 shadow-2xs">
+                      🎙️ Voice Interruption
+                    </span>
+                  </div>
+
                   <button
-                    onClick={handleStartAgentCall}
-                    className="w-full min-h-[48px] py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold text-sm shadow-md shadow-emerald-500/25 hover:shadow-lg active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-2"
+                    onClick={handleStartAiCall}
+                    className="w-full min-h-[54px] py-4 rounded-2xl bg-gradient-to-r from-indigo-600 via-blue-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-extrabold text-base shadow-xl shadow-indigo-600/30 hover:shadow-2xl active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-3"
                   >
-                    <PhoneCall className="w-4 h-4" />
-                    {t('call.card_agent_btn')}
+                    <PhoneCall className="w-5 h-5" />
+                    <span>Call AI Voice Agent Now</span>
                   </button>
                 </div>
+              </div>
 
+              {/* SECONDARY OPTION: Live Support Specialist */}
+              <div className="p-4 sm:p-5 rounded-2xl border border-slate-200/90 bg-white text-left flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center shrink-0">
+                    <Headphones className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-800">Prefer human assistance?</h4>
+                    <p className="text-[11px] text-slate-500">
+                      Connect with an authorized customer support specialist.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={handleStartAgentCall}
+                  className="px-4 py-2.5 rounded-xl border border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold cursor-pointer transition-colors flex items-center justify-center gap-2"
+                >
+                  <PhoneCall className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Call Human Agent</span>
+                </button>
               </div>
             </div>
           )}
@@ -1001,7 +1097,7 @@ export const CustomerDashboard: React.FC = () => {
             <div className="w-full max-w-xl space-y-6 py-2">
               {/* Caller Identity Indicator */}
               <div className="mx-auto inline-flex items-center gap-3 px-4 py-2.5 bg-slate-50 border border-slate-200/90 rounded-2xl shadow-xs text-left">
-                <div className="w-10 h-10 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                <div className="w-10 h-10 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
                   {user?.name?.charAt(0) || 'C'}
                 </div>
                 <div>
@@ -1013,15 +1109,53 @@ export const CustomerDashboard: React.FC = () => {
                 </div>
               </div>
 
-              {/* Soundwave animation */}
-              <div className="h-20 flex items-center justify-center gap-1.5 py-4">
-                <span className="w-1.5 rounded-full bg-indigo-600 animate-soundwave-1" />
-                <span className="w-1.5 rounded-full bg-indigo-600 animate-soundwave-2" />
-                <span className="w-1.5 rounded-full bg-indigo-600 animate-soundwave-3" />
-                <span className="w-1.5 rounded-full bg-indigo-600 animate-soundwave-4" />
-                <span className="w-1.5 rounded-full bg-indigo-600 animate-soundwave-5" />
-                <span className="w-1.5 rounded-full bg-indigo-600 animate-soundwave-2" />
-                <span className="w-1.5 rounded-full bg-indigo-600 animate-soundwave-4" />
+              {/* Soundwave animation with conversational state indication */}
+              <div className="h-24 flex flex-col items-center justify-center gap-3 py-2">
+                <div className="flex items-center justify-center gap-1.5">
+                  <span className={`w-1.5 rounded-full ${aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-1' : isCustomerSpeaking ? 'bg-emerald-500 animate-soundwave-1' : 'bg-slate-300 h-3'}`} />
+                  <span className={`w-1.5 rounded-full ${aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-2' : isCustomerSpeaking ? 'bg-emerald-500 animate-soundwave-2' : 'bg-slate-300 h-5'}`} />
+                  <span className={`w-1.5 rounded-full ${aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-3' : isCustomerSpeaking ? 'bg-emerald-500 animate-soundwave-3' : 'bg-slate-300 h-8'}`} />
+                  <span className={`w-1.5 rounded-full ${aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-4' : isCustomerSpeaking ? 'bg-emerald-500 animate-soundwave-4' : 'bg-slate-300 h-4'}`} />
+                  <span className={`w-1.5 rounded-full ${aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-5' : isCustomerSpeaking ? 'bg-emerald-500 animate-soundwave-5' : 'bg-slate-300 h-7'}`} />
+                  <span className={`w-1.5 rounded-full ${aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-2' : isCustomerSpeaking ? 'bg-emerald-500 animate-soundwave-2' : 'bg-slate-300 h-5'}`} />
+                  <span className={`w-1.5 rounded-full ${aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-4' : isCustomerSpeaking ? 'bg-emerald-500 animate-soundwave-4' : 'bg-slate-300 h-3'}`} />
+                </div>
+
+                {/* State Pills */}
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  {callStatus === 'active_ai' && (
+                    <>
+                      {aiIsSpeaking ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          <Volume2 className="w-3.5 h-3.5 text-indigo-600 animate-pulse" />
+                          KAIRA AI is Speaking
+                        </span>
+                      ) : isCustomerSpeaking ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          <Mic className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
+                          Listening to you (Speak freely)
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-slate-50 text-slate-600 border border-slate-200">
+                          <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                          Continuous Voice Dialogue Active
+                        </span>
+                      )}
+
+                      {liveLatency !== null && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          ⚡ Latency: {liveLatency}ms
+                        </span>
+                      )}
+
+                      {wasInterrupted && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-300 animate-pulse">
+                          ⚡ Interrupted (Barge-in)
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
 
               {/* Call Status Banners */}
@@ -1100,11 +1234,10 @@ export const CustomerDashboard: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleToggleMute}
-                  className={`min-h-[48px] min-w-[48px] px-4 py-3 rounded-2xl border font-semibold text-xs transition-all cursor-pointer flex items-center gap-2 active:scale-95 shadow-xs ${
-                    isMuted
+                  className={`min-h-[48px] min-w-[48px] px-4 py-3 rounded-2xl border font-semibold text-xs transition-all cursor-pointer flex items-center gap-2 active:scale-95 shadow-xs ${isMuted
                       ? 'bg-red-50 border-red-300 text-red-700 hover:bg-red-100 ring-2 ring-red-500/20'
                       : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
-                  }`}
+                    }`}
                   title={isMuted ? t('call.unmute') : t('call.mute')}
                 >
                   {isMuted ? <MicOff className="w-5 h-5 text-red-600" /> : <Mic className="w-5 h-5 text-emerald-600" />}
@@ -1120,6 +1253,19 @@ export const CustomerDashboard: React.FC = () => {
                   <PhoneOff className="w-5 h-5" />
                   <span>{t('call.end_call')}</span>
                 </button>
+
+                {/* Optional Request Human Escalation during AI Call */}
+                {callStatus === 'active_ai' && (
+                  <button
+                    type="button"
+                    onClick={handleEscalateToHuman}
+                    className="min-h-[48px] px-4 py-3 rounded-2xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-semibold text-xs flex items-center gap-2 cursor-pointer shadow-xs active:scale-95 transition-all"
+                    title="Transfer this call to a human support specialist"
+                  >
+                    <Headphones className="w-4 h-4 text-amber-600" />
+                    <span>Talk to Human</span>
+                  </button>
+                )}
 
                 {/* Speaker Volume */}
                 <div className="flex items-center gap-2 px-3.5 py-2.5 bg-white border border-slate-200 rounded-2xl shadow-xs" title={t('call.speaker_volume')}>
@@ -1564,15 +1710,14 @@ export const CustomerDashboard: React.FC = () => {
                     <Sparkles className="w-3.5 h-3.5 text-purple-600" />
                     AI Call Summary
                   </div>
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${
-                    selectedHistoryCall.intelligence.resolutionStatus === 'resolved'
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${selectedHistoryCall.intelligence.resolutionStatus === 'resolved'
                       ? 'bg-emerald-100 text-emerald-800'
                       : selectedHistoryCall.intelligence.resolutionStatus === 'partially_resolved'
                         ? 'bg-blue-100 text-blue-800'
                         : selectedHistoryCall.intelligence.resolutionStatus === 'escalated_admin'
                           ? 'bg-purple-100 text-purple-800'
                           : 'bg-amber-100 text-amber-800'
-                  }`}>
+                    }`}>
                     {selectedHistoryCall.intelligence.resolutionStatus.replace('_', ' ')}
                   </span>
                 </div>

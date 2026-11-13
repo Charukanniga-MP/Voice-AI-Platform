@@ -912,9 +912,96 @@ export function initSocketServer(io: SocketIOServer) {
         });
 
         io.to('role:admin').to('role:agent').emit('call:status_changed', { callId: data.callId, status: 'active' });
+        io.to('role:admin').to('role:agent').emit('ai_call:started', {
+          callId: data.callId,
+          customerName: data.customerName,
+          customerPhone: data.customerPhone || 'Direct App Call',
+          language: callLang,
+          startTime: new Date().toISOString()
+        });
       } catch (err) {
         console.error('[Call] Error in call:start:', err);
         socket.emit('call:error', { message: 'Could not start call.' });
+      }
+    });
+
+    // 7A. Customer manually requests escalation to human specialist
+    socket.on('call:escalate', async (data: { callId: string; reason?: string }) => {
+      try {
+        const call = await prisma.callRecord.findUnique({
+          where: { callId: data.callId }
+        });
+        if (!call) return;
+
+        const reason = data.reason || 'Customer requested live human specialist';
+        const transferReq = await prisma.callTransferRequest.create({
+          data: {
+            callRecordId: call.id,
+            customerId: call.customerId,
+            customerName: call.customerName,
+            customerPhone: call.customerPhone || 'Direct App Call',
+            question: reason,
+            reason,
+            status: 'pending',
+            priority: 'urgent'
+          }
+        });
+
+        const respLang = call.language || 'en';
+        const escalateNotice = respLang === 'ta'
+          ? 'மனித நிபுணருடன் உங்களை இணைக்கிறேன், தயவுசெய்து காத்திருக்கவும்.'
+          : respLang === 'te'
+            ? 'మిమ్మల్ని మానవ నిపుణుడితో కనెక్ట్ చేస్తున్నాను, దయచేసి వేచి ఉండండి.'
+            : respLang === 'hi'
+              ? 'मैं आपको मानव विशेषज्ञ से जोड़ रहा हूँ, कृपया प्रतीक्षा करें।'
+              : respLang === 'ml'
+                ? 'നിങ്ങളെ ഒരു ഹ്യൂമൻ സ്പെഷ്യലിസ്റ്റുമായി ബന്ധിപ്പിക്കുന്നു, ദയവായി കാത്തിരിക്കുക.'
+                : respLang === 'kn'
+                  ? 'ನಾನು ನಿಮ್ಮನ್ನು ಮಾನವ ತಜ್ಞರೊಂದಿಗೆ ಸಂಪರ್ಕಿಸುತ್ತಿದ್ದೇನೆ, ದಯವಿಟ್ಟು ಕಾಯಿರಿ.'
+                  : 'Connecting you to a human specialist, please hold the line.';
+
+        socket.emit('call:ai_response', {
+          answer: escalateNotice,
+          isTransferring: true,
+          language: respLang,
+          audioUrl: `/api/voice/tts?text=${encodeURIComponent(escalateNotice)}&lang=${respLang}`
+        });
+
+        io.to('role:admin').to('role:agent').emit('transfer:incoming', {
+          transferId: transferReq.id,
+          callId: data.callId,
+          callRecordId: call.id,
+          customerId: call.customerId,
+          customerName: call.customerName,
+          customerPhone: call.customerPhone || 'Not provided',
+          question: reason,
+          reason,
+          duration: call.duration || 0,
+          language: respLang,
+          createdAt: transferReq.createdAt
+        });
+      } catch (err) {
+        console.error('[Call] Error in call:escalate:', err);
+      }
+    });
+
+    // 7A2. Agent/Admin query active AI calls
+    socket.on('active_ai_calls:get', async () => {
+      try {
+        const activeCalls = await prisma.callRecord.findMany({
+          where: { status: 'active', type: 'ai_voice' },
+          orderBy: { startTime: 'desc' },
+          take: 20,
+          include: {
+            transcripts: {
+              orderBy: { timestamp: 'desc' },
+              take: 3
+            }
+          }
+        });
+        socket.emit('active_ai_calls:list', activeCalls);
+      } catch (err) {
+        console.error('[ActiveAICalls] Error fetching active calls:', err);
       }
     });
 
@@ -958,8 +1045,8 @@ export function initSocketServer(io: SocketIOServer) {
 
         const callLang = data.language || call.language || 'en';
 
-        // Record customer's speech in transcript
-        await prisma.callTranscript.create({
+        // 1. Asynchronously record customer's speech in DB transcript without blocking response pipeline
+        prisma.callTranscript.create({
           data: {
             callRecordId: call.id,
             sender: 'customer',
@@ -967,15 +1054,25 @@ export function initSocketServer(io: SocketIOServer) {
             text: queryText,
             language: callLang
           }
-        });
+        }).catch(e => console.error('[AICall] Error saving customer transcript:', e));
 
-        // AI Sentiment Analysis on customer query
-        const sentimentResult = await sentimentService.processCustomerUtterance({
-          callId: data.callId,
-          text: queryText,
-          language: callLang,
-          customerId: call.customerId
-        });
+        // 2. Fetch sentiment and conversation history in parallel
+        const [sentimentResult, history] = await Promise.all([
+          sentimentService.processCustomerUtterance({
+            callId: data.callId,
+            text: queryText,
+            language: callLang,
+            customerId: call.customerId
+          }),
+          prisma.callTranscript.findMany({
+            where: { callRecordId: call.id },
+            orderBy: { timestamp: 'desc' },
+            take: 6
+          }).then(recent => recent.reverse().map(t => ({
+            role: (t.sender === 'customer' ? 'user' : 'assistant') as 'user' | 'assistant',
+            content: t.text
+          }))).catch(() => [])
+        ]);
 
         // Real-time sentiment update broadcast
         io.to(`call:${data.callId}`).emit('call:sentiment_update', {
@@ -1014,13 +1111,29 @@ export function initSocketServer(io: SocketIOServer) {
           io.to('role:agent').emit('sentiment:assistance_alert', alertPayload);
         }
 
-        // Multilingual grounded knowledge retrieval
-        const response = await translationService.getAiAnswerSuggestion(queryText, callLang);
+        // Multilingual grounded knowledge retrieval with multi-turn conversation context
+        const response = await translationService.getAiAnswerSuggestion(queryText, callLang, history);
 
-        const requiresTransfer = !response.isGrounded || sentimentResult.requiresHumanAssistance;
+        const aiResponseTime = Date.now();
+        const clientSpeechEnd = (data as any).clientSentAt || (data as any).speechEndTime || aiResponseTime;
+        const totalRoundTripMs = Math.max(15, aiResponseTime - clientSpeechEnd);
+        const aiProcessingMs = Math.max(10, response.latencyMs || (aiResponseTime - clientSpeechEnd));
+
+        // Update CallRecord asynchronously
+        prisma.callRecord.update({
+          where: { id: call.id },
+          data: {
+            avgLatency: totalRoundTripMs,
+            language: response.language || callLang
+          }
+        }).catch(e => console.error('[AICall] Error updating call record latency:', e));
+
+        const respLang = response.language || callLang;
+        const aiText = response.answer || FALLBACK_MESSAGE;
+        const requiresTransfer = response.requiresTransfer || sentimentResult.requiresHumanAssistance;
 
         if (requiresTransfer) {
-          const transferReasonText = !response.isGrounded
+          const transferReasonText = response.requiresTransfer
             ? 'Information unavailable in approved Knowledge Base'
             : (sentimentResult.reason || 'High customer frustration detected / Live human assistance requested');
           console.log(`[AICall] Query requires transfer to Admin/Agent: "${queryText}" (Reason: ${transferReasonText})`);
@@ -1029,7 +1142,7 @@ export function initSocketServer(io: SocketIOServer) {
             where: { id: call.id },
             data: {
               transferred: true,
-              transferReason: !response.isGrounded ? `Unanswered: "${queryText}"` : transferReasonText,
+              transferReason: transferReasonText,
               customerQuestion: queryText,
               type: 'admin_transfer'
             }
@@ -1056,13 +1169,12 @@ export function initSocketServer(io: SocketIOServer) {
             });
           }
 
-          let fallbackNotice = response.answer || FALLBACK_MESSAGE;
+          let fallbackNotice = aiText;
           if (sentimentResult.requiresHumanAssistance) {
             fallbackNotice = "I understand you need immediate support. Please hold while I connect you directly with a human support specialist.";
-          }
-          const respLang = response.language || callLang;
-          if (respLang !== 'en') {
-            fallbackNotice = await translationService.translateText(fallbackNotice, respLang, 'en');
+            if (respLang !== 'en') {
+              fallbackNotice = await translationService.translateText(fallbackNotice, respLang, 'en');
+            }
           }
 
           // Record fallback in DB transcript
@@ -1081,14 +1193,18 @@ export function initSocketServer(io: SocketIOServer) {
             isTransferring: true,
             transferId: transferReq.id,
             language: respLang,
-            audioUrl: `/api/voice/tts?text=${encodeURIComponent(fallbackNotice)}&lang=${respLang}`
+            audioUrl: `/api/voice/tts?text=${encodeURIComponent(aiText)}&lang=${respLang}`,
+            latency: {
+              aiMs: aiProcessingMs,
+              totalRoundTripMs
+            }
           });
 
           // Broadcast to call participants
           io.to(`call:${data.callId}`).emit('call:live_transcript', {
             sender: 'ai',
             senderName: 'KAIRA AI',
-            text: fallbackNotice,
+            text: aiText,
             language: respLang,
             timestamp: new Date()
           });
@@ -1140,7 +1256,7 @@ export function initSocketServer(io: SocketIOServer) {
               callRecordId: call.id
             });
           } else {
-            // Fallback: broadcast transfer alert to all staff
+            // Fallback: broadcast transfer alert to admins and agents
             io.to('role:admin').to('role:agent').emit('transfer:incoming', {
               transferId: transferReq.id,
               callId: data.callId,
@@ -1185,25 +1301,17 @@ export function initSocketServer(io: SocketIOServer) {
             }
           }
         } else {
-          const respLang = response.language || callLang;
-          const aiText = response.answer || FALLBACK_MESSAGE;
-          // Record AI's response in transcript
-          await prisma.callTranscript.create({
-            data: {
-              callRecordId: call.id,
-              sender: 'ai',
-              senderName: 'KAIRA AI',
-              text: aiText,
-              language: respLang
-            }
-          });
-
+          // Send response to caller immediately for sub-1000ms latency
           socket.emit('call:ai_response', {
             answer: aiText,
             isTransferring: false,
             sources: response.sources,
             language: respLang,
-            audioUrl: `/api/voice/tts?text=${encodeURIComponent(aiText)}&lang=${respLang}`
+            audioUrl: `/api/voice/tts?text=${encodeURIComponent(aiText)}&lang=${respLang}`,
+            latency: {
+              aiMs: aiProcessingMs,
+              totalRoundTripMs
+            }
           });
 
           // Broadcast to call participants
@@ -1214,10 +1322,38 @@ export function initSocketServer(io: SocketIOServer) {
             language: respLang,
             timestamp: new Date()
           });
+
+          // Broadcast real-time AI conversation metrics to Agent and Admin dashboards for monitoring
+          io.to('role:admin').to('role:agent').emit('ai_call:live_metrics', {
+            callId: data.callId,
+            customerName: call.customerName,
+            query: queryText,
+            answer: aiText,
+            language: respLang,
+            latencyMs: totalRoundTripMs,
+            sentiment: sentimentResult.sentiment
+          });
+
+          // Asynchronously record AI's response in DB transcript
+          await prisma.callTranscript.create({
+            data: {
+              callRecordId: call.id,
+              sender: 'ai',
+              senderName: 'KAIRA AI',
+              text: aiText,
+              language: respLang
+            }
+          }).catch(e => console.error('[AICall] Error saving AI transcript:', e));
         }
       } catch (err) {
         console.error('[AICall] Error in call:query:', err);
       }
+    });
+
+    // 8B. Customer interrupts AI speaking (Barge-in / Voice Activity Detection cancellation)
+    socket.on('call:interrupt', (data: { callId: string }) => {
+      console.log(`[AICall] Barge-in: Customer interrupted AI on call: ${data.callId}`);
+      io.to(`call:${data.callId}`).emit('call:interrupted', { callId: data.callId });
     });
 
     // 9. Live Speech Transcription Relay & Real-Time Multilingual Translation
@@ -1973,6 +2109,11 @@ export function initSocketServer(io: SocketIOServer) {
           callId: data.callId,
           duration: data.duration,
           endedBy: data.endedBy || 'user'
+        });
+
+        io.to('role:admin').to('role:agent').emit('ai_call:ended', {
+          callId: data.callId,
+          duration: data.duration
         });
 
         // Generate and persist post-call sentiment summary

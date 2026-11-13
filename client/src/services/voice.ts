@@ -24,6 +24,10 @@ export class VoiceService {
   private currentLang: string = 'en-US';
   private currentVolume: number = 1.0;
   private audioUnlocked: boolean = false;
+  private vadTimer: any = null;
+  private lastInterimTranscript: string = '';
+  public onInterruption?: () => void;
+  public onSpeechStart?: () => void;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -92,7 +96,18 @@ export class VoiceService {
     }
   }
 
-  // Start speech recognition with automatic customer interruption support
+  // Check if AI is currently playing voice audio
+  public isSpeaking(): boolean {
+    if (this.currentAudio && !this.currentAudio.paused && !this.currentAudio.ended) {
+      return true;
+    }
+    if (this.synth && this.synth.speaking) {
+      return true;
+    }
+    return false;
+  }
+
+  // Start speech recognition with fast VAD and automatic customer interruption support
   public startListening(
     onResult: (text: string, isFinal: boolean) => void,
     onError?: (err: any) => void
@@ -105,20 +120,57 @@ export class VoiceService {
     if (this.isListening) return;
 
     this.recognition.onresult = (event: any) => {
-      // Customer interruption: If customer speaks while AI is speaking, cut off AI speech immediately!
-      this.cancelSpeech();
+      // 1. BARGE-IN: If customer speaks while AI is speaking, cut off AI speech immediately!
+      if (this.isSpeaking()) {
+        console.log('[VoiceService] Barge-in triggered: customer spoke while AI speaking.');
+        this.cancelSpeech();
+        if (this.onInterruption) {
+          this.onInterruption();
+        }
+      }
+
+      if (this.onSpeechStart) {
+        this.onSpeechStart();
+      }
 
       let interim = '';
+      let isFinalResult = false;
+      let finalTranscript = '';
+
       for (let i = event.resultIndex; i < event.results.length; ++i) {
         const transcript = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          onResult(transcript.trim(), true);
+          isFinalResult = true;
+          finalTranscript = transcript.trim();
         } else {
           interim += transcript;
         }
       }
-      if (interim) {
-        onResult(interim.trim(), false);
+
+      if (isFinalResult && finalTranscript) {
+        if (this.vadTimer) {
+          clearTimeout(this.vadTimer);
+          this.vadTimer = null;
+        }
+        this.lastInterimTranscript = '';
+        onResult(finalTranscript, true);
+      } else if (interim.trim()) {
+        this.lastInterimTranscript = interim.trim();
+        onResult(this.lastInterimTranscript, false);
+
+        // Fast Voice Activity Detection (VAD) Debounce:
+        // If customer stops speaking for 250ms on a meaningful utterance, finalize without waiting for browser delay!
+        if (this.vadTimer) clearTimeout(this.vadTimer);
+        if (this.lastInterimTranscript.length >= 2) {
+          this.vadTimer = setTimeout(() => {
+            if (this.lastInterimTranscript && this.isListening) {
+              const textToEmit = this.lastInterimTranscript;
+              this.lastInterimTranscript = '';
+              console.log('[VoiceService] Fast VAD detected end of speech:', textToEmit);
+              onResult(textToEmit, true);
+            }
+          }, 260);
+        }
       }
     };
 
@@ -154,6 +206,11 @@ export class VoiceService {
   // Stop speech recognition
   public stopListening() {
     this.isListening = false;
+    if (this.vadTimer) {
+      clearTimeout(this.vadTimer);
+      this.vadTimer = null;
+    }
+    this.lastInterimTranscript = '';
     if (this.recognition) {
       try {
         this.recognition.stop();
@@ -162,7 +219,12 @@ export class VoiceService {
   }
 
   // Speak text using High-Fidelity Audio Stream with seamless fallback to SpeechSynthesis
-  public speak(text: string, onEnd?: () => void, langCode?: string): Promise<void> {
+  public speak(
+    text: string,
+    onEnd?: () => void,
+    langCode?: string,
+    onStartAudio?: () => void
+  ): Promise<void> {
     return new Promise((resolve) => {
       const cleanText = (text || '').trim();
       if (!cleanText) {
@@ -183,13 +245,22 @@ export class VoiceService {
       this.currentAudio = audio;
       audio.volume = this.currentVolume;
 
+      let hasStarted = false;
       let hasResolved = false;
+
       const finish = () => {
         if (!hasResolved) {
           hasResolved = true;
           this.currentAudio = null;
           if (onEnd) onEnd();
           resolve();
+        }
+      };
+
+      audio.onplay = () => {
+        if (!hasStarted) {
+          hasStarted = true;
+          if (onStartAudio) onStartAudio();
         }
       };
 
@@ -200,19 +271,24 @@ export class VoiceService {
       audio.onerror = (err) => {
         console.warn('[VoiceService] Server TTS error, falling back to Web SpeechSynthesis:', err);
         this.currentAudio = null;
-        this.speakWithSpeechSynthesis(cleanText, onEnd, targetLang).then(resolve);
+        this.speakWithSpeechSynthesis(cleanText, onEnd, targetLang, onStartAudio).then(resolve);
       };
 
       audio.play().catch((playErr) => {
         console.warn('[VoiceService] HTML5 Audio autoplay policy error, falling back to Web SpeechSynthesis:', playErr);
         this.currentAudio = null;
-        this.speakWithSpeechSynthesis(cleanText, onEnd, targetLang).then(resolve);
+        this.speakWithSpeechSynthesis(cleanText, onEnd, targetLang, onStartAudio).then(resolve);
       });
     });
   }
 
   // Fallback: Web Speech API SpeechSynthesis
-  private speakWithSpeechSynthesis(text: string, onEnd?: () => void, langCode?: string): Promise<void> {
+  private speakWithSpeechSynthesis(
+    text: string,
+    onEnd?: () => void,
+    langCode?: string,
+    onStartAudio?: () => void
+  ): Promise<void> {
     return new Promise((resolve) => {
       if (!this.synth) {
         if (onEnd) onEnd();
@@ -233,7 +309,8 @@ export class VoiceService {
       const langPrefix = targetBcp47.split('-')[0];
 
       // Find matching voice
-      const matchingVoice = voices.find(v => v.lang.toLowerCase() === targetBcp47.toLowerCase()) ||
+      const matchingVoice =
+        voices.find(v => v.lang.toLowerCase() === targetBcp47.toLowerCase()) ||
         voices.find(v => v.lang.toLowerCase().startsWith(langPrefix)) ||
         voices.find(v => v.name.includes('Google') && v.lang.startsWith('en')) ||
         voices.find(v => v.lang.startsWith('en'));
@@ -242,9 +319,13 @@ export class VoiceService {
         utterance.voice = matchingVoice;
       }
 
-      utterance.rate = 1.0;
+      utterance.rate = 1.05;
       utterance.pitch = 1.0;
       utterance.volume = this.currentVolume;
+
+      utterance.onstart = () => {
+        if (onStartAudio) onStartAudio();
+      };
 
       utterance.onend = () => {
         this.currentUtterance = null;

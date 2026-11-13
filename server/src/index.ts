@@ -35,6 +35,7 @@ import biRoutes from './routes/bi.routes.js';
 import recordingsRoutes from './routes/recordings.routes.js';
 import { initSocketServer } from './services/socket.js';
 import { initBiScheduler } from './services/biScheduler.js';
+import { knowledgeService } from './services/knowledge.js';
 import { seedDatabase } from './seed.js';
 
 const app = express();
@@ -301,6 +302,8 @@ server.listen(PORT, async () => {
   try {
     await seedDatabase();
     initBiScheduler();
+    // Warm up AI knowledge engine on server startup for instant sub-second response
+    await knowledgeService.warmup();
   } catch (err) {
     console.error('Failed to run initial database seed:', err);
   }

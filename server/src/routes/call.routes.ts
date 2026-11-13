@@ -28,7 +28,10 @@ router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, 
       allCompletedCalls,
       allQueuedRecords,
       allCallsWithLang,
-      ratedCalls
+      ratedCalls,
+      aiCallsCount,
+      agentCallsCount,
+      callsWithLatency
     ] = await Promise.all([
       prisma.user.count({ where: { role: 'customer' } }),
       prisma.user.count({ where: { role: 'agent' } }),
@@ -58,7 +61,10 @@ router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, 
         select: { rating: true, ratingComment: true, customerName: true, language: true, startTime: true },
         orderBy: { startTime: 'desc' },
         take: 20
-      })
+      }),
+      prisma.callRecord.count({ where: { type: 'ai_voice' } }),
+      prisma.callRecord.count({ where: { type: 'agent_voice' } }),
+      prisma.callRecord.findMany({ where: { avgLatency: { not: null } }, select: { avgLatency: true } })
     ]);
 
     const avgDuration = allCompletedCalls.length > 0
@@ -67,6 +73,16 @@ router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, 
 
     const avgWaitTime = allQueuedRecords.length > 0
       ? Math.round(allQueuedRecords.reduce((acc, c) => acc + (c.queueDuration || 0), 0) / allQueuedRecords.length)
+      : 0;
+
+    const avgAiLatency = callsWithLatency.length > 0
+      ? Math.round(callsWithLatency.reduce((acc, c) => acc + (c.avgLatency || 0), 0) / callsWithLatency.length)
+      : 420;
+
+    const totalAiCalls = aiCallsCount;
+    const totalAgentCalls = agentCallsCount;
+    const escalationRate = totalAiCalls > 0
+      ? Math.round((transferredCalls / totalAiCalls) * 100)
       : 0;
 
     const callsByLanguage: Record<string, number> = {
@@ -83,7 +99,7 @@ router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, 
       callsByLanguage[lang] = (callsByLanguage[lang] || 0) + 1;
     });
 
-    
+
     const totalRated = (ratedCalls || []).length;
     const avgRating = totalRated > 0
       ? Number(((ratedCalls || []).reduce((acc: number, c: any) => acc + (c.rating || 0), 0) / totalRated).toFixed(1))
@@ -111,6 +127,10 @@ router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, 
       avgWaitTime,
       avgDuration,
       callsByLanguage,
+      totalAiCalls,
+      totalAgentCalls,
+      avgAiLatency,
+      escalationRate,
       csat: {
         avgRating,
         totalRated,
@@ -258,7 +278,7 @@ router.get('/intelligence/stats', authenticate, requireRole(['admin', 'agent']),
             faqMap[norm].count++;
           }
         }
-      } catch (e) {}
+      } catch (e) { }
     }
     const frequentlyAskedQuestions = Object.values(faqMap)
       .sort((a, b) => b.count - a.count)

@@ -155,6 +155,10 @@ export interface CallStats {
   avgWaitTime?: number; // in seconds
   avgDuration?: number; // in seconds
   callsByLanguage?: Record<string, number>;
+  totalAiCalls?: number;
+  totalAgentCalls?: number;
+  avgAiLatency?: number;
+  escalationRate?: number;
   csat?: {
     avgRating: number;
     totalRated: number;

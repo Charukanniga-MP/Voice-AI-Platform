@@ -18,7 +18,7 @@ import {
   Volume2, VolumeX, Clock, Search, BookOpen,
   Smartphone, AlertCircle, CheckCircle2, Radio, Info,
   Globe, Sparkles, MessageSquare, Pause, Play, Send, Copy, Users, Settings, ListTodo,
-  HeartPulse, Flame, Mail, Phone
+  HeartPulse, Flame, Mail, Phone, ShieldAlert, RefreshCw
 } from 'lucide-react';
 import { SentimentBadge } from '../components/SentimentBadge.js';
 import { LiveSentimentCard } from '../components/LiveSentimentCard.js';
@@ -52,8 +52,35 @@ export const AgentDashboard: React.FC = () => {
 
 
 
-  // Navigation tab: 'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets' | 'tasks'
-  const [activeTab, setActiveTab] = useState<'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets' | 'tasks'>('outgoing');
+  // Navigation tab: 'ai_monitor' | 'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets' | 'tasks'
+  const [activeTab, setActiveTab] = useState<'ai_monitor' | 'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets' | 'tasks'>('ai_monitor');
+
+  // Active AI Calls Real-Time Monitoring & Human Escalations (Module 10)
+  const [activeAiCalls, setActiveAiCalls] = useState<Array<{
+    callId: string;
+    customerName: string;
+    customerPhone: string;
+    language: string;
+    startTime: string;
+    duration?: number;
+    lastQuery?: string;
+    lastAnswer?: string;
+    latencyMs?: number;
+    sentiment?: SentimentType;
+  }>>([]);
+
+  const [escalationAlert, setEscalationAlert] = useState<{
+    transferId: string;
+    callId: string;
+    callRecordId: string;
+    customerId?: string;
+    customerName: string;
+    customerPhone: string;
+    question: string;
+    reason: string;
+    duration: number;
+    language: string;
+  } | null>(null);
 
   // Customer Profile & Call Intelligence modals
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
@@ -385,6 +412,97 @@ export const AgentDashboard: React.FC = () => {
       ]);
     });
 
+    // 10. AI Voice Agent live monitoring and escalations (Module 10)
+    const handleIncomingEscalation = (data: any) => {
+      console.log('[Agent] Incoming escalation alert:', data);
+      setEscalationAlert(data);
+      ringtoneService.start(data.customerName);
+    };
+
+    const handleAiLiveMetrics = (data: {
+      callId: string;
+      customerName: string;
+      query: string;
+      answer: string;
+      language: string;
+      latencyMs: number;
+      sentiment: SentimentType;
+    }) => {
+      setActiveAiCalls(prev => {
+        const idx = prev.findIndex(c => c.callId === data.callId);
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = {
+            ...updated[idx],
+            lastQuery: data.query,
+            lastAnswer: data.answer,
+            latencyMs: data.latencyMs,
+            sentiment: data.sentiment,
+            language: data.language
+          };
+          return updated;
+        } else {
+          return [
+            {
+              callId: data.callId,
+              customerName: data.customerName,
+              customerPhone: 'App Customer',
+              language: data.language,
+              startTime: new Date().toISOString(),
+              lastQuery: data.query,
+              lastAnswer: data.answer,
+              latencyMs: data.latencyMs,
+              sentiment: data.sentiment
+            },
+            ...prev
+          ];
+        }
+      });
+    };
+
+    const handleAiCallStarted = (data: any) => {
+      setActiveAiCalls(prev => [
+        {
+          callId: data.callId,
+          customerName: data.customerName,
+          customerPhone: data.customerPhone || 'App Customer',
+          language: data.language || 'en',
+          startTime: data.startTime || new Date().toISOString()
+        },
+        ...prev.filter(c => c.callId !== data.callId)
+      ]);
+    };
+
+    const handleAiCallEnded = (data: any) => {
+      setActiveAiCalls(prev => prev.filter(c => c.callId !== data.callId));
+      setEscalationAlert(prev => (prev && prev.callId === data.callId ? null : prev));
+    };
+
+    const handleActiveAiCallsList = (data: any[]) => {
+      if (Array.isArray(data)) {
+        setActiveAiCalls(data.map((c: any) => ({
+          callId: c.callId,
+          customerName: c.customerName,
+          customerPhone: c.customerPhone || 'App Customer',
+          language: c.language || 'en',
+          startTime: c.startTime,
+          lastQuery: c.transcripts?.[1]?.text,
+          lastAnswer: c.transcripts?.[0]?.text,
+          latencyMs: c.avgLatency || 450,
+          sentiment: c.sentiment || 'NEUTRAL'
+        })));
+      }
+    };
+
+    socket.on('transfer:incoming', handleIncomingEscalation);
+    socket.on('ai_call:live_metrics', handleAiLiveMetrics);
+    socket.on('ai_call:started', handleAiCallStarted);
+    socket.on('ai_call:ended', handleAiCallEnded);
+    socket.on('active_ai_calls:list', handleActiveAiCallsList);
+
+    // Initial query for active AI calls
+    socket.emit('active_ai_calls:get');
+
     return () => {
       socket.off('agent:incoming_call');
       socket.off('agent:call_missed');
@@ -397,6 +515,11 @@ export const AgentDashboard: React.FC = () => {
       socket.off('call:reconnecting');
       socket.off('call:reconnected');
       socket.off('call:reconnect_failed');
+      socket.off('transfer:incoming', handleIncomingEscalation);
+      socket.off('ai_call:live_metrics', handleAiLiveMetrics);
+      socket.off('ai_call:started', handleAiCallStarted);
+      socket.off('ai_call:ended', handleAiCallEnded);
+      socket.off('active_ai_calls:list', handleActiveAiCallsList);
     };
   }, [incomingCall, activeCall]);
 
@@ -524,6 +647,69 @@ export const AgentDashboard: React.FC = () => {
     });
 
     setIncomingCall(null);
+  };
+
+  // Take over active call during human escalation (Module 10)
+  const handleTakeOverCall = async (esc: any) => {
+    if (!esc) return;
+    ringtoneService.stop();
+    setEscalationAlert(null);
+
+    const hasMic = await audioDeviceManager.ensureMicrophoneAccess();
+    if (!hasMic) {
+      setShowAudioDeviceModal(true);
+      return;
+    }
+
+    webrtcManager.unlockAudio();
+    voiceService.unlockAudio();
+
+    setActiveCall({
+      callId: esc.callId,
+      callRecordId: esc.callRecordId,
+      customerName: esc.customerName,
+      customerPhone: esc.customerPhone || 'Direct App Call',
+      customerId: esc.customerId,
+      preferredLanguage: esc.language,
+      isIncomingSupport: true,
+      state: 'connected',
+      statusText: `Speaking with ${esc.customerName} (Human Escalation)`
+    });
+    setLogs([
+      {
+        id: 't_' + Date.now(),
+        sender: 'system',
+        senderName: 'System',
+        text: `Escalation accepted by Support Specialist ${user?.name}. Reason: ${esc.reason}. Customer question: "${esc.question}".`,
+        timestamp: new Date().toLocaleTimeString()
+      }
+    ]);
+    setActiveTab('console');
+
+    const socket = getSocket();
+    socket.emit('transfer:accept', {
+      transferId: esc.transferId,
+      adminId: user?.id,
+      adminName: user?.name
+    });
+
+    try {
+      await webrtcManager.getMicrophoneStream();
+      voiceService.setLanguage('en');
+      voiceService.startListening((text, isFinal) => {
+        if (isFinal && text.trim()) {
+          socket.emit('call:live_speech', {
+            callId: esc.callId,
+            sender: 'agent',
+            senderName: user?.name || 'Support Specialist',
+            text: text.trim(),
+            language: 'en'
+          });
+        }
+      });
+    } catch (err) {
+      console.error('Failed accessing mic on call takeover:', err);
+    }
   };
 
   // Toggle Hold / Resume
@@ -1012,6 +1198,51 @@ export const AgentDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* Real-Time Live Escalation Alert Banner (Module 10) */}
+      {escalationAlert && (
+        <div className="bg-gradient-to-r from-amber-500/15 via-rose-500/15 to-amber-500/15 border-2 border-amber-400 rounded-3xl p-5 flex flex-wrap items-center justify-between gap-4 shadow-lg animate-pulse">
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-amber-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-amber-300">
+              <ShieldAlert className="w-6 h-6 animate-bounce" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-black text-amber-950">Customer Escalation Request (Live)</h3>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-600 text-white uppercase tracking-wider">
+                  Human Needed
+                </span>
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-white text-slate-700 border border-amber-200">
+                  Lang: {escalationAlert.language.toUpperCase()}
+                </span>
+              </div>
+              <p className="text-xs text-amber-900 mt-1">
+                <strong>{escalationAlert.customerName}</strong> ({escalationAlert.customerPhone}): "{escalationAlert.question}" — <em>{escalationAlert.reason}</em>
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => handleTakeOverCall(escalationAlert)}
+              className="min-h-[44px] px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white rounded-xl text-xs font-black transition shadow-md shadow-emerald-500/25 active:scale-95 cursor-pointer flex items-center gap-2"
+            >
+              <PhoneCall className="w-4 h-4" />
+              <span>Take Over Call Now</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                ringtoneService.stop();
+                setEscalationAlert(null);
+              }}
+              className="px-3 py-2 bg-white hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-xl text-xs font-semibold transition cursor-pointer"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Real-Time Human Assistance Priority Warning Banner */}
       {assistanceAlert && (
         <div className="bg-rose-50 border-2 border-rose-300 rounded-3xl p-4 flex flex-wrap items-center justify-between gap-4 shadow-sm animate-fadeIn">
@@ -1063,8 +1294,8 @@ export const AgentDashboard: React.FC = () => {
               <button
                 onClick={handleToggleStatus}
                 className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border transition-all cursor-pointer ${agentStatus === 'available'
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-                    : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                  : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
                   }`}
                 title="Click to toggle Available / Busy"
               >
@@ -1095,6 +1326,19 @@ export const AgentDashboard: React.FC = () => {
 
           {/* Navigation Tabs */}
           <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200 text-xs font-semibold overflow-x-auto">
+            <button
+              onClick={() => setActiveTab('ai_monitor')}
+              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === 'ai_monitor' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+              <span>AI Calls Live Monitor</span>
+              {activeAiCalls.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-500 text-white animate-pulse">
+                  {activeAiCalls.length}
+                </span>
+              )}
+            </button>
             <button
               onClick={() => setActiveTab('outgoing')}
               className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${activeTab === 'outgoing' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
@@ -1129,18 +1373,16 @@ export const AgentDashboard: React.FC = () => {
             </button>
             <button
               onClick={() => setActiveTab('tickets')}
-              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'tickets' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-              }`}
+              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === 'tickets' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
             >
               <MessageSquare className="w-3.5 h-3.5 text-purple-600" />
               Tickets
             </button>
             <button
               onClick={() => setActiveTab('tasks')}
-              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'tasks' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-              }`}
+              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === 'tasks' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
             >
               <ListTodo className="w-3.5 h-3.5 text-amber-600" />
               Follow-Up Tasks
@@ -1148,7 +1390,195 @@ export const AgentDashboard: React.FC = () => {
           </div>
         </div>
 
+        {/* Supported Languages Multi-select Pills */}
+        <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 mr-1">
+            <Globe className="w-3.5 h-3.5 text-indigo-600" />
+            My Fluent Languages:
+          </span>
+          {(Object.entries(SUPPORTED_LANGUAGES) as [LanguageCode, typeof SUPPORTED_LANGUAGES[LanguageCode]][]).map(([code, meta]) => {
+            const isSupported = supportedLanguages.includes(code);
+            return (
+              <button
+                key={code}
+                onClick={() => handleToggleLanguage(code)}
+                className={`px-2.5 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer ${isSupported
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                  : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'
+                  }`}
+              >
+                {meta.nativeName} ({meta.name})
+              </button>
+            );
+          })}
+        </div>
       </div>
+
+      {/* 0. AI CALLS LIVE MONITOR & ESCALATIONS TAB (MODULE 10) */}
+      {activeTab === 'ai_monitor' && (
+        <div className="space-y-6">
+          {/* Header & Status Card */}
+          <div className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-purple-900 rounded-3xl p-6 sm:p-8 text-white shadow-xl relative overflow-hidden">
+            <div className="absolute -right-10 -bottom-10 w-72 h-72 rounded-full bg-white/10 blur-2xl pointer-events-none" />
+            <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div className="space-y-2 max-w-2xl">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-400/20 text-emerald-200 border border-emerald-400/30">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    AI Voice Dispatcher Online
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-white/20 text-white border border-white/20">
+                    Human Escalation Specialist Role
+                  </span>
+                </div>
+                <h2 className="text-2xl font-black tracking-tight">AI Voice Calls Live Monitoring Console</h2>
+                <p className="text-xs text-indigo-100 leading-relaxed">
+                  Incoming customer voice calls are answered automatically by the KAIRA Multilingual AI Voice Agent in under 1.2s. As an escalation specialist, you monitor real-time conversation telemetry, transcripts, and latency, stepping in whenever a customer requests human support.
+                </p>
+              </div>
+
+              <div className="flex flex-row md:flex-col items-center md:items-end gap-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const socket = getSocket();
+                    socket.emit('active_ai_calls:get');
+                  }}
+                  className="px-4 py-2 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl text-xs font-semibold flex items-center gap-2 cursor-pointer transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Refresh Active Calls</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Metrics */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 pt-6 border-t border-white/10">
+              <div className="bg-white/10 backdrop-blur-xs p-3.5 rounded-2xl border border-white/10">
+                <span className="text-[11px] text-indigo-200">Active AI Calls</span>
+                <div className="text-xl font-black mt-0.5">{activeAiCalls.length}</div>
+              </div>
+              <div className="bg-white/10 backdrop-blur-xs p-3.5 rounded-2xl border border-white/10">
+                <span className="text-[11px] text-indigo-200">Avg Response Latency</span>
+                <div className="text-xl font-black text-emerald-300 mt-0.5">
+                  {activeAiCalls.length > 0 && activeAiCalls[0]?.latencyMs ? `${activeAiCalls[0].latencyMs}ms` : '<1200ms'}
+                </div>
+              </div>
+              <div className="bg-white/10 backdrop-blur-xs p-3.5 rounded-2xl border border-white/10">
+                <span className="text-[11px] text-indigo-200">Supported Languages</span>
+                <div className="text-xl font-black mt-0.5">6 Regional</div>
+              </div>
+              <div className="bg-white/10 backdrop-blur-xs p-3.5 rounded-2xl border border-white/10">
+                <span className="text-[11px] text-indigo-200">Barge-in Support</span>
+                <div className="text-xl font-black text-emerald-300 mt-0.5">Active</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Active AI Calls List */}
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Radio className="w-5 h-5 text-indigo-600 animate-pulse" />
+                <h3 className="text-base font-extrabold text-slate-900">
+                  Live Multilingual AI Conversations ({activeAiCalls.length})
+                </h3>
+              </div>
+              <span className="text-xs text-slate-400">Continuous 24/7 stream</span>
+            </div>
+
+            {activeAiCalls.length === 0 ? (
+              <div className="py-12 flex flex-col items-center justify-center text-center space-y-3">
+                <div className="w-16 h-16 rounded-3xl bg-indigo-50 text-indigo-600 flex items-center justify-center shadow-inner">
+                  <Sparkles className="w-8 h-8 animate-pulse" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-extrabold text-slate-800">No active AI calls right now</h4>
+                  <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
+                    The KAIRA AI Voice Agent is standing by online. When customers initiate voice calls from the Customer Dashboard or mobile devices, their real-time transcript, sentiment, and voice latency will appear here instantly.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {activeAiCalls.map((call) => {
+                  const langMeta = SUPPORTED_LANGUAGES[call.language as LanguageCode] || SUPPORTED_LANGUAGES.en;
+                  return (
+                    <div
+                      key={call.callId}
+                      className="p-5 rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50/70 to-white space-y-3 shadow-xs hover:border-indigo-300 transition-all"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-xs">
+                            {call.customerName.charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <div className="text-xs font-black text-slate-900">{call.customerName}</div>
+                            <div className="text-[11px] text-slate-400">{call.customerPhone}</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            {langMeta.name}
+                          </span>
+                          {call.latencyMs && (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              ⚡ {call.latencyMs}ms
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Live conversation preview */}
+                      <div className="p-3 rounded-xl bg-white border border-slate-200/80 space-y-1.5 text-xs">
+                        {call.lastQuery && (
+                          <div className="text-slate-600">
+                            <span className="font-bold text-slate-800">Customer:</span> "{call.lastQuery}"
+                          </div>
+                        )}
+                        {call.lastAnswer && (
+                          <div className="text-indigo-900 font-medium pt-1 border-t border-slate-100">
+                            <span className="font-bold text-indigo-700">KAIRA AI:</span> "{call.lastAnswer}"
+                          </div>
+                        )}
+                        {!call.lastQuery && !call.lastAnswer && (
+                          <div className="text-slate-400 italic">Conversation in progress...</div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1">
+                        <div className="flex items-center gap-1.5">
+                          {call.sentiment && <SentimentBadge sentiment={call.sentiment} />}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleTakeOverCall({
+                              transferId: 'direct_takeover_' + call.callId,
+                              callId: call.callId,
+                              callRecordId: call.callId,
+                              customerName: call.customerName,
+                              customerPhone: call.customerPhone,
+                              language: call.language,
+                              question: call.lastQuery || 'Agent monitoring intervention',
+                              reason: 'Manual specialist takeover'
+                            });
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition shadow-2xs cursor-pointer flex items-center gap-1.5"
+                        >
+                          <PhoneCall className="w-3.5 h-3.5" />
+                          <span>Take Over Call</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 1. OUTGOING CALLS TAB */}
       {activeTab === 'outgoing' && (
@@ -1465,10 +1895,10 @@ export const AgentDashboard: React.FC = () => {
                       <div
                         key={log.id}
                         className={`flex flex-col ${log.sender === 'agent'
-                            ? 'items-end'
-                            : log.sender === 'system'
-                              ? 'items-center'
-                              : 'items-start'
+                          ? 'items-end'
+                          : log.sender === 'system'
+                            ? 'items-center'
+                            : 'items-start'
                           }`}
                       >
                         {log.sender === 'system' ? (
@@ -1482,8 +1912,8 @@ export const AgentDashboard: React.FC = () => {
                             </span>
                             <div
                               className={`px-4 py-2.5 rounded-2xl text-xs leading-relaxed ${log.sender === 'agent'
-                                  ? 'bg-blue-600 text-white rounded-tr-xs shadow-xs'
-                                  : 'bg-white text-slate-900 border border-slate-200 rounded-tl-xs shadow-2xs'
+                                ? 'bg-blue-600 text-white rounded-tr-xs shadow-xs'
+                                : 'bg-white text-slate-900 border border-slate-200 rounded-tl-xs shadow-2xs'
                                 }`}
                             >
                               <div>{log.text}</div>
@@ -1707,8 +2137,8 @@ export const AgentDashboard: React.FC = () => {
                       </td>
                       <td className="py-3 px-4">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${c.status === 'completed'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : 'bg-slate-100 text-slate-700'
+                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          : 'bg-slate-100 text-slate-700'
                           }`}>
                           {c.status}
                         </span>

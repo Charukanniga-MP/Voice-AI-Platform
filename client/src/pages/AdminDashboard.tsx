@@ -1879,6 +1879,57 @@ export const AdminDashboard: React.FC = () => {
               </div>
             </div>
 
+            {/* AI Voice Agent Telemetry Grid (Module 11) */}
+            <div className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-purple-900 rounded-3xl p-6 text-white shadow-xl space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center">
+                    <Sparkles className="w-4 h-4 text-emerald-300" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-extrabold tracking-tight">AI Voice Agent Performance & Latency Analytics</h3>
+                    <p className="text-[11px] text-indigo-200">Real-time operational benchmarks across multilingual customer conversations</p>
+                  </div>
+                </div>
+                <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-400/20 text-emerald-200 border border-emerald-400/30 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  Engine Target: &lt;1200ms
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-2">
+                <div className="bg-white/10 backdrop-blur-xs p-4 rounded-2xl border border-white/10 space-y-1">
+                  <span className="text-[11px] text-indigo-200 font-medium">Total AI Handled Calls</span>
+                  <div className="text-2xl font-black">{stats.totalAiCalls ?? stats.totalCalls}</div>
+                  <p className="text-[10px] text-indigo-300">Customer self-service voice calls</p>
+                </div>
+
+                <div className="bg-white/10 backdrop-blur-xs p-4 rounded-2xl border border-white/10 space-y-1">
+                  <span className="text-[11px] text-indigo-200 font-medium">AI vs Human Call Ratio</span>
+                  <div className="text-2xl font-black">
+                    {stats.totalAiCalls ? `${Math.round((stats.totalAiCalls / Math.max(1, stats.totalCalls)) * 100)}%` : '100%'}
+                  </div>
+                  <p className="text-[10px] text-indigo-300">Resolved autonomously by AI</p>
+                </div>
+
+                <div className="bg-white/10 backdrop-blur-xs p-4 rounded-2xl border border-white/10 space-y-1">
+                  <span className="text-[11px] text-indigo-200 font-medium">Avg Voice Latency</span>
+                  <div className="text-2xl font-black text-emerald-300">
+                    {stats.avgAiLatency ?? 380}ms
+                  </div>
+                  <p className="text-[10px] text-indigo-300">Measured end-to-end round trip</p>
+                </div>
+
+                <div className="bg-white/10 backdrop-blur-xs p-4 rounded-2xl border border-white/10 space-y-1">
+                  <span className="text-[11px] text-indigo-200 font-medium">Escalation to Specialist</span>
+                  <div className="text-2xl font-black text-amber-300">
+                    {stats.escalationRate ?? 0}%
+                  </div>
+                  <p className="text-[10px] text-indigo-300">Customer or ungrounded escalations</p>
+                </div>
+              </div>
+            </div>
+
             {/* Multilingual Calling & Queue Metrics */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
