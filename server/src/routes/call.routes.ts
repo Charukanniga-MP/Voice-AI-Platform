@@ -1,3 +1,6 @@
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
 import { Router, Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
@@ -737,6 +740,140 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
     res.json({ call });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to retrieve call details.' });
+  }
+});
+
+
+// ==========================================
+// CALL RECORDING STORAGE & PLAYBACK ENDPOINTS
+// ==========================================
+const recordingsDir = path.resolve(process.cwd(), 'uploads/recordings');
+if (!fs.existsSync(recordingsDir)) {
+  fs.mkdirSync(recordingsDir, { recursive: true });
+}
+
+const recordingStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, recordingsDir);
+  },
+  filename: (req, _file, cb) => {
+    const callId = req.params.callId || 'unknown';
+    cb(null, `${callId}.webm`);
+  }
+});
+
+const uploadRecording = multer({
+  storage: recordingStorage,
+  limits: { fileSize: 50 * 1024 * 1024 }
+});
+
+// 15. Upload Call Recording Audio
+router.post('/:callId/recording', authenticate, uploadRecording.single('audio'), async (req: Request, res: Response) => {
+  try {
+    const { callId } = req.params;
+    const duration = req.body.duration ? parseInt(req.body.duration) : 0;
+
+    if (!req.file) {
+      res.status(400).json({ error: 'No audio recording file provided.' });
+      return;
+    }
+
+    const call = await prisma.callRecord.findUnique({
+      where: { callId }
+    });
+
+    if (!call) {
+      if (req.file && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+      res.status(404).json({ error: 'Call record not found.' });
+      return;
+    }
+
+    const recordingUrl = `/api/calls/${callId}/recording`;
+    const updatedCall = await prisma.callRecord.update({
+      where: { callId },
+      data: {
+        recordingUrl,
+        recordingDuration: duration || call.duration || 0,
+        recordingStatus: 'completed',
+        recordingSizeBytes: req.file.size
+      }
+    });
+
+    console.log(`[Recording] Stored recording for call ${callId} (${req.file.size} bytes, ${duration}s)`);
+    res.json({
+      success: true,
+      message: 'Call recording saved successfully.',
+      recordingUrl,
+      recordingDuration: updatedCall.recordingDuration,
+      recordingSizeBytes: req.file.size
+    });
+  } catch (err: any) {
+    console.error('[Recording] Upload error:', err);
+    res.status(500).json({ error: 'Failed to save call recording.' });
+  }
+});
+
+// 16. Stream / Download Call Recording
+router.get('/:callId/recording', authenticate, async (req: Request, res: Response) => {
+  try {
+    const { callId } = req.params;
+    const call = await prisma.callRecord.findUnique({
+      where: { callId }
+    });
+
+    if (!call) {
+      res.status(404).json({ error: 'Call record not found.' });
+      return;
+    }
+
+    // Role-based permission check: Customer can only access their own calls
+    if (req.user!.role === 'customer' && call.customerId !== req.user!.id) {
+      res.status(403).json({ error: 'Access denied.' });
+      return;
+    }
+
+    const filePath = path.resolve(recordingsDir, `${callId}.webm`);
+    if (!fs.existsSync(filePath)) {
+      res.status(404).json({ error: 'Recording audio file not found on server.' });
+      return;
+    }
+
+    const stat = fs.statSync(filePath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+
+    if (req.query.download === 'true') {
+      res.setHeader('Content-Disposition', `attachment; filename="KAIRA-Recording-${callId}.webm"`);
+    }
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunksize = (end - start) + 1;
+      const file = fs.createReadStream(filePath, { start, end });
+      const head = {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunksize,
+        'Content-Type': 'audio/webm',
+      };
+      res.writeHead(206, head);
+      file.pipe(res);
+    } else {
+      const head = {
+        'Content-Length': fileSize,
+        'Content-Type': 'audio/webm',
+        'Accept-Ranges': 'bytes'
+      };
+      res.writeHead(200, head);
+      fs.createReadStream(filePath).pipe(res);
+    }
+  } catch (err: any) {
+    console.error('[Recording] Streaming error:', err);
+    res.status(500).json({ error: 'Failed to stream call recording.' });
   }
 });
 

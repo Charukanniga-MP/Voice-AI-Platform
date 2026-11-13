@@ -72,6 +72,12 @@ model CallRecord {
   providerCallSid    String?               @unique
   providerName       String?               @default("twilio")
   failureReason      String?
+  // Call Recording Fields
+  recordingUrl       String?
+  recordingDuration  Int?                  // duration of recorded audio in seconds
+  recordingStatus    String?               @default("none") // "none" | "recording" | "completed" | "failed"
+  recordingSizeBytes Int?
+
 
   overallSentiment   String?               // "POSITIVE" | "NEGATIVE" | "NEUTRAL" | "FRUSTRATED"
   sentimentScore     Float?

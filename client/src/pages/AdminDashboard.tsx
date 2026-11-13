@@ -1609,6 +1609,13 @@ export const AdminDashboard: React.FC = () => {
                   Live Two-Way Audio Active (Low Latency WebRTC • &lt;1.2s)
                 </span>
 
+                
+                {/* Real-time Call Recording Status */}
+                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-rose-50 border border-rose-200 rounded-lg">
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping" />
+                  <span className="text-[10px] font-bold text-rose-700 tracking-wide">REC</span>
+                </div>
+
                 {/* Animated Audio Equalizer Waveform */}
                 <div className="flex items-center gap-1.5 px-2.5 py-1 bg-purple-100/90 border border-purple-200 rounded-lg">
                   <div className="flex items-center gap-0.5 h-3.5">
@@ -4269,6 +4276,38 @@ export const AdminDashboard: React.FC = () => {
               </div>
             )}
 
+
+            
+            {/* Call Recording Playback */}
+            {selectedCallDetails.recordingUrl && (
+              <div className="p-3.5 bg-gradient-to-r from-purple-50 via-indigo-50 to-blue-50 border border-purple-200 rounded-2xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="text-xs font-bold text-slate-800">Actual Call Voice Recording</span>
+                    {selectedCallDetails.recordingDuration ? (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 font-mono font-semibold">
+                        {Math.floor(selectedCallDetails.recordingDuration / 60)}m {selectedCallDetails.recordingDuration % 60}s
+                      </span>
+                    ) : null}
+                  </div>
+                  <a
+                    href={`${selectedCallDetails.recordingUrl}?download=true`}
+                    download
+                    className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-purple-700 hover:text-purple-900 bg-white border border-purple-200 rounded-lg shadow-2xs hover:bg-purple-50 transition-colors"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Download
+                  </a>
+                </div>
+                <audio
+                  controls
+                  src={selectedCallDetails.recordingUrl}
+                  className="w-full h-8 rounded-lg outline-none"
+                  preload="metadata"
+                />
+              </div>
+            )}
 
             {/* Audio Playback Simulator Bar */}
             {selectedCallDetails.transcripts && selectedCallDetails.transcripts.length > 0 && (

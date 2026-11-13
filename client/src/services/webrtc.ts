@@ -19,6 +19,14 @@ export class WebRTCManager {
   private isMuted: boolean = false;
   private isInitiator: boolean = false;
   private authToken: string | null = null;
+  // Call Recording Properties
+  private mediaRecorder: MediaRecorder | null = null;
+  private recordedChunks: Blob[] = [];
+  private recordingStartTime: number | null = null;
+  private isRecording: boolean = false;
+  private remoteStream: MediaStream | null = null;
+  private audioContext: AudioContext | null = null;
+
 
   // Reconnection management
   private isReconnecting: boolean = false;
@@ -261,8 +269,10 @@ export class WebRTCManager {
     // On remote track received
     this.peerConnection.ontrack = (event) => {
       console.log('[WebRTC] Received remote audio stream track');
+      this.startRecording();
       const audio = this.getAudioElement();
       audio.srcObject = event.streams[0];
+      this.remoteStream = event.streams[0];
       audio.play().catch(e => console.warn('[WebRTC] Audio auto-play blocked by browser:', e));
     };
 
@@ -302,6 +312,7 @@ export class WebRTCManager {
       if (state === 'connected') {
         this.handleReconnectionSuccess();
         this.inspectActiveCandidatePair();
+        this.startRecording();
       } else if (state === 'disconnected' || state === 'failed') {
         this.handleDisconnection(`Connection state: ${state}`);
       }
@@ -542,7 +553,122 @@ export class WebRTCManager {
   }
 
   // Clean up all streams and close peer connection
+  
+  // Start high-fidelity bidirectional WebRTC call recording
+  public startRecording(): void {
+    if (this.isRecording || !this.callId) return;
+    try {
+      if (typeof window === 'undefined' || typeof MediaRecorder === 'undefined') return;
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+
+      this.audioContext = new AudioCtx();
+      const dest = this.audioContext.createMediaStreamDestination();
+
+      if (this.localStream && this.localStream.getAudioTracks().length > 0) {
+        try {
+          const localSource = this.audioContext.createMediaStreamSource(this.localStream);
+          localSource.connect(dest);
+        } catch (e) {
+          console.warn('[WebRTC Recording] Could not mix local track:', e);
+        }
+      }
+
+      if (this.remoteStream && this.remoteStream.getAudioTracks().length > 0) {
+        try {
+          const remoteSource = this.audioContext.createMediaStreamSource(this.remoteStream);
+          remoteSource.connect(dest);
+        } catch (e) {
+          console.warn('[WebRTC Recording] Could not mix remote track:', e);
+        }
+      }
+
+      let mimeType = 'audio/webm;codecs=opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg';
+      }
+
+      this.recordedChunks = [];
+      this.mediaRecorder = new MediaRecorder(dest.stream, { mimeType });
+      this.mediaRecorder.ondataavailable = (event: BlobEvent) => {
+        if (event.data && event.data.size > 0) {
+          this.recordedChunks.push(event.data);
+        }
+      };
+      this.mediaRecorder.start(1000);
+      this.recordingStartTime = Date.now();
+      this.isRecording = true;
+      console.log(`[WebRTC Recording] Recording started for call ${this.callId} (${mimeType})`);
+    } catch (err) {
+      console.warn('[WebRTC Recording] Could not start recording:', err);
+    }
+  }
+
+  // Stop recording and upload to backend
+  public async stopAndUploadRecording(): Promise<void> {
+    if (!this.isRecording || !this.mediaRecorder) return;
+    const currentCallId = this.callId;
+    const duration = this.recordingStartTime ? Math.round((Date.now() - this.recordingStartTime) / 1000) : 0;
+    this.isRecording = false;
+
+    return new Promise<void>((resolve) => {
+      this.mediaRecorder!.onstop = async () => {
+        try {
+          if (this.recordedChunks.length > 0 && currentCallId) {
+            const blob = new Blob(this.recordedChunks, { type: 'audio/webm' });
+            console.log(`[WebRTC Recording] Uploading recording for call ${currentCallId}: ${blob.size} bytes, ${duration}s`);
+            
+            const formData = new FormData();
+            formData.append('audio', blob, `${currentCallId}.webm`);
+            formData.append('duration', String(duration));
+
+            const token = this.authToken || localStorage.getItem('kaira_token') || localStorage.getItem('token');
+            const headers: Record<string, string> = {};
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+
+            const res = await fetch(`/api/calls/${currentCallId}/recording`, {
+              method: 'POST',
+              headers,
+              body: formData
+            });
+
+            if (res.ok) {
+              const data = await res.json();
+              console.log('[WebRTC Recording] Upload succeeded:', data);
+            }
+          }
+        } catch (err) {
+          console.warn('[WebRTC Recording] Upload error:', err);
+        } finally {
+          this.recordedChunks = [];
+          this.mediaRecorder = null;
+          if (this.audioContext && this.audioContext.state !== 'closed') {
+            this.audioContext.close().catch(() => {});
+            this.audioContext = null;
+          }
+          resolve();
+        }
+      };
+
+      try {
+        if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+          this.mediaRecorder.stop();
+        } else {
+          resolve();
+        }
+      } catch (e) {
+        resolve();
+      }
+    });
+  }
+
+  public getIsRecording(): boolean {
+    return this.isRecording;
+  }
+
   public endCall() {
+    this.stopAndUploadRecording().catch(() => {});
+    this.remoteStream = null;
     // Record final quality report in backend before tearing down
     callQualityMonitor.syncWithBackend(this.totalReconnectCount);
     callQualityMonitor.stop();

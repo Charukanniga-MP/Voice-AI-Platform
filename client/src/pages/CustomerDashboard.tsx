@@ -792,6 +792,12 @@ export const CustomerDashboard: React.FC = () => {
         <div className="absolute -right-10 -bottom-10 w-72 h-72 rounded-full bg-white/10 blur-2xl pointer-events-none" />
         <div className="relative z-10 max-w-3xl space-y-4">
           <div className="flex items-center gap-2">
+
+              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-rose-50 border border-rose-200 rounded-lg">
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping" />
+                <span className="text-[10px] font-bold text-rose-700 uppercase tracking-wider">REC</span>
+              </div>
+
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-white/20 text-white backdrop-blur-xs border border-white/20">
               <Sparkles className="w-3.5 h-3.5" />
               {t('dashboard.platform_badge')}

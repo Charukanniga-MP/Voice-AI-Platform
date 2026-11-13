@@ -89,6 +89,12 @@ export interface CallRecord {
   providerCallSid?: string | null;
   providerName?: string | null;
   failureReason?: string | null;
+  // Call Recording Fields
+  recordingUrl?: string | null;
+  recordingDuration?: number | null;
+  recordingStatus?: 'none' | 'recording' | 'completed' | 'failed' | string | null;
+  recordingSizeBytes?: number | null;
+
   quality?: 'excellent' | 'good' | 'poor' | string | null;
   avgLatency?: number | null;
   packetLoss?: number | null;
