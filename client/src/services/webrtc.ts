@@ -620,19 +620,30 @@ export class WebRTCManager {
             
             const formData = new FormData();
             formData.append('audio', blob, `${currentCallId}.webm`);
+            formData.append('callId', currentCallId);
             formData.append('duration', String(duration));
+            formData.append('consentStatus', 'granted');
+            formData.append('mimeType', 'audio/webm');
 
             const token = this.authToken || localStorage.getItem('kaira_token') || localStorage.getItem('token');
             const headers: Record<string, string> = {};
             if (token) headers['Authorization'] = `Bearer ${token}`;
 
+            // 1. Upload to dedicated /api/recordings/upload
+            await fetch('/api/recordings/upload', {
+              method: 'POST',
+              headers,
+              body: formData
+            }).catch(e => console.warn('[WebRTC Recording] /api/recordings/upload error:', e));
+
+            // 2. Upload to /api/calls/:callId/recording
             const res = await fetch(`/api/calls/${currentCallId}/recording`, {
               method: 'POST',
               headers,
               body: formData
-            });
+            }).catch(e => console.warn('[WebRTC Recording] /api/calls/recording error:', e));
 
-            if (res.ok) {
+            if (res && res.ok) {
               const data = await res.json();
               console.log('[WebRTC Recording] Upload succeeded:', data);
             }
