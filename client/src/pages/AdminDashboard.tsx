@@ -497,8 +497,7 @@ export const AdminDashboard: React.FC = () => {
     const formatted = transcriptList
       .map(
         (t) =>
-          `[${new Date(t.timestamp).toLocaleTimeString()}] ${t.senderName || t.sender.toUpperCase()}: ${t.text}${
-            t.translation ? `\n   [Translation]: ${t.translation}` : ''
+          `[${new Date(t.timestamp).toLocaleTimeString()}] ${t.senderName || t.sender.toUpperCase()}: ${t.text}${t.translation ? `\n   [Translation]: ${t.translation}` : ''
           }`
       )
       .join('\n\n');
@@ -1193,11 +1192,11 @@ export const AdminDashboard: React.FC = () => {
       <aside className="w-full md:w-64 bg-slate-900 text-slate-300 flex-shrink-0 flex flex-col justify-between p-3 sm:p-4 md:min-h-screen border-r border-slate-800">
         <div className="space-y-3 md:space-y-6">
           <div className="px-2 py-1 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-3">
               <img
                 src="/kaira-logo.png"
-                alt="KAIRA Technologies"
-                className="h-9 w-9 md:h-10 md:w-10 object-contain bg-white rounded-xl p-1 shadow-md shadow-slate-950/40"
+                alt="KAIRA"
+                className="h-11 w-11 md:h-12 md:w-12 object-contain bg-white rounded-2xl p-1.5 shadow-md shadow-slate-950/40"
               />
               <div>
                 <span className="text-sm md:text-base font-bold text-white tracking-tight">Admin Console</span>
@@ -1235,11 +1234,10 @@ export const AdminDashboard: React.FC = () => {
                   setActiveSection(tab.id as any);
                   setMobileNavOpen(false);
                 }}
-                className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 transition-colors ${
-                  activeSection === tab.id
+                className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 transition-colors ${activeSection === tab.id
                     ? 'bg-purple-600 text-white font-bold'
                     : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                }`}
+                  }`}
               >
                 {tab.label}
               </button>
@@ -1503,9 +1501,8 @@ export const AdminDashboard: React.FC = () => {
                   return (
                     <div
                       key={op.adminSessionId || idx}
-                      className={`p-2.5 rounded-xl border text-xs flex items-center justify-between ${
-                        isSelf ? 'bg-purple-50/70 border-purple-200' : 'bg-slate-50 border-slate-200'
-                      }`}
+                      className={`p-2.5 rounded-xl border text-xs flex items-center justify-between ${isSelf ? 'bg-purple-50/70 border-purple-200' : 'bg-slate-50 border-slate-200'
+                        }`}
                     >
                       <div className="truncate">
                         <div className="flex items-center gap-1.5">
@@ -1519,11 +1516,10 @@ export const AdminDashboard: React.FC = () => {
                         <span className="text-[10px] font-mono text-slate-400">#{op.adminSessionId?.slice(-6)}</span>
                       </div>
                       <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                          isBusy
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isBusy
                             ? 'bg-amber-100 text-amber-800 border border-amber-200'
                             : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                        }`}
+                          }`}
                       >
                         {isBusy ? (op.status === 'ringing' ? 'Ringing' : 'In Call') : 'Available'}
                       </span>
@@ -1579,9 +1575,8 @@ export const AdminDashboard: React.FC = () => {
                     const m = webrtcManager.toggleMute();
                     setIsMuted(m);
                   }}
-                  className={`px-3 py-1.5 rounded-xl border font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
-                    isMuted ? 'bg-red-50 text-red-600 border-red-200' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                  }`}
+                  className={`px-3 py-1.5 rounded-xl border font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${isMuted ? 'bg-red-50 text-red-600 border-red-200' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                    }`}
                 >
                   {isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4 text-emerald-600" />}
                   {isMuted ? 'Unmute Mic' : 'Mute Mic'}
@@ -1645,9 +1640,8 @@ export const AdminDashboard: React.FC = () => {
                   return (
                     <div
                       key={t.id}
-                      className={`flex flex-col text-xs ${
-                        isSystem ? 'items-center text-center my-2' : isCustomer ? 'items-start' : 'items-end'
-                      }`}
+                      className={`flex flex-col text-xs ${isSystem ? 'items-center text-center my-2' : isCustomer ? 'items-start' : 'items-end'
+                        }`}
                     >
                       {isSystem ? (
                         <div className="px-3 py-1 rounded-full bg-slate-200/70 text-slate-600 text-[10px] font-semibold">
@@ -1659,17 +1653,15 @@ export const AdminDashboard: React.FC = () => {
                             {t.senderName || (isCustomer ? 'Customer' : `Admin (${operatorName})`)}
                           </span>
                           <div
-                            className={`p-3 rounded-2xl leading-relaxed ${
-                              isCustomer
+                            className={`p-3 rounded-2xl leading-relaxed ${isCustomer
                                 ? 'bg-white border border-slate-200 text-slate-900 rounded-tl-xs shadow-2xs'
                                 : 'bg-purple-600 text-white rounded-tr-xs shadow-sm'
-                            }`}
+                              }`}
                           >
                             <p className="font-medium">{t.text}</p>
                             {t.translation && (
-                              <p className={`text-[11px] mt-1 pt-1 border-t ${
-                                isCustomer ? 'border-slate-100 text-slate-500 italic' : 'border-purple-500/50 text-purple-100 italic'
-                              }`}>
+                              <p className={`text-[11px] mt-1 pt-1 border-t ${isCustomer ? 'border-slate-100 text-slate-500 italic' : 'border-purple-500/50 text-purple-100 italic'
+                                }`}>
                                 🌐 {t.translation}
                               </p>
                             )}
@@ -1685,7 +1677,7 @@ export const AdminDashboard: React.FC = () => {
                 <div ref={transcriptEndRef} />
               </div>
 
-              
+
               {/* LIVE AI COPILOT KNOWLEDGE RECOMMENDATION */}
               {copilotSuggestion && (
                 <div className="p-3.5 bg-gradient-to-r from-purple-50 via-indigo-50 to-blue-50 border border-purple-200/90 rounded-2xl animate-fadeIn space-y-2">
@@ -1958,7 +1950,7 @@ export const AdminDashboard: React.FC = () => {
               </div>
             </div>
 
-            
+
             {/* Customer Satisfaction & Quality Overview */}
             <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -3253,8 +3245,8 @@ export const AdminDashboard: React.FC = () => {
                         key={filterKey}
                         onClick={() => setQualityFilter(filterKey)}
                         className={`px-3 py-1 rounded-lg capitalize transition-all cursor-pointer ${qualityFilter === filterKey
-                            ? 'bg-white text-slate-900 font-bold shadow-2xs'
-                            : 'text-slate-600 hover:text-slate-900'
+                          ? 'bg-white text-slate-900 font-bold shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
                           }`}
                       >
                         {filterKey}
@@ -3348,12 +3340,12 @@ export const AdminDashboard: React.FC = () => {
                               <td className="py-3 px-4">
                                 <span
                                   className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${isExcellent
-                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                      : isGood
-                                        ? 'bg-blue-50 text-blue-700 border-blue-200'
-                                        : isPoor
-                                          ? 'bg-red-50 text-red-700 border-red-200'
-                                          : 'bg-slate-50 text-slate-700 border-slate-200'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : isGood
+                                      ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                      : isPoor
+                                        ? 'bg-red-50 text-red-700 border-red-200'
+                                        : 'bg-slate-50 text-slate-700 border-slate-200'
                                     }`}
                                 >
                                   <span
@@ -3369,10 +3361,10 @@ export const AdminDashboard: React.FC = () => {
                               <td className="py-3 px-4 font-mono">
                                 <span
                                   className={`font-bold ${call.avgLatency && call.avgLatency > 200
-                                      ? 'text-red-600'
-                                      : call.avgLatency && call.avgLatency > 100
-                                        ? 'text-amber-600'
-                                        : 'text-emerald-700'
+                                    ? 'text-red-600'
+                                    : call.avgLatency && call.avgLatency > 100
+                                      ? 'text-amber-600'
+                                      : 'text-emerald-700'
                                     }`}
                                 >
                                   {call.avgLatency ? `${Math.round(call.avgLatency)} ms` : '< 50 ms'}
@@ -3404,12 +3396,12 @@ export const AdminDashboard: React.FC = () => {
                               <td className="py-3 px-4">
                                 <span
                                   className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${call.status === 'completed'
-                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                      : call.status === 'disconnected'
-                                        ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                        : call.status === 'failed'
-                                          ? 'bg-red-50 text-red-700 border border-red-200'
-                                          : 'bg-slate-100 text-slate-700'
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                    : call.status === 'disconnected'
+                                      ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                      : call.status === 'failed'
+                                        ? 'bg-red-50 text-red-700 border border-red-200'
+                                        : 'bg-slate-100 text-slate-700'
                                     }`}
                                 >
                                   {call.status}
@@ -3704,11 +3696,10 @@ export const AdminDashboard: React.FC = () => {
                               {gap.frequency}x
                             </td>
                             <td className="py-3 px-4">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                gap.status === 'added_to_kb'
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${gap.status === 'added_to_kb'
                                   ? 'bg-emerald-100 text-emerald-800'
                                   : 'bg-amber-100 text-amber-800'
-                              }`}>
+                                }`}>
                                 {gap.status === 'added_to_kb' ? 'Added to KB' : 'Open Gap'}
                               </span>
                             </td>
@@ -4234,13 +4225,12 @@ export const AdminDashboard: React.FC = () => {
                     <Activity className="w-3.5 h-3.5 text-emerald-600" />
                     Network & Quality Telemetry
                   </span>
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                    selectedCallDetails.quality === 'excellent'
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${selectedCallDetails.quality === 'excellent'
                       ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
                       : selectedCallDetails.quality === 'good'
                         ? 'bg-blue-100 text-blue-800 border-blue-300'
                         : 'bg-amber-100 text-amber-800 border-amber-300'
-                  }`}>
+                    }`}>
                     {selectedCallDetails.quality ? selectedCallDetails.quality.toUpperCase() : 'NORMAL'}
                     {selectedCallDetails.audioQualityScore ? ` • MOS ${selectedCallDetails.audioQualityScore.toFixed(1)}` : ''}
                   </span>
@@ -4268,7 +4258,7 @@ export const AdminDashboard: React.FC = () => {
               </div>
             )}
 
-            
+
             {/* Audio Playback Simulator Bar */}
             {selectedCallDetails.transcripts && selectedCallDetails.transcripts.length > 0 && (
               <div className="p-3 bg-purple-50/80 border border-purple-100 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-xs">
@@ -4338,9 +4328,8 @@ export const AdminDashboard: React.FC = () => {
                       key={spd}
                       type="button"
                       onClick={() => setPlaybackSpeed(spd)}
-                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold cursor-pointer transition-colors ${
-                        playbackSpeed === spd ? 'bg-purple-600 text-white' : 'bg-white text-slate-600 border border-slate-200'
-                      }`}
+                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold cursor-pointer transition-colors ${playbackSpeed === spd ? 'bg-purple-600 text-white' : 'bg-white text-slate-600 border border-slate-200'
+                        }`}
                     >
                       {spd}x
                     </button>
