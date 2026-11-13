@@ -20,7 +20,7 @@ import {
   AlertCircle, ShieldAlert, Eye, Headphones, Radio, RefreshCw, Globe,
   Activity, Wifi, WifiOff, Signal, Zap, AlertTriangle, XCircle, BarChart3, Sliders, ShieldCheck,
   Sparkles, ListTodo, Download, Lightbulb, HeartPulse, TrendingUp, Menu, X,
-  Play, Pause, RotateCcw
+  Play, Pause, RotateCcw, Mail, Phone
 } from 'lucide-react';
 import { SentimentDashboardSection } from '../components/SentimentDashboardSection.js';
 import { SentimentBadge } from '../components/SentimentBadge.js';
@@ -104,6 +104,7 @@ export const AdminDashboard: React.FC = () => {
     transferId?: string;
     customerId?: string;
     customerName: string;
+    customerEmail?: string;
     customerPhone?: string;
     preferredLanguage: string;
     question?: string;
@@ -129,6 +130,7 @@ export const AdminDashboard: React.FC = () => {
     transferId: string;
     callId: string;
     customerName: string;
+    customerEmail?: string;
     customerPhone: string;
     question: string;
     reason: string;
@@ -140,6 +142,7 @@ export const AdminDashboard: React.FC = () => {
     callId: string;
     transferId?: string;
     customerName: string;
+    customerEmail?: string;
     customerPhone?: string;
     question?: string;
   } | null>(null);
@@ -3823,6 +3826,14 @@ export const AdminDashboard: React.FC = () => {
                   {incomingAdminCall?.customerName || incomingTransfer?.customerName}
                 </span>
               </div>
+              {(incomingAdminCall?.customerEmail || incomingTransfer?.customerEmail) && (
+                <div className="flex justify-between items-center">
+                  <span className="font-semibold text-slate-500">Email Address:</span>
+                  <span className="font-medium text-slate-800 text-xs font-mono">
+                    {incomingAdminCall?.customerEmail || incomingTransfer?.customerEmail}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between items-center">
                 <span className="font-semibold text-slate-500">Phone / Connection:</span>
                 <span className="font-mono text-slate-700 font-bold">

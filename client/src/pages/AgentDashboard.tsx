@@ -18,7 +18,7 @@ import {
   Volume2, VolumeX, Clock, Search, BookOpen,
   Smartphone, AlertCircle, CheckCircle2, Radio, Info,
   Globe, Sparkles, MessageSquare, Pause, Play, Send, Copy, Users, Settings, ListTodo,
-  HeartPulse, Flame
+  HeartPulse, Flame, Mail, Phone
 } from 'lucide-react';
 import { SentimentBadge } from '../components/SentimentBadge.js';
 import { LiveSentimentCard } from '../components/LiveSentimentCard.js';
@@ -39,6 +39,7 @@ interface IncomingCall {
   callRecordId?: string;
   customerId?: string;
   customerName: string;
+  customerEmail?: string;
   customerPhone: string;
   preferredLanguage: string;
   languageName: string;
@@ -87,6 +88,7 @@ export const AgentDashboard: React.FC = () => {
     callId: string;
     callRecordId?: string;
     customerName: string;
+    customerEmail?: string;
     customerPhone: string;
     customerId?: string;
     preferredLanguage?: string;
@@ -460,6 +462,7 @@ export const AgentDashboard: React.FC = () => {
       callId: selectedCall.callId,
       callRecordId: selectedCall.callRecordId,
       customerName: selectedCall.customerName,
+      customerEmail: selectedCall.customerEmail,
       customerPhone: selectedCall.customerPhone,
       customerId: selectedCall.customerId,
       preferredLanguage: selectedCall.preferredLanguage,
@@ -955,7 +958,18 @@ export const AgentDashboard: React.FC = () => {
                 </span>
               </div>
               <h3 className="text-xl font-black text-slate-900 mt-2">{incomingCall.customerName}</h3>
-              <p className="text-xs text-slate-500 font-mono mt-0.5">{incomingCall.customerPhone}</p>
+              <div className="mt-1.5 flex flex-col items-center gap-1">
+                {incomingCall.customerEmail && (
+                  <p className="text-xs text-slate-600 font-medium flex items-center justify-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5 text-slate-400" />
+                    <span>{incomingCall.customerEmail}</span>
+                  </p>
+                )}
+                <p className="text-xs text-slate-700 font-mono font-semibold flex items-center justify-center gap-1.5">
+                  <Phone className="w-3.5 h-3.5 text-slate-400" />
+                  <span>{incomingCall.customerPhone || 'Not provided'}</span>
+                </p>
+              </div>
             </div>
 
             {/* Language Badge */}
@@ -1357,7 +1371,18 @@ export const AgentDashboard: React.FC = () => {
                       {activeCall.customerName.charAt(0).toUpperCase()}
                     </div>
                     <h2 className="mt-6 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">{activeCall.customerName}</h2>
-                    <p className="mt-2 text-base font-medium text-slate-500">{activeCall.customerPhone || 'Phone number unavailable'}</p>
+                    <div className="mt-2 flex flex-col items-center gap-1">
+                      {activeCall.customerEmail && (
+                        <p className="text-sm font-medium text-slate-600 flex items-center justify-center gap-1.5">
+                          <Mail className="w-4 h-4 text-slate-400" />
+                          <span>{activeCall.customerEmail}</span>
+                        </p>
+                      )}
+                      <p className="text-base font-semibold text-slate-700 font-mono flex items-center justify-center gap-1.5">
+                        <Phone className="w-4 h-4 text-slate-400" />
+                        <span>{activeCall.customerPhone || 'Phone number unavailable'}</span>
+                      </p>
+                    </div>
                     <span className="mt-3 rounded-full border border-blue-100 bg-white/70 px-3 py-1 text-[11px] font-semibold text-blue-700">
                       {activeCall.isIncomingSupport ? 'Support call' : 'PSTN outbound call'}
                     </span>

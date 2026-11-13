@@ -647,6 +647,7 @@ export const CustomerDashboard: React.FC = () => {
         callId: newCallId,
         customerId: user?.id,
         customerName: user?.name,
+        customerEmail: user?.email,
         customerPhone: user?.phone,
         preferredLanguage: selectedLanguage
       });
@@ -686,6 +687,7 @@ export const CustomerDashboard: React.FC = () => {
         callId: newCallId,
         customerId: user?.id,
         customerName: user?.name,
+        customerEmail: user?.email,
         customerPhone: user?.phone,
         language: selectedLanguage
       });
@@ -1006,6 +1008,20 @@ export const CustomerDashboard: React.FC = () => {
           {/* Active Call State Graphic & Controls */}
           {['connecting', 'ringing', 'active_agent', 'active_ai', 'transferring', 'active_admin'].includes(callStatus) && (
             <div className="w-full max-w-xl space-y-6 py-2">
+              {/* Caller Identity Indicator */}
+              <div className="mx-auto inline-flex items-center gap-3 px-4 py-2.5 bg-slate-50 border border-slate-200/90 rounded-2xl shadow-xs text-left">
+                <div className="w-10 h-10 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                  {user?.name?.charAt(0) || 'C'}
+                </div>
+                <div>
+                  <div className="text-xs font-black text-slate-900">{user?.name || 'Customer'}</div>
+                  <div className="text-[11px] text-slate-500 font-mono flex flex-wrap items-center gap-2">
+                    {user?.email && <span>{user.email}</span>}
+                    {user?.phone && <span>• {user.phone}</span>}
+                  </div>
+                </div>
+              </div>
+
               {/* Soundwave animation */}
               <div className="h-20 flex items-center justify-center gap-1.5 py-4">
                 <span className="w-1.5 rounded-full bg-indigo-600 animate-soundwave-1" />

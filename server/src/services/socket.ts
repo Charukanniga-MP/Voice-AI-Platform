@@ -22,6 +22,7 @@ interface QueuedCall {
   callRecordId?: string;
   customerId: string | null;
   customerName: string;
+  customerEmail?: string;
   customerPhone?: string;
   preferredLanguage: string;
   socketId: string;
@@ -142,6 +143,7 @@ export function initSocketServer(io: SocketIOServer) {
     callData: {
       customerId: string | null;
       customerName: string;
+      customerEmail?: string;
       customerPhone?: string;
       preferredLanguage: string;
       customerSocketId: string;
@@ -190,6 +192,7 @@ export function initSocketServer(io: SocketIOServer) {
         callRecordId: record.id,
         customerId: callData.customerId,
         customerName: callData.customerName,
+        customerEmail: callData.customerEmail,
         customerPhone: callData.customerPhone || 'Not provided',
         preferredLanguage: callData.preferredLanguage,
         languageName: translationService.getLanguageName(callData.preferredLanguage),
@@ -251,6 +254,7 @@ export function initSocketServer(io: SocketIOServer) {
     callData: {
       customerId: string | null;
       customerName: string;
+      customerEmail?: string;
       customerPhone?: string;
       preferredLanguage: string;
       customerSocketId: string;
@@ -310,6 +314,7 @@ export function initSocketServer(io: SocketIOServer) {
         transferId: callData.transferId,
         customerId: callData.customerId,
         customerName: callData.customerName,
+        customerEmail: callData.customerEmail,
         customerPhone: callData.customerPhone || 'Not provided',
         preferredLanguage: callData.preferredLanguage,
         languageName: translationService.getLanguageName(callData.preferredLanguage),
@@ -450,6 +455,7 @@ export function initSocketServer(io: SocketIOServer) {
       await dispatchCallToAgent(nextCall.callId, agent, {
         customerId: nextCall.customerId,
         customerName: nextCall.customerName,
+        customerEmail: nextCall.customerEmail,
         customerPhone: nextCall.customerPhone,
         preferredLanguage: nextCall.preferredLanguage,
         customerSocketId: nextCall.socketId,
@@ -530,6 +536,7 @@ export function initSocketServer(io: SocketIOServer) {
       callId: string;
       customerId: string;
       customerName: string;
+      customerEmail?: string;
       customerPhone?: string;
       preferredLanguage: string;
     }) => {
@@ -538,10 +545,17 @@ export function initSocketServer(io: SocketIOServer) {
         socket.join(`call:${data.callId}`);
 
         let validCustomerId: string | null = null;
+        let realName = data.customerName;
+        let realEmail = data.customerEmail || '';
+        let realPhone = data.customerPhone || '';
+
         if (data.customerId) {
           const user = await prisma.user.findUnique({ where: { id: data.customerId } });
           if (user) {
             validCustomerId = user.id;
+            if (user.name) realName = user.name;
+            if (user.email) realEmail = user.email;
+            if (user.phone) realPhone = user.phone;
             // Update preferred language in user profile
             await prisma.user.update({
               where: { id: user.id },
@@ -557,8 +571,9 @@ export function initSocketServer(io: SocketIOServer) {
         if (agent && agent.role === 'agent') {
           await dispatchCallToAgent(data.callId, agent, {
             customerId: validCustomerId,
-            customerName: data.customerName,
-            customerPhone: data.customerPhone,
+            customerName: realName,
+            customerEmail: realEmail,
+            customerPhone: realPhone,
             preferredLanguage: data.preferredLanguage,
             customerSocketId: socket.id
           });
@@ -566,16 +581,18 @@ export function initSocketServer(io: SocketIOServer) {
           console.log(`[SupportCall] Routing call directly to available Admin Operator ${adminSession.operatorName}`);
           await dispatchCallToAdminSession(data.callId, adminSession, {
             customerId: validCustomerId,
-            customerName: data.customerName,
-            customerPhone: data.customerPhone,
+            customerName: realName,
+            customerEmail: realEmail,
+            customerPhone: realPhone,
             preferredLanguage: data.preferredLanguage,
             customerSocketId: socket.id
           });
         } else if (agent) {
           await dispatchCallToAgent(data.callId, agent, {
             customerId: validCustomerId,
-            customerName: data.customerName,
-            customerPhone: data.customerPhone,
+            customerName: realName,
+            customerEmail: realEmail,
+            customerPhone: realPhone,
             preferredLanguage: data.preferredLanguage,
             customerSocketId: socket.id
           });
@@ -585,8 +602,9 @@ export function initSocketServer(io: SocketIOServer) {
           await enqueueCall({
             callId: data.callId,
             customerId: validCustomerId,
-            customerName: data.customerName,
-            customerPhone: data.customerPhone,
+            customerName: realName,
+            customerEmail: realEmail,
+            customerPhone: realPhone,
             preferredLanguage: data.preferredLanguage,
             socketId: socket.id,
             queuedAt: Date.now(),
@@ -1062,11 +1080,18 @@ export function initSocketServer(io: SocketIOServer) {
           const availableAgent = findAvailableAgent(respLang);
           const availableAdmin = findNextAvailableAdminSession(respLang);
 
+          let custEmail = '';
+          if (call.customerId) {
+            const u = await prisma.user.findUnique({ where: { id: call.customerId } });
+            if (u && u.email) custEmail = u.email;
+          }
+
           if (availableAgent && availableAgent.role === 'agent') {
             console.log(`[Transfer] Routing ungrounded query directly to available Support Agent ${availableAgent.name}`);
             await dispatchCallToAgent(data.callId, availableAgent, {
               customerId: call.customerId,
               customerName: call.customerName,
+              customerEmail: custEmail,
               customerPhone: call.customerPhone || 'Not provided',
               preferredLanguage: respLang,
               customerSocketId: socket.id,
@@ -1077,6 +1102,7 @@ export function initSocketServer(io: SocketIOServer) {
             await dispatchCallToAdminSession(data.callId, availableAdmin, {
               customerId: call.customerId,
               customerName: call.customerName,
+              customerEmail: custEmail,
               customerPhone: call.customerPhone || 'Not provided',
               preferredLanguage: respLang,
               customerSocketId: socket.id,
@@ -1090,6 +1116,7 @@ export function initSocketServer(io: SocketIOServer) {
             await dispatchCallToAgent(data.callId, availableAgent, {
               customerId: call.customerId,
               customerName: call.customerName,
+              customerEmail: custEmail,
               customerPhone: call.customerPhone || 'Not provided',
               preferredLanguage: respLang,
               customerSocketId: socket.id,
@@ -1103,6 +1130,7 @@ export function initSocketServer(io: SocketIOServer) {
               callRecordId: call.id,
               customerId: call.customerId,
               customerName: call.customerName,
+              customerEmail: custEmail,
               customerPhone: call.customerPhone || 'Not provided',
               question: queryText,
               reason: 'Information unavailable in approved Knowledge Base',
@@ -1665,6 +1693,7 @@ export function initSocketServer(io: SocketIOServer) {
       callId: string;
       customerId: string;
       customerName: string;
+      customerEmail?: string;
       customerPhone?: string;
       preferredLanguage: string;
     }) => {
@@ -1672,12 +1701,28 @@ export function initSocketServer(io: SocketIOServer) {
         console.log(`[CustomerCallAdmin] Customer ${data.customerName} calling Admin in ${data.preferredLanguage}`);
         socket.join(`call:${data.callId}`);
 
+        let validCustomerId: string | null = null;
+        let realName = data.customerName;
+        let realEmail = data.customerEmail || '';
+        let realPhone = data.customerPhone || '';
+
+        if (data.customerId) {
+          const user = await prisma.user.findUnique({ where: { id: data.customerId } });
+          if (user) {
+            validCustomerId = user.id;
+            if (user.name) realName = user.name;
+            if (user.email) realEmail = user.email;
+            if (user.phone) realPhone = user.phone;
+          }
+        }
+
         const adminSession = findNextAvailableAdminSession(data.preferredLanguage);
         if (adminSession) {
           await dispatchCallToAdminSession(data.callId, adminSession, {
-            customerId: data.customerId,
-            customerName: data.customerName,
-            customerPhone: data.customerPhone,
+            customerId: validCustomerId,
+            customerName: realName,
+            customerEmail: realEmail,
+            customerPhone: realPhone,
             preferredLanguage: data.preferredLanguage,
             customerSocketId: socket.id
           });
@@ -1685,9 +1730,10 @@ export function initSocketServer(io: SocketIOServer) {
           // No admin available -> queue call
           await enqueueCall({
             callId: data.callId,
-            customerId: data.customerId,
-            customerName: data.customerName,
-            customerPhone: data.customerPhone,
+            customerId: validCustomerId,
+            customerName: realName,
+            customerEmail: realEmail,
+            customerPhone: realPhone,
             preferredLanguage: data.preferredLanguage,
             socketId: socket.id,
             queuedAt: Date.now(),
