@@ -1008,14 +1008,19 @@ export function initSocketServer(io: SocketIOServer) {
         // Multilingual grounded knowledge retrieval
         const response = await translationService.getAiAnswerSuggestion(queryText, callLang);
 
-        if (!response.isGrounded) {
-          console.log(`[AICall] Query requires transfer to Admin/Agent: "${queryText}"`);
+        const requiresTransfer = !response.isGrounded || sentimentResult.requiresHumanAssistance;
+
+        if (requiresTransfer) {
+          const transferReasonText = !response.isGrounded
+            ? 'Information unavailable in approved Knowledge Base'
+            : (sentimentResult.reason || 'High customer frustration detected / Live human assistance requested');
+          console.log(`[AICall] Query requires transfer to Admin/Agent: "${queryText}" (Reason: ${transferReasonText})`);
 
           await prisma.callRecord.update({
             where: { id: call.id },
             data: {
               transferred: true,
-              transferReason: `Unanswered: "${queryText}"`,
+              transferReason: !response.isGrounded ? `Unanswered: "${queryText}"` : transferReasonText,
               customerQuestion: queryText,
               type: 'admin_transfer'
             }
@@ -1036,15 +1041,18 @@ export function initSocketServer(io: SocketIOServer) {
                 customerName: call.customerName,
                 customerPhone: call.customerPhone,
                 question: queryText,
-                reason: 'Information unavailable in approved Knowledge Base',
+                reason: transferReasonText,
                 status: 'ringing'
               }
             });
           }
 
           let fallbackNotice = response.answer || FALLBACK_MESSAGE;
+          if (sentimentResult.requiresHumanAssistance) {
+            fallbackNotice = "I understand you need immediate support. Please hold while I connect you directly with a human support specialist.";
+          }
           const respLang = response.language || callLang;
-          if (respLang !== 'en' && !response.answer) {
+          if (respLang !== 'en') {
             fallbackNotice = await translationService.translateText(fallbackNotice, respLang, 'en');
           }
 
@@ -1133,7 +1141,7 @@ export function initSocketServer(io: SocketIOServer) {
               customerEmail: custEmail,
               customerPhone: call.customerPhone || 'Not provided',
               question: queryText,
-              reason: 'Information unavailable in approved Knowledge Base',
+              reason: transferReasonText,
               duration: data.duration || 0,
               language: respLang,
               createdAt: transferReq.createdAt
