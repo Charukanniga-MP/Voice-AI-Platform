@@ -16,6 +16,15 @@ interface Ticket {
   followUpAt?: string | null;
   createdAt: string;
   updatedAt: string;
+  messages: TicketMessage[];
+}
+
+interface TicketMessage {
+  id: string;
+  senderName: string;
+  senderRole: string;
+  message: string;
+  createdAt: string;
 }
 
 const priorityColors: Record<string, string> = {
@@ -50,6 +59,9 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
   const [followUpAt, setFollowUpAt] = useState('');
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [openConversationId, setOpenConversationId] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState('');
+  const [sendingReply, setSendingReply] = useState(false);
 
   const isCustomer = isCustomerView || user?.role === 'customer';
 
@@ -124,6 +136,27 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
       setTickets(current => current.map(ticket => ticket.id === id ? data.ticket : ticket));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to update ticket.');
+    }
+  };
+
+  const sendReply = async (ticketId: string) => {
+    if (!replyText.trim()) return;
+    setSendingReply(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/tickets/${ticketId}/messages`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: replyText.trim() })
+      });
+      const data = await parseJsonResponse(response);
+      if (!response.ok) throw new Error(data.error || 'Unable to send ticket reply.');
+      setReplyText('');
+      await fetchTickets();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to send ticket reply.');
+    } finally {
+      setSendingReply(false);
     }
   };
 
@@ -377,6 +410,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
               {filteredTickets.map(ticket => {
                 const overdue = ticket.followUpAt && new Date(ticket.followUpAt) < new Date() && !['resolved', 'closed'].includes(ticket.status);
                 return (
+                  <React.Fragment key={ticket.id}>
                   <tr key={ticket.id} className="align-top hover:bg-slate-50/60">
                     <td className="max-w-xs px-4 py-3">
                       <p className="font-bold text-slate-900">{ticket.subject}</p>
@@ -387,6 +421,15 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
                         </p>
                       )}
                       <p className="mt-1 line-clamp-2 text-slate-500">{ticket.description}</p>
+                      {isCustomer && (
+                        <button
+                          type="button"
+                          onClick={() => { setOpenConversationId(openConversationId === ticket.id ? null : ticket.id); setReplyText(''); }}
+                          className="mt-2 rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          {openConversationId === ticket.id ? 'Hide replies' : `View conversation (${ticket.messages?.length || 0})`}
+                        </button>
+                      )}
                     </td>
 
                     <td className="px-4 py-3">
@@ -457,6 +500,13 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
                       <td className="px-4 py-3 text-right">
                         <button
                           type="button"
+                          onClick={() => { setOpenConversationId(openConversationId === ticket.id ? null : ticket.id); setReplyText(''); }}
+                          className="mr-2 rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          {openConversationId === ticket.id ? 'Hide replies' : `Replies (${ticket.messages?.length || 0})`}
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => deleteTicket(ticket.id)}
                           disabled={deletingId === ticket.id}
                           className="p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer disabled:opacity-50"
@@ -467,6 +517,41 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
                       </td>
                     )}
                   </tr>
+                  {openConversationId === ticket.id && (
+                    <tr>
+                      <td colSpan={isCustomer ? 5 : 7} className="bg-slate-50 px-5 py-4">
+                        <div className="mx-auto max-w-3xl space-y-3">
+                          <h3 className="font-bold text-slate-900">Ticket conversation</h3>
+                          {ticket.messages?.length ? ticket.messages.map(message => (
+                            <article key={message.id} className="rounded-lg border border-slate-200 bg-white p-3">
+                              <div className="flex justify-between gap-3 text-xs">
+                                <strong className="text-slate-800">{message.senderName} · {message.senderRole}</strong>
+                                <time className="text-slate-500">{new Date(message.createdAt).toLocaleString()}</time>
+                              </div>
+                              <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{message.message}</p>
+                            </article>
+                          )) : <p className="text-sm text-slate-500">No replies yet. Use this conversation to update the customer.</p>}
+                          <form onSubmit={event => { event.preventDefault(); void sendReply(ticket.id); }} className="space-y-2">
+                            <textarea
+                              value={replyText}
+                              onChange={event => setReplyText(event.target.value)}
+                              maxLength={4000}
+                              rows={3}
+                              placeholder={isCustomer ? 'Reply to support…' : 'Write an update or explain the resolution…'}
+                              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                            />
+                            <div className="flex items-center justify-between">
+                              {!isCustomer && <span className="text-xs text-slate-500">The customer will receive an email when delivery is configured.</span>}
+                              <button disabled={sendingReply || !replyText.trim()} className="ml-auto rounded-lg bg-purple-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">
+                                {sendingReply ? 'Sending…' : 'Send reply'}
+                              </button>
+                            </div>
+                          </form>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 );
               })}
             </tbody>

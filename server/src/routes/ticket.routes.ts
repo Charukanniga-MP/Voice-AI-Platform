@@ -1,11 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../db.js';
 import { authenticate } from '../middleware/auth.js';
-import { validate, ticketCreateSchema, ticketUpdateSchema } from '../middleware/validation.js';
+import { validate, ticketCreateSchema, ticketUpdateSchema, ticketMessageSchema } from '../middleware/validation.js';
+import { sendEmail } from '../services/email.js';
 
 const router = Router();
 const statuses = ['open', 'in_progress', 'waiting', 'resolved', 'closed'];
 const priorities = ['low', 'normal', 'medium', 'high', 'urgent'];
+const escapeHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 router.use(authenticate);
 
@@ -26,12 +28,62 @@ router.get('/', async (req: Request, res: Response) => {
 
     const tickets = await prisma.supportTicket.findMany({
       where: whereClause,
-      orderBy: [{ updatedAt: 'desc' }]
+      orderBy: [{ updatedAt: 'desc' }],
+      include: { messages: { orderBy: { createdAt: 'asc' } } }
     });
     res.json({ tickets });
   } catch (err) {
     console.error('[Tickets] Fetch error:', err);
     res.status(500).json({ error: 'Failed to retrieve support tickets.' });
+  }
+});
+
+// Ticket replies are visible to the ticket's customer and all support staff.
+router.post('/:id/messages', validate(ticketMessageSchema), async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const ticket = await prisma.supportTicket.findUnique({ where: { id: req.params.id } });
+    if (!ticket) {
+      res.status(404).json({ error: 'Support ticket not found.' });
+      return;
+    }
+    if (user.role === 'customer' && ticket.customerId !== user.id && ticket.customerEmail?.toLowerCase() !== user.email.toLowerCase()) {
+      res.status(403).json({ error: 'Access denied to this ticket.' });
+      return;
+    }
+
+    const message = await prisma.supportTicketMessage.create({
+      data: {
+        ticketId: ticket.id,
+        senderId: user.id,
+        senderName: user.name,
+        senderRole: user.role,
+        message: req.body.message
+      }
+    });
+    await prisma.supportTicket.update({ where: { id: ticket.id }, data: { updatedAt: new Date() } });
+
+    // A reply from support should notify the customer by email when an address exists.
+    // Email problems must not undo or hide the message already saved to the ticket.
+    let emailSent = false;
+    if (user.role !== 'customer' && ticket.customerEmail) {
+      try {
+        const result = await sendEmail({
+          to: ticket.customerEmail,
+          subject: `Update on your support ticket: ${ticket.subject}`,
+          text: `Hello ${ticket.customerName},\n\n${user.name} from support replied to your ticket "${ticket.subject}":\n\n${message.message}\n\nSign in to your account to view the full conversation.`,
+          html: `<p>Hello ${escapeHtml(ticket.customerName)},</p><p>${escapeHtml(user.name)} from support replied to your ticket <strong>${escapeHtml(ticket.subject)}</strong>:</p><p>${escapeHtml(message.message).replace(/\n/g, '<br>')}</p><p>Sign in to your account to view the full conversation.</p>`
+        });
+        emailSent = result.delivered;
+      } catch (emailError) {
+        console.error('[Tickets] Customer notification failed:', emailError);
+      }
+    }
+
+    res.status(201).json({ message, emailSent });
+  } catch (err) {
+    console.error('[Tickets] Message error:', err);
+    res.status(500).json({ error: 'Failed to send ticket message.' });
   }
 });
 

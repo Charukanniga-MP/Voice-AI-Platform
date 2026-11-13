@@ -95,6 +95,10 @@ export const ticketUpdateSchema = z.object({
   description: z.string().min(2).max(4000).optional().transform(s => s ? sanitizeString(s) : undefined)
 });
 
+export const ticketMessageSchema = z.object({
+  message: z.string().min(1).max(4000).transform(sanitizeString)
+});
+
 export const callRatingSchema = z.object({
   rating: z.number().int().min(1).max(5)
 });
