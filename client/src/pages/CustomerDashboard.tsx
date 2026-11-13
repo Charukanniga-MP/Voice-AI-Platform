@@ -938,8 +938,8 @@ export const CustomerDashboard: React.FC = () => {
             <div className="w-full max-w-xl py-4 space-y-6">
               <div className="grid grid-cols-1 gap-6">
                 {/* Option 1: Live Customer Support Specialist */}
-                <div className="p-6 rounded-3xl border-2 border-blue-100 hover:border-blue-400 bg-gradient-to-b from-blue-50/50 to-white text-left transition-all hover:shadow-lg space-y-4">
-                  <div className="w-14 h-14 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-200">
+                <div className="p-6 rounded-3xl border-2 border-emerald-100 hover:border-emerald-400 bg-gradient-to-b from-emerald-50/40 to-white text-left transition-all hover:shadow-lg space-y-4">
+                  <div className="w-14 h-14 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-200">
                     <Headphones className="w-7 h-7" />
                   </div>
                   <div>
@@ -955,7 +955,7 @@ export const CustomerDashboard: React.FC = () => {
                   </div>
                   <button
                     onClick={handleStartAgentCall}
-                    className="w-full min-h-[48px] py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-sm shadow-md shadow-blue-500/20 hover:shadow-lg active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-2"
+                    className="w-full min-h-[48px] py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold text-sm shadow-md shadow-emerald-500/25 hover:shadow-lg active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-2"
                   >
                     <PhoneCall className="w-4 h-4" />
                     {t('call.card_agent_btn')}
