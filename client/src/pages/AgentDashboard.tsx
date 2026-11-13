@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext.js';
-import { getSocket } from '../services/socket.js';
+import { getSocket, registerSocketUser } from '../services/socket.js';
 import { telephonyVoiceManager, TelephonyCallState } from '../services/telephonyVoice.js';
 import { webrtcManager } from '../services/webrtc.js';
 import { voiceService } from '../services/voice.js';
@@ -48,6 +48,8 @@ interface IncomingCall {
 
 export const AgentDashboard: React.FC = () => {
   const { user, token } = useAuth();
+
+
 
   // Navigation tab: 'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets' | 'tasks'
   const [activeTab, setActiveTab] = useState<'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets' | 'tasks'>('outgoing');

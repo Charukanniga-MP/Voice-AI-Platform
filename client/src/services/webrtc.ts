@@ -50,7 +50,7 @@ export class WebRTCManager {
   // Load configured ICE/TURN servers from backend
   private async loadIceServers(): Promise<void> {
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('kaira_token') || localStorage.getItem('token');
       const headers: Record<string, string> = {};
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;

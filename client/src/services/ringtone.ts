@@ -17,6 +17,13 @@ export class RingtoneService {
     }
   }
 
+  public unlockAudio() {
+    this.initContext();
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      this.audioCtx.resume().catch(() => {});
+    }
+  }
+
   private initContext() {
     if (!this.audioCtx || this.audioCtx.state === 'closed') {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;

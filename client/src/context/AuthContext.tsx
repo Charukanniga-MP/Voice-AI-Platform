@@ -87,6 +87,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setToken(callbackToken);
         setUser(parsedUser);
         localStorage.setItem('kaira_token', callbackToken);
+        localStorage.setItem('token', callbackToken);
         localStorage.setItem('kaira_user', JSON.stringify(parsedUser));
         registerSocketUser(parsedUser.id, parsedUser.role, parsedUser.name);
         scheduleTokenExpiration(callbackToken);
@@ -147,6 +148,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setToken(data.token);
     setUser(data.user);
     localStorage.setItem('kaira_token', data.token);
+        localStorage.setItem('token', data.token);
     localStorage.setItem('kaira_user', JSON.stringify(data.user));
 
     registerSocketUser(data.user.id, data.user.role, data.user.name);
@@ -182,6 +184,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setToken(data.token);
     setUser(data.user);
     localStorage.setItem('kaira_token', data.token);
+        localStorage.setItem('token', data.token);
     localStorage.setItem('kaira_user', JSON.stringify(data.user));
 
     registerSocketUser(data.user.id, data.user.role, data.user.name);
@@ -215,6 +218,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setToken(data.token);
     setUser(data.user);
     localStorage.setItem('kaira_token', data.token);
+        localStorage.setItem('token', data.token);
     localStorage.setItem('kaira_user', JSON.stringify(data.user));
 
     registerSocketUser(data.user.id, data.user.role, data.user.name);
@@ -238,6 +242,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setToken(data.token);
     setUser(data.user);
     localStorage.setItem('kaira_token', data.token);
+        localStorage.setItem('token', data.token);
     localStorage.setItem('kaira_user', JSON.stringify(data.user));
 
     registerSocketUser(data.user.id, data.user.role, data.user.name);
@@ -262,6 +267,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setToken(newToken);
     setUser(newUser);
     localStorage.setItem('kaira_token', newToken);
+        localStorage.setItem('token', newToken);
     localStorage.setItem('kaira_user', JSON.stringify(newUser));
     registerSocketUser(newUser.id, newUser.role, newUser.name);
     scheduleTokenExpiration(newToken);

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext.js';
 import { useLanguage } from '../context/LanguageContext.js';
-import { getSocket } from '../services/socket.js';
+import { getSocket, registerSocketUser } from '../services/socket.js';
 import { voiceService } from '../services/voice.js';
 import { webrtcManager } from '../services/webrtc.js';
 import { SupportTickets } from './SupportTickets.js';
@@ -32,6 +32,13 @@ const SUGGESTED_QUESTIONS = [
 
 export const CustomerDashboard: React.FC = () => {
   const { user, token } = useAuth();
+
+  // Register customer on socket whenever mounted
+  useEffect(() => {
+    if (user) {
+      registerSocketUser(user.id, user.role, user.name);
+    }
+  }, [user]);
   const { language: selectedLanguage, setLanguage: setSelectedLanguage, t } = useLanguage();
 
   // Call status: 'idle' | 'connecting' | 'ringing' | 'queued' | 'active_agent' | 'active_ai' | 'transferring' | 'active_admin' | 'ended'
