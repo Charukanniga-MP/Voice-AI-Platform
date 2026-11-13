@@ -1024,12 +1024,12 @@ export const CustomerDashboard: React.FC = () => {
           {callStatus === 'idle' && (
             <div className="w-full max-w-2xl py-4 space-y-6">
               {/* PRIMARY HERO: Call KAIRA AI Voice Agent */}
-              <div className="p-8 rounded-3xl border-2 border-indigo-200/80 bg-gradient-to-br from-indigo-50/80 via-white to-blue-50/50 text-left shadow-xl shadow-indigo-100/50 relative overflow-hidden transition-all hover:border-indigo-400">
-                <div className="absolute -top-12 -right-12 w-48 h-48 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+              <div className="p-8 rounded-3xl border-2 border-emerald-200/80 bg-gradient-to-br from-emerald-50/60 via-white to-teal-50/40 text-left shadow-xl shadow-emerald-100/50 relative overflow-hidden transition-all hover:border-emerald-400">
+                <div className="absolute -top-12 -right-12 w-48 h-48 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
 
                 <div className="relative z-10 space-y-5">
                   <div className="flex items-center justify-between">
-                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-600 to-teal-500 text-white flex items-center justify-center shadow-lg shadow-indigo-500/30">
+                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-lg shadow-emerald-500/30">
                       <Bot className="w-9 h-9" />
                     </div>
                     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -1048,7 +1048,7 @@ export const CustomerDashboard: React.FC = () => {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-500">
-                    <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-indigo-700 flex items-center gap-1 shadow-2xs">
+                    <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-emerald-700 flex items-center gap-1 shadow-2xs">
                       ⚡ Ultra-fast speech (&lt;1.2s)
                     </span>
                     <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 flex items-center gap-1 shadow-2xs">
@@ -1061,7 +1061,7 @@ export const CustomerDashboard: React.FC = () => {
 
                   <button
                     onClick={handleStartAiCall}
-                    className="w-full min-h-[54px] py-4 rounded-2xl bg-gradient-to-r from-indigo-600 via-blue-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-extrabold text-base shadow-xl shadow-indigo-600/30 hover:shadow-2xl active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-3"
+                    className="w-full min-h-[54px] py-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-green-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white font-extrabold text-base shadow-xl shadow-emerald-600/30 hover:shadow-2xl hover:shadow-emerald-600/40 active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-3"
                   >
                     <PhoneCall className="w-5 h-5 animate-bounce" />
                     <span>Call AI Voice Agent Now</span>
