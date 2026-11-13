@@ -24,6 +24,7 @@ async function notifyTicket(ticket: { id: string; customerId: string | null; cus
     const rooms: string[] = [];
     if (options.customer) {
       let customerId = ticket.customerId;
+      if (ticket.customerEmail) rooms.push(`customer:${ticket.customerEmail.trim().toLowerCase()}`);
       if (!customerId && ticket.customerEmail) {
         const customer = await prisma.user.findFirst({
           where: { role: 'customer', email: ticket.customerEmail.toLowerCase().trim() },

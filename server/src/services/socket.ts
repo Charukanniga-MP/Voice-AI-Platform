@@ -520,6 +520,7 @@ export function initSocketServer(io: SocketIOServer) {
         connectedUsers.set(socket.id, user);
 
         socket.join(`user:${data.userId}`);
+        if (dbUser?.role === 'customer' && dbUser.email) socket.join(`customer:${dbUser.email.trim().toLowerCase()}`);
         if (data.role === 'admin') socket.join('role:admin');
         if (data.role === 'agent') socket.join('role:agent');
 
