@@ -13,9 +13,8 @@ import {
   PhoneCall, PhoneOff, Mic, MicOff, Volume2, VolumeX,
   Clock, ShieldAlert, Sparkles, MessageSquare, History, User as UserIcon,
   Headphones, Globe, Star, Users, CheckCircle2, RefreshCw, Settings,
-  Send, Download, Lightbulb, KeyRound, HeartPulse, Flame
+  Send, Download, Lightbulb
 } from 'lucide-react';
-import { navigateToResetPassword } from '../utils/navigation.js';
 import { SentimentBadge } from '../components/SentimentBadge.js';
 import { LiveSentimentCard } from '../components/LiveSentimentCard.js';
 import { PostCallSentimentSummary } from '../components/PostCallSentimentSummary.js';
@@ -838,33 +837,6 @@ export const CustomerDashboard: React.FC = () => {
             </div>
           </div>
         </div>
-      </div>
-
-      {/* Account Security Quick Bar */}
-      <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-indigo-600/10 text-indigo-700 flex items-center justify-center shrink-0">
-            <KeyRound className="w-5 h-5 text-indigo-600" />
-          </div>
-          <div>
-            <h3 className="text-xs font-bold text-slate-800">Password & Account Recovery</h3>
-            <p className="text-[11px] text-slate-500">
-              Manage your credentials, test secure token recovery, or set a new password.
-            </p>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            window.location.hash = '#reset-password';
-            window.history.pushState({}, document.title, '/reset-password');
-            window.dispatchEvent(new PopStateEvent('popstate'));
-          }}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer"
-        >
-          <KeyRound className="w-3.5 h-3.5" />
-          <span>Open Password Reset Page</span>
-        </button>
       </div>
 
       {/* Main Calling Stage Console */}

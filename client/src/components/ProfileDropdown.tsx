@@ -277,16 +277,18 @@ export const ProfileDropdown: React.FC<ProfileDropdownProps> = ({ className = ''
           </div>
 
           {/* 3. Account Actions */}
-          <div className="px-2 py-1.5 space-y-0.5">
-            <button
-              type="button"
-              onClick={handleOpenResetPassword}
-              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer text-left"
-            >
-              <KeyRound className="w-4 h-4 text-indigo-500 shrink-0" />
-              <span>Change / Reset Password</span>
-            </button>
-          </div>
+          {user.role !== 'customer' && (
+            <div className="px-2 py-1.5 space-y-0.5">
+              <button
+                type="button"
+                onClick={handleOpenResetPassword}
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer text-left"
+              >
+                <KeyRound className="w-4 h-4 text-indigo-500 shrink-0" />
+                <span>Change / Reset Password</span>
+              </button>
+            </div>
+          )}
 
           {/* 4. Logout Action */}
           <div className="p-1.5">
