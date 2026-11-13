@@ -233,7 +233,8 @@ export class TranslationService {
         sources: [],
         isGrounded: true,
         requiresTransfer: true,
-        language: normLang
+        language: normLang,
+        latencyMs: Date.now() - t0
       };
     }
 
@@ -261,7 +262,8 @@ export class TranslationService {
         sources: [],
         isGrounded: true,
         requiresTransfer: false,
-        language: normLang
+        language: normLang,
+        latencyMs: Date.now() - t0
       };
     }
 
@@ -269,25 +271,25 @@ export class TranslationService {
     if (lowerEn.includes('thank you') || lowerEn.includes('thanks') || lowerEn === 'ty' || lowerQuery.includes('நன்றி') || lowerQuery.includes('ధన్యవాదాలు') || lowerQuery.includes('धन्यवाद')) {
       let reply = "You're very welcome! I'm glad I could assist you. Is there anything else regarding KAIRA TECHNOLOGY products, pricing, or voice services I can help you with today?";
       if (normLang !== 'en') reply = await this.translateText(reply, normLang, 'en');
-      return { answer: reply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang };
+      return { answer: reply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
     }
 
     if (lowerEn === 'ok' || lowerEn === 'okay' || lowerEn === 'sure' || lowerEn === 'alright' || lowerEn === 'got it') {
       let reply = "Wonderful! Please feel free to ask any other questions about KAIRA TECHNOLOGY, our features, or your account.";
       if (normLang !== 'en') reply = await this.translateText(reply, normLang, 'en');
-      return { answer: reply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang };
+      return { answer: reply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
     }
 
     if (lowerEn.includes('bye') || lowerEn.includes('goodbye') || lowerEn.includes('see you')) {
       let reply = "Thank you for contacting KAIRA TECHNOLOGY Customer Support! Have a wonderful day ahead, and don't hesitate to reach back out whenever you need assistance.";
       if (normLang !== 'en') reply = await this.translateText(reply, normLang, 'en');
-      return { answer: reply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang };
+      return { answer: reply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
     }
 
     if (lowerEn.includes('joke') || lowerEn.includes('funny')) {
       let reply = "Why did the AI go to school? To improve its neural networks! On a serious note, how may I assist you with KAIRA TECHNOLOGY voice platform or services today?";
       if (normLang !== 'en') reply = await this.translateText(reply, normLang, 'en');
-      return { answer: reply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang };
+      return { answer: reply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
     }
 
     // 4. Handling Math and simple Calculation inquiries directly
@@ -304,7 +306,7 @@ export class TranslationService {
 
       let mathAns = `The answer is ${resVal}. How may I help you with KAIRA TECHNOLOGY products or customer support today?`;
       if (normLang !== 'en') mathAns = await this.translateText(mathAns, normLang, 'en');
-      return { answer: mathAns, sources: [], isGrounded: true, requiresTransfer: false, language: normLang };
+      return { answer: mathAns, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
     }
 
     // 5. Search approved corporate Knowledge Base using English query representation
@@ -332,7 +334,8 @@ export class TranslationService {
         sources,
         isGrounded: true,
         requiresTransfer: false,
-        language: normLang
+        language: normLang,
+        latencyMs: Date.now() - t0
       };
     }
 
@@ -355,7 +358,7 @@ export class TranslationService {
         generalAns = `Today's date is ${new Date().toLocaleDateString()}. How can I assist you with KAIRA TECHNOLOGY customer support today?`;
       }
       if (normLang !== 'en') generalAns = await this.translateText(generalAns, normLang, 'en');
-      return { answer: generalAns, sources: [], isGrounded: true, requiresTransfer: false, language: normLang };
+      return { answer: generalAns, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
     }
 
     // 6. Company-specific question where information is not found in the Knowledge Base

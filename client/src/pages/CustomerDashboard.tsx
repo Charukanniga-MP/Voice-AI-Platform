@@ -1282,7 +1282,6 @@ export const CustomerDashboard: React.FC = () => {
                   )}
                 </div>
               </div>
-              </div>
 
               {/* Call Status Banners */}
               {callStatus === 'ringing' && (
