@@ -82,12 +82,24 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
     { value: 'closed', label: t('tickets.filter_closed') }
   ];
 
+  const parseJsonResponse = async (response: Response) => {
+    const text = await response.text();
+    try {
+      return text ? JSON.parse(text) : {};
+    } catch {
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status} (${response.statusText || 'Backend server unavailable'}). Please make sure the backend server is running.`);
+      }
+      return {};
+    }
+  };
+
   const fetchTickets = useCallback(async () => {
     if (!token) return;
     setLoading(true);
     try {
       const response = await fetch('/api/tickets', { headers: { Authorization: `Bearer ${token}` } });
-      const data = await response.json();
+      const data = await parseJsonResponse(response);
       if (!response.ok) throw new Error(data.error || 'Unable to load tickets.');
       setTickets(data.tickets || []);
       setError('');
@@ -107,7 +119,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
       });
-      const data = await response.json();
+      const data = await parseJsonResponse(response);
       if (!response.ok) throw new Error(data.error || 'Unable to update ticket.');
       setTickets(current => current.map(ticket => ticket.id === id ? data.ticket : ticket));
     } catch (err) {
@@ -123,7 +135,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` }
       });
-      const data = await response.json();
+      const data = await parseJsonResponse(response);
       if (!response.ok) throw new Error(data.error || 'Unable to delete ticket.');
       setTickets(current => current.filter(t => t.id !== id));
     } catch (err) {
@@ -151,7 +163,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean }> = ({ isCusto
           followUpAt: isCustomer ? undefined : (followUpAt || undefined)
         })
       });
-      const data = await response.json();
+      const data = await parseJsonResponse(response);
       if (!response.ok) throw new Error(data.error || 'Unable to create ticket.');
       setTickets(current => [data.ticket, ...current]);
       setSubject('');

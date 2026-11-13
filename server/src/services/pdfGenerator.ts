@@ -489,3 +489,4 @@ export function saveReportPdf(filename: string, buffer: Buffer): string {
   fs.writeFileSync(filePath, buffer);
   return filePath;
 }
+

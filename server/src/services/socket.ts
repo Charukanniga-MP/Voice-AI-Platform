@@ -1058,9 +1058,21 @@ export function initSocketServer(io: SocketIOServer) {
             timestamp: new Date()
           });
 
-          // Intelligent ACD: Route ungrounded question directly to an available Admin Operator session
+          // Intelligent ACD: Route ungrounded question directly to available Support Agent or Admin Operator
+          const availableAgent = findAvailableAgent(respLang);
           const availableAdmin = findNextAvailableAdminSession(respLang);
-          if (availableAdmin) {
+
+          if (availableAgent && availableAgent.role === 'agent') {
+            console.log(`[Transfer] Routing ungrounded query directly to available Support Agent ${availableAgent.name}`);
+            await dispatchCallToAgent(data.callId, availableAgent, {
+              customerId: call.customerId,
+              customerName: call.customerName,
+              customerPhone: call.customerPhone || 'Not provided',
+              preferredLanguage: respLang,
+              customerSocketId: socket.id,
+              callRecordId: call.id
+            });
+          } else if (availableAdmin) {
             console.log(`[Transfer] Routing ungrounded query directly to available Admin Operator ${availableAdmin.operatorName}`);
             await dispatchCallToAdminSession(data.callId, availableAdmin, {
               customerId: call.customerId,
@@ -1073,9 +1085,19 @@ export function initSocketServer(io: SocketIOServer) {
               callRecordId: call.id,
               duration: data.duration || 0
             });
+          } else if (availableAgent) {
+            console.log(`[Transfer] Routing ungrounded query directly to Agent ${availableAgent.name}`);
+            await dispatchCallToAgent(data.callId, availableAgent, {
+              customerId: call.customerId,
+              customerName: call.customerName,
+              customerPhone: call.customerPhone || 'Not provided',
+              preferredLanguage: respLang,
+              customerSocketId: socket.id,
+              callRecordId: call.id
+            });
           } else {
-            // Fallback: broadcast transfer alert to admins if all operators are currently busy
-            io.to('role:admin').emit('transfer:incoming', {
+            // Fallback: broadcast transfer alert to all staff
+            io.to('role:admin').to('role:agent').emit('transfer:incoming', {
               transferId: transferReq.id,
               callId: data.callId,
               callRecordId: call.id,
@@ -1088,6 +1110,34 @@ export function initSocketServer(io: SocketIOServer) {
               language: respLang,
               createdAt: transferReq.createdAt
             });
+
+            // If no staff is currently connected, create an urgent support ticket and notify caller
+            console.log(`[Transfer] No staff online for ${data.callId}. Creating urgent support ticket.`);
+            try {
+              const ticket = await prisma.supportTicket.create({
+                data: {
+                  customerId: call.customerId,
+                  customerName: call.customerName,
+                  customerEmail: call.customerPhone || null,
+                  subject: `Live Transfer Request: ${queryText.substring(0, 50)}`,
+                  description: `Customer requested human assistance during AI voice call. Query: "${queryText}". Sentiment: ${sentimentResult.sentiment} (${sentimentResult.confidenceScore}%).`,
+                  priority: 'urgent',
+                  status: 'open'
+                }
+              });
+
+              socket.emit('transfer:no_staff_available', {
+                callId: data.callId,
+                ticketId: ticket.id,
+                message: `All human support specialists and administrators are currently offline. We have logged your request as priority ticket #${ticket.id.slice(-6).toUpperCase()}.`
+              });
+            } catch (ticketErr) {
+              console.error('[Transfer] Failed to create auto-ticket:', ticketErr);
+              socket.emit('transfer:no_staff_available', {
+                callId: data.callId,
+                message: 'All support specialists are currently offline. Please try again shortly or leave a message.'
+              });
+            }
           }
         } else {
           const respLang = response.language || callLang;

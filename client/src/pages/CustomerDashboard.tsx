@@ -97,6 +97,10 @@ export const CustomerDashboard: React.FC = () => {
     requiresHumanAssistance: boolean;
   } | null>(null);
 
+  const [transferNotice, setTransferNotice] = useState<{
+    message: string;
+    ticketId?: string;
+  } | null>(null);
 
   // Auto-scroll transcript
   const transcriptEndRef = useRef<HTMLDivElement>(null);
@@ -402,7 +406,42 @@ export const CustomerDashboard: React.FC = () => {
       }
     });
 
-    // 8B. Mid-call language change confirmation
+    // 8B. No staff available for live transfer
+    socket.on('transfer:no_staff_available', (data: { callId: string; message: string; ticketId?: string }) => {
+      console.warn('[Customer] Transfer notice - no staff online:', data.message);
+      setTransferNotice({
+        message: data.message,
+        ticketId: data.ticketId
+      });
+      setTranscripts(prev => [
+        ...prev,
+        {
+          id: 't_' + Date.now(),
+          sender: 'system',
+          senderName: 'System',
+          text: data.message,
+          timestamp: new Date().toISOString()
+        }
+      ]);
+    });
+
+    // 8C. Transfer rejected by staff
+    socket.on('transfer:rejected_notice', (data: { message?: string }) => {
+      const msg = data.message || 'Support agents are currently assisting other callers. Please leave a message or try again.';
+      setTransferNotice({ message: msg });
+      setTranscripts(prev => [
+        ...prev,
+        {
+          id: 't_' + Date.now(),
+          sender: 'system',
+          senderName: 'System',
+          text: msg,
+          timestamp: new Date().toISOString()
+        }
+      ]);
+    });
+
+    // 8D. Mid-call language change confirmation
     socket.on('call:language_changed', (data: { callId: string; language: LanguageCode; languageName: string }) => {
       setSelectedLanguage(data.language);
       voiceService.setLanguage(data.language);
@@ -691,6 +730,7 @@ export const CustomerDashboard: React.FC = () => {
     setIsCallHeld(false);
     setQueueInfo(null);
     setLiveSentiment(null);
+    setTransferNotice(null);
     voiceService.cancelSpeech();
     voiceService.stopListening();
     webrtcManager.endCall();
@@ -1004,11 +1044,39 @@ export const CustomerDashboard: React.FC = () => {
               )}
 
               {callStatus === 'transferring' && (
-                <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800 text-xs flex items-center justify-center gap-3 animate-pulse">
-                  <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />
-                  <div className="text-left">
-                    <p className="font-bold">{t('call.transfer_in_progress')}</p>
-                    <p className="text-amber-700">{t('call.transfer_wait')}</p>
+                <div className="p-5 bg-amber-50 border border-amber-200 rounded-3xl text-amber-900 text-xs space-y-3 shadow-xs">
+                  <div className="flex items-center justify-center gap-3">
+                    <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0 animate-pulse" />
+                    <div className="text-left">
+                      <p className="font-bold">{t('call.transfer_in_progress')}</p>
+                      <p className="text-amber-700 leading-relaxed">{transferNotice?.message || t('call.transfer_wait')}</p>
+                    </div>
+                  </div>
+
+                  {transferNotice?.ticketId && (
+                    <div className="bg-white/95 p-3 rounded-2xl border border-amber-200/80 text-center font-medium shadow-2xs">
+                      <span className="text-slate-600">Priority Support Ticket Created: </span>
+                      <span className="font-bold text-amber-800 font-mono">#{transferNotice.ticketId.slice(-6).toUpperCase()}</span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-center gap-2 pt-1">
+                    <button
+                      onClick={() => {
+                        setCallStatus('active_ai');
+                        setTransferNotice(null);
+                        startSpeechRecognition(callId || '', false);
+                      }}
+                      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-xs transition-all cursor-pointer"
+                    >
+                      Return to AI Assistant
+                    </button>
+                    <button
+                      onClick={handleEndCall}
+                      className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs shadow-xs transition-all cursor-pointer"
+                    >
+                      End Call
+                    </button>
                   </div>
                 </div>
               )}

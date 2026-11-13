@@ -32,6 +32,7 @@ import sentimentRoutes from './routes/sentiment.routes.js';
 import followUpRoutes from './routes/followUp.routes.js';
 import knowledgeGapRoutes from './routes/knowledgeGap.routes.js';
 import biRoutes from './routes/bi.routes.js';
+import recordingsRoutes from './routes/recordings.routes.js';
 import { initSocketServer } from './services/socket.js';
 import { initBiScheduler } from './services/biScheduler.js';
 import { seedDatabase } from './seed.js';
@@ -233,6 +234,8 @@ app.use('/api/sentiment', sentimentRoutes);
 app.use('/api/follow-up-tasks', followUpRoutes);
 app.use('/api/knowledge-gaps', knowledgeGapRoutes);
 app.use('/api/admin/bi', biRoutes);
+app.use('/api/recordings', recordingsRoutes);
+app.use('/api/admin/recordings', recordingsRoutes);
 
 // Dev-only Team Sync API (Strictly never mounted in production)
 if (process.env.NODE_ENV !== 'production') {

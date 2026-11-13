@@ -34,6 +34,7 @@ model User {
   passwordResetTokens PasswordResetToken[]
   auditLogs          SecurityAuditLog[]
   sentimentRecords   SentimentAnalysis[]
+  agentEvaluations   AgentPerformanceEvaluation[]
 }
 
 model CallRecord {
@@ -94,6 +95,9 @@ model CallRecord {
   intelligence       CallIntelligence?
   followUpTasks      FollowUpTask[]
   sentimentRecords   SentimentAnalysis[]
+  recording          CallRecording?
+  conversationAnalysis ConversationAnalysis?
+  agentEvaluation    AgentPerformanceEvaluation?
 }
 
 model CallTranscript {
@@ -106,6 +110,10 @@ model CallTranscript {
   translation  String?
   language     String?
   timestamp    DateTime   @default(now())
+  originalText String?
+  isCorrected  Boolean    @default(false)
+  correctedBy  String?
+  correctedAt  DateTime?
 }
 
 model CallTransferRequest {
@@ -309,4 +317,128 @@ model BusinessReport {
   @@index([reportType, startDate, endDate])
   @@index([generatedAt])
 }
+
+model CallRecording {
+  id              String      @id @default(cuid())
+  callRecordId    String      @unique
+  callRecord      CallRecord  @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  callId          String      // Unique external call ID string
+  storagePath     String?     // Path on server disk (e.g. uploads/recordings/...)
+  fileName        String?
+  fileSize        Int?        // in bytes
+  mimeType        String?     @default("audio/webm")
+  duration        Int         @default(0) // in seconds
+  consentStatus   String      @default("granted") // "granted" | "declined" | "not_requested"
+  recordingStatus String      @default("completed") // "completed" | "processing" | "declined" | "deleted"
+  audioQuality    String?     @default("good")
+  retentionExpiry DateTime?
+  downloadCount   Int         @default(0)
+  lastAccessedAt  DateTime?
+  deletedAt       DateTime?
+  deletedBy       String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  conversationAnalysis ConversationAnalysis?
+  auditLogs            RecordingAuditLog[]
+
+  @@index([callId])
+  @@index([consentStatus])
+  @@index([recordingStatus])
+  @@index([createdAt])
+}
+
+model ConversationAnalysis {
+  id                    String        @id @default(cuid())
+  callRecordId          String        @unique
+  callRecord            CallRecord    @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  recordingId           String?       @unique
+  recording             CallRecording? @relation(fields: [recordingId], references: [id], onDelete: SetNull)
+  
+  // Customer Analysis
+  customerReason        String        // Main reason for contacting
+  customerRequirements  String        // Key needs / requirements
+  questionsAsked        String        // JSON array of customer questions
+  problemsReported      String        // JSON array of reported problems
+  productsMentioned     String        // JSON array of products/services referenced
+  unresolvedConcerns    String?       // JSON array of open issues
+  satisfactionIndicator String        @default("neutral") // "high" | "moderate" | "low"
+  overallSentiment      String        @default("NEUTRAL") // POSITIVE | NEGATIVE | NEUTRAL | FRUSTRATED
+
+  // Conversation Analysis
+  discussionPoints      String        // JSON array of main discussion points
+  issuesResolved        String        // JSON array of resolved points
+  issuesUnresolved      String?       // JSON array of unresolved items
+  requiresHumanAssistance Boolean     @default(false)
+  followUpRequired      Boolean       @default(false)
+  followUpAction        String?
+  customerFeedback      String?
+  importantKeywords     String        // JSON array of detected keywords/tags
+  callSummary           String        // Concise factual call summary (3-4 sentences)
+
+  // Growth & Intelligence Category
+  inquiryCategory       String        @default("General") // "Order" | "Product" | "Payment" | "Account" | "Technical" | "General"
+  growthOpportunity     String?       // Identified business growth opportunity / signal
+
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  @@index([inquiryCategory])
+  @@index([overallSentiment])
+  @@index([createdAt])
+}
+
+model AgentPerformanceEvaluation {
+  id                    String      @id @default(cuid())
+  callRecordId          String      @unique
+  callRecord            CallRecord  @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  agentId               String
+  agent                 User        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  
+  // 5 Pillars of Evaluation (0 to 100 each)
+  communicationScore    Float       @default(80.0) // 30% weight: clarity, professional language, politeness
+  resolutionScore       Float       @default(80.0) // 30% weight: issue resolved, relevant answer, avoided unnecessary transfers
+  knowledgeScore        Float       @default(80.0) // 20% weight: answer relevance, product/policy accuracy
+  professionalismScore  Float       @default(85.0) // 10% weight: active listening, tone, courtesy
+  feedbackScore         Float       @default(80.0) // 10% weight: customer rating & sentiment on call
+  overallScore          Float       @default(81.0) // Weighted composite score (0-100)
+
+  // Evaluation Breakdown & Supporting Evidence
+  evaluationSummary     String      // Objective summary of agent handling
+  strengths             String      // JSON array of strong points with transcript excerpts
+  improvements          String      // JSON array of constructive improvement areas
+  trainingRecommendations String?   // Recommended training modules/topics
+  communicationMistakes String?     // Specific communication flaws detected if any
+  evidenceExcerpts      String?     // JSON array of { timestamp, quote, note }
+
+  // Review & Management Override
+  isManagerReviewed     Boolean     @default(false)
+  managerNotes          String?
+  reviewedBy            String?
+  reviewedAt            DateTime?
+
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  @@index([agentId])
+  @@index([overallScore])
+  @@index([createdAt])
+}
+
+model RecordingAuditLog {
+  id            String        @id @default(cuid())
+  recordingId   String
+  recording     CallRecording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  action        String        // "PLAYBACK" | "DOWNLOAD" | "DELETE" | "CONSENT_RECORDED" | "TRANSCRIPT_CORRECTED"
+  performedBy   String        // User ID or name/email
+  userRole      String        // "admin" | "manager" | "system"
+  ipAddress     String?
+  userAgent     String?
+  details       String?
+  timestamp     DateTime      @default(now())
+
+  @@index([recordingId])
+  @@index([action, timestamp])
+}
+
 

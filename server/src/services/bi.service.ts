@@ -1053,3 +1053,4 @@ export class BusinessIntelligenceService {
 }
 
 export const biService = new BusinessIntelligenceService();
+
