@@ -84,6 +84,7 @@ export const CustomerDashboard: React.FC = () => {
   const [history, setHistory] = useState<CallRecord[]>([]);
   const [selectedHistoryCall, setSelectedHistoryCall] = useState<CallRecord | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(new Date());
   const [showAudioDeviceModal, setShowAudioDeviceModal] = useState(false);
 
 
@@ -195,23 +196,34 @@ export const CustomerDashboard: React.FC = () => {
 
   // Fetch Customer Call History
   const fetchHistory = async () => {
-    if (!token) return;
+    const authToken = token || localStorage.getItem('kaira_token') || localStorage.getItem('token');
+    if (!authToken) return;
     setLoadingHistory(true);
     try {
-      const res = await fetch('/api/calls/my-history', {
-        headers: { Authorization: `Bearer ${token}` }
+      const res = await fetch(`/api/calls/my-history?_t=${Date.now()}`, {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          Pragma: 'no-cache'
+        }
       });
       const data = await res.json();
-      if (res.ok) setHistory(data.calls || []);
+      if (res.ok) {
+        setHistory(data.calls || []);
+        setLastRefreshedAt(new Date());
+      }
     } catch (err) {
       console.error('Failed to load call history:', err);
     } finally {
-      setLoadingHistory(false);
+      setTimeout(() => setLoadingHistory(false), 450);
     }
   };
 
   useEffect(() => {
     fetchHistory();
+    // Auto-refresh every 8 seconds to reflect call status updates
+    const interval = setInterval(fetchHistory, 8000);
+    return () => clearInterval(interval);
   }, [token]);
 
   // Send typed query to active AI call
@@ -735,6 +747,7 @@ export const CustomerDashboard: React.FC = () => {
     voiceService.cancelSpeech();
     voiceService.stopListening();
     webrtcManager.endCall();
+    setTimeout(fetchHistory, 600);
   };
 
   // Submit Rating
@@ -1358,17 +1371,25 @@ export const CustomerDashboard: React.FC = () => {
           <div className="flex items-center gap-2">
             <History className="w-5 h-5 text-indigo-600" />
             <h2 className="text-lg font-bold text-slate-900">{t('history.title')}</h2>
+            {lastRefreshedAt && (
+              <span className="hidden sm:inline-block text-[11px] text-slate-400 font-mono">
+                • Updated {lastRefreshedAt.toLocaleTimeString()}
+              </span>
+            )}
           </div>
           <button
+            type="button"
+            disabled={loadingHistory}
             onClick={fetchHistory}
-            className="flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 border border-transparent hover:border-indigo-100 transition-all cursor-pointer active:scale-95 disabled:opacity-60"
+            title="Refresh Call History"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
-            {t('history.refresh')}
+            <RefreshCw className={`w-3.5 h-3.5 transition-transform ${loadingHistory ? 'animate-spin text-indigo-700' : ''}`} />
+            <span>{loadingHistory ? 'Refreshing...' : t('history.refresh')}</span>
           </button>
         </div>
 
-        {loadingHistory ? (
+        {loadingHistory && history.length === 0 ? (
           <div className="py-8 text-center text-xs text-slate-500">{t('history.loading')}</div>
         ) : history.length === 0 ? (
           <div className="py-8 text-center text-xs text-slate-400">

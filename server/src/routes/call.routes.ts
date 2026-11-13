@@ -364,10 +364,25 @@ router.get('/', authenticate, requireRole(['admin', 'agent']), async (req: Reque
 // 3. Customer's own call history (Customer only)
 router.get('/my-history', authenticate, async (req: Request, res: Response) => {
   try {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
     const userId = req.user!.id;
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+
+    const orConditions: any[] = [{ customerId: userId }];
+    if (user?.phone) {
+      orConditions.push({ customerPhone: user.phone });
+    }
+    if (user?.name) {
+      orConditions.push({ customerName: user.name });
+    }
 
     const calls = await prisma.callRecord.findMany({
-      where: { customerId: userId },
+      where: {
+        OR: orConditions
+      },
       include: {
         transcripts: { orderBy: { timestamp: 'asc' } },
         admin: { select: { name: true } },
