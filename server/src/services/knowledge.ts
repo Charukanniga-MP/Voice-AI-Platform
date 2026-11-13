@@ -17,7 +17,7 @@ export interface GroundedResponse {
 }
 
 // Fallback message strictly required by specification
-export const FALLBACK_MESSAGE = "I'm sorry, I couldn't find the information you're looking for. Please hold while I connect you with our Admin.";
+export const FALLBACK_MESSAGE = "I apologize, but I don't currently have that specific information. Let me record your question so our support team can review it and assist you.";
 
 const STOP_WORDS = new Set([
   'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
@@ -456,6 +456,62 @@ If they ask for company-specific private data or account changes, explain you ca
       confidence: 0.6,
       latencyMs: Date.now() - t0
     };
+  }
+
+  /**
+   * Track missing customer question as a Knowledge Gap for Admin review
+   */
+  public async trackKnowledgeGap(question: string, language: string = 'en', sampleCallId?: string): Promise<void> {
+    try {
+      const clean = (question || '').trim();
+      if (!clean || clean.length < 3) return;
+
+      const normalized = clean.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
+      if (!normalized) return;
+
+      const existing = await prisma.knowledgeGap.findUnique({
+        where: { normalizedQuestion: normalized }
+      });
+
+      if (existing) {
+        await prisma.knowledgeGap.update({
+          where: { id: existing.id },
+          data: {
+            frequency: { increment: 1 },
+            lastAskedAt: new Date(),
+            sampleCallId: sampleCallId || existing.sampleCallId
+          }
+        });
+        console.log(`[KnowledgeGap] Updated frequency for gap: "${clean}" (count: ${existing.frequency + 1})`);
+      } else {
+        await prisma.knowledgeGap.create({
+          data: {
+            question: clean,
+            normalizedQuestion: normalized,
+            language: language || 'en',
+            topic: this.categorizeQuestion(clean),
+            frequency: 1,
+            sampleCallId: sampleCallId || null,
+            status: 'open',
+            lastAskedAt: new Date()
+          }
+        });
+        console.log(`[KnowledgeGap] Recorded new knowledge gap: "${clean}"`);
+      }
+    } catch (err) {
+      console.warn('[KnowledgeGap] Error tracking knowledge gap:', err);
+    }
+  }
+
+  private categorizeQuestion(text: string): string {
+    const lower = text.toLowerCase();
+    if (lower.includes('price') || lower.includes('cost') || lower.includes('plan') || lower.includes('fee')) return 'pricing';
+    if (lower.includes('product') || lower.includes('feature') || lower.includes('voice') || lower.includes('ai')) return 'products';
+    if (lower.includes('account') || lower.includes('login') || lower.includes('password') || lower.includes('email')) return 'account';
+    if (lower.includes('refund') || lower.includes('cancel') || lower.includes('policy')) return 'policies';
+    if (lower.includes('support') || lower.includes('ticket') || lower.includes('agent')) return 'support';
+    if (lower.includes('hour') || lower.includes('time') || lower.includes('open')) return 'hours';
+    return 'general';
   }
 }
 

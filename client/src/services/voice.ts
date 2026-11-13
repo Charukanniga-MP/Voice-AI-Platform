@@ -308,19 +308,20 @@ export class VoiceService {
       const voices = this.synth.getVoices();
       const langPrefix = targetBcp47.split('-')[0];
 
-      // Find matching voice
+      // Find natural, soft, and friendly customer support voice
       const matchingVoice =
+        voices.find(v => v.lang.toLowerCase() === targetBcp47.toLowerCase() && (v.name.includes('Natural') || v.name.includes('Neural') || v.name.includes('Google') || v.name.includes('Female') || v.name.includes('Jenny') || v.name.includes('Samantha') || v.name.includes('Aria'))) ||
         voices.find(v => v.lang.toLowerCase() === targetBcp47.toLowerCase()) ||
         voices.find(v => v.lang.toLowerCase().startsWith(langPrefix)) ||
-        voices.find(v => v.name.includes('Google') && v.lang.startsWith('en')) ||
+        voices.find(v => (v.name.includes('Google') || v.name.includes('Natural')) && v.lang.startsWith('en')) ||
         voices.find(v => v.lang.startsWith('en'));
 
       if (matchingVoice) {
         utterance.voice = matchingVoice;
       }
 
-      utterance.rate = 1.05;
-      utterance.pitch = 1.0;
+      utterance.rate = 0.98; // Soft, patient, clear pacing
+      utterance.pitch = 1.04; // Friendly, professional warmth
       utterance.volume = this.currentVolume;
 
       utterance.onstart = () => {

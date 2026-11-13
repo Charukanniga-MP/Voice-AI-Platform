@@ -13,7 +13,7 @@ import {
   PhoneCall, PhoneOff, Mic, MicOff, Volume2, VolumeX,
   Clock, ShieldAlert, Sparkles, MessageSquare, History, User as UserIcon,
   Headphones, Globe, Star, Users, CheckCircle2, RefreshCw, Settings,
-  Send, Download, Lightbulb
+  Send, Download, Lightbulb, Play, Pause, Bot, Radio, FileText, CheckCircle
 } from 'lucide-react';
 import { SentimentBadge } from '../components/SentimentBadge.js';
 import { LiveSentimentCard } from '../components/LiveSentimentCard.js';
@@ -89,6 +89,44 @@ export const CustomerDashboard: React.FC = () => {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(new Date());
   const [showAudioDeviceModal, setShowAudioDeviceModal] = useState(false);
+
+  // AI visual states: 'idle' | 'listening' | 'thinking' | 'speaking'
+  const [aiVisualState, setAiVisualState] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
+
+  // Call recording playback state
+  const [playingRecordingId, setPlayingRecordingId] = useState<string | null>(null);
+  const activeAudioPlayerRef = useRef<HTMLAudioElement | null>(null);
+
+  const handlePlayRecording = (recordingUrl: string, recCallId: string) => {
+    if (playingRecordingId === recCallId) {
+      if (activeAudioPlayerRef.current) {
+        activeAudioPlayerRef.current.pause();
+      }
+      setPlayingRecordingId(null);
+      return;
+    }
+
+    if (activeAudioPlayerRef.current) {
+      activeAudioPlayerRef.current.pause();
+    }
+
+    const audio = new Audio(recordingUrl);
+    activeAudioPlayerRef.current = audio;
+    setPlayingRecordingId(recCallId);
+
+    audio.onended = () => {
+      setPlayingRecordingId(null);
+    };
+    audio.onerror = () => {
+      setPlayingRecordingId(null);
+      alert('Unable to play recording. The audio stream may still be processing.');
+    };
+
+    audio.play().catch(err => {
+      console.warn('Playback error:', err);
+      setPlayingRecordingId(null);
+    });
+  };
 
 
   // Live Sentiment Telemetry State
@@ -985,18 +1023,18 @@ export const CustomerDashboard: React.FC = () => {
         <div className="p-8 text-center flex flex-col items-center justify-center">
           {callStatus === 'idle' && (
             <div className="w-full max-w-2xl py-4 space-y-6">
-              {/* PRIMARY HERO: Call AI Voice Agent */}
+              {/* PRIMARY HERO: Call KAIRA AI Voice Agent */}
               <div className="p-8 rounded-3xl border-2 border-indigo-200/80 bg-gradient-to-br from-indigo-50/80 via-white to-blue-50/50 text-left shadow-xl shadow-indigo-100/50 relative overflow-hidden transition-all hover:border-indigo-400">
                 <div className="absolute -top-12 -right-12 w-48 h-48 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
 
                 <div className="relative z-10 space-y-5">
                   <div className="flex items-center justify-between">
-                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-600 to-blue-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/30">
-                      <Sparkles className="w-8 h-8 animate-pulse" />
+                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-600 to-teal-500 text-white flex items-center justify-center shadow-lg shadow-indigo-500/30">
+                      <Bot className="w-9 h-9" />
                     </div>
                     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                       <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                      AI Voice Online (24/7)
+                      24/7 INSTANT AI SUPPORT • NO WAITING
                     </span>
                   </div>
 
@@ -1005,7 +1043,7 @@ export const CustomerDashboard: React.FC = () => {
                       Call KAIRA AI Voice Agent
                     </h3>
                     <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
-                      Instant, human-like voice conversation in <strong>{SUPPORTED_LANGUAGES[selectedLanguage]?.name} ({SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName})</strong>. Get real-time answers on pricing, products, services, and policies with continuous dialogue and voice interruption.
+                      Instant, human-like voice conversation in <strong>{SUPPORTED_LANGUAGES[selectedLanguage]?.name} ({SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName})</strong>. Connect directly to our autonomous AI voice agent with zero wait time. Answers questions on products, pricing, policies, technical issues, account inquiries, and general topics with continuous dialogue and voice interruption.
                     </p>
                   </div>
 
@@ -1025,7 +1063,7 @@ export const CustomerDashboard: React.FC = () => {
                     onClick={handleStartAiCall}
                     className="w-full min-h-[54px] py-4 rounded-2xl bg-gradient-to-r from-indigo-600 via-blue-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-extrabold text-base shadow-xl shadow-indigo-600/30 hover:shadow-2xl active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-3"
                   >
-                    <PhoneCall className="w-5 h-5" />
+                    <PhoneCall className="w-5 h-5 animate-bounce" />
                     <span>Call AI Voice Agent Now</span>
                   </button>
                 </div>
@@ -1096,41 +1134,128 @@ export const CustomerDashboard: React.FC = () => {
           {['connecting', 'ringing', 'active_agent', 'active_ai', 'transferring', 'active_admin'].includes(callStatus) && (
             <div className="w-full max-w-xl space-y-6 py-2">
               {/* Caller Identity Indicator */}
-              <div className="mx-auto inline-flex items-center gap-3 px-4 py-2.5 bg-slate-50 border border-slate-200/90 rounded-2xl shadow-xs text-left">
-                <div className="w-10 h-10 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
-                  {user?.name?.charAt(0) || 'C'}
-                </div>
-                <div>
-                  <div className="text-xs font-black text-slate-900">{user?.name || 'Customer'}</div>
-                  <div className="text-[11px] text-slate-500 font-mono flex flex-wrap items-center gap-2">
-                    {user?.email && <span>{user.email}</span>}
-                    {user?.phone && <span>• {user.phone}</span>}
+              <div className="mx-auto flex flex-wrap items-center justify-between gap-3 px-5 py-3 bg-slate-50 border border-slate-200/90 rounded-2xl shadow-xs text-left w-full">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                    {user?.name?.charAt(0) || 'C'}
                   </div>
+                  <div>
+                    <div className="text-xs font-black text-slate-900">{user?.name || 'Customer'}</div>
+                    <div className="text-[11px] text-slate-500 font-mono flex flex-wrap items-center gap-2">
+                      <span>ID: #{user?.id ? user.id.slice(-8).toUpperCase() : 'CUST-001'}</span>
+                      {user?.email && <span>• {user.email}</span>}
+                      {user?.phone && <span>• Tel: {user.phone}</span>}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    Language: {SUPPORTED_LANGUAGES[selectedLanguage]?.name}
+                  </span>
+                </div>
+              </div>
+
+              {/* Dedicated AI Agent Avatar with Real-time State Indicators */}
+              <div className="relative flex flex-col items-center justify-center py-4">
+                <div className="relative mb-3">
+                  {/* Visual Status Halo Ring */}
+                  <div
+                    className={`w-28 h-28 rounded-full flex items-center justify-center transition-all duration-500 ${
+                      aiVisualState === 'speaking'
+                        ? 'bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 p-1 animate-pulse shadow-xl shadow-indigo-500/40 ring-4 ring-indigo-300/50'
+                        : aiVisualState === 'thinking'
+                          ? 'bg-gradient-to-tr from-amber-400 via-purple-500 to-indigo-600 p-1 animate-spin shadow-lg shadow-amber-400/30'
+                          : aiVisualState === 'listening'
+                            ? 'bg-gradient-to-tr from-emerald-500 to-teal-400 p-1 shadow-lg shadow-emerald-500/30 ring-4 ring-emerald-300/40 animate-pulse'
+                            : 'bg-slate-200 p-1 shadow-xs'
+                    }`}
+                  >
+                    <div className="w-full h-full bg-white rounded-full flex items-center justify-center shadow-inner">
+                      <div className="w-22 h-22 rounded-full bg-gradient-to-tr from-indigo-600 to-teal-600 text-white flex items-center justify-center shadow-md">
+                        {aiVisualState === 'speaking' ? (
+                          <Volume2 className="w-10 h-10 animate-bounce" />
+                        ) : aiVisualState === 'thinking' ? (
+                          <Sparkles className="w-10 h-10 animate-spin" />
+                        ) : (
+                          <Bot className="w-10 h-10" />
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Connected Live Badge */}
+                  <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 whitespace-nowrap px-3 py-0.5 bg-white border border-slate-200 rounded-full shadow-xs flex items-center gap-1.5 text-[10px] font-bold text-slate-700">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                    <span>CONNECTED</span>
+                  </div>
+                </div>
+
+                <h3 className="text-base font-extrabold text-slate-900 mt-2">
+                  {activePartner?.name || 'KAIRA AI Support Specialist'}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  AI-Powered Voice Customer Support Platform
+                </p>
+
+                {/* Status Indicator Banners */}
+                <div className="mt-3">
+                  {aiVisualState === 'listening' && (
+                    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold animate-pulse">
+                      <Mic className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Listening... (Speak your question now)</span>
+                    </div>
+                  )}
+
+                  {aiVisualState === 'thinking' && (
+                    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold animate-pulse">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-600 animate-spin" />
+                      <span>Thinking & searching Knowledge Base...</span>
+                    </div>
+                  )}
+
+                  {aiVisualState === 'speaking' && (
+                    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-800 text-xs font-bold animate-pulse">
+                      <Volume2 className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Speaking with natural AI voice...</span>
+                    </div>
+                  )}
+
+                  {aiVisualState === 'idle' && callStatus === 'connecting' && (
+                    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold">
+                      <Radio className="w-3.5 h-3.5 text-slate-500 animate-pulse" />
+                      <span>Connecting call session...</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
               {/* Soundwave animation with conversational state indication */}
               <div className="h-24 flex flex-col items-center justify-center gap-3 py-2">
                 <div className="flex items-center justify-center gap-1.5">
-                  <span className={`w-1.5 rounded-full ${aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-1' : isCustomerSpeaking ? 'bg-emerald-500 animate-soundwave-1' : 'bg-slate-300 h-3'}`} />
-                  <span className={`w-1.5 rounded-full ${aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-2' : isCustomerSpeaking ? 'bg-emerald-500 animate-soundwave-2' : 'bg-slate-300 h-5'}`} />
-                  <span className={`w-1.5 rounded-full ${aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-3' : isCustomerSpeaking ? 'bg-emerald-500 animate-soundwave-3' : 'bg-slate-300 h-8'}`} />
-                  <span className={`w-1.5 rounded-full ${aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-4' : isCustomerSpeaking ? 'bg-emerald-500 animate-soundwave-4' : 'bg-slate-300 h-4'}`} />
-                  <span className={`w-1.5 rounded-full ${aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-5' : isCustomerSpeaking ? 'bg-emerald-500 animate-soundwave-5' : 'bg-slate-300 h-7'}`} />
-                  <span className={`w-1.5 rounded-full ${aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-2' : isCustomerSpeaking ? 'bg-emerald-500 animate-soundwave-2' : 'bg-slate-300 h-5'}`} />
-                  <span className={`w-1.5 rounded-full ${aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-4' : isCustomerSpeaking ? 'bg-emerald-500 animate-soundwave-4' : 'bg-slate-300 h-3'}`} />
+                  <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-1' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-1' : 'bg-slate-300 h-3'}`} />
+                  <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-2' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-2' : 'bg-slate-300 h-5'}`} />
+                  <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-3' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-3' : 'bg-slate-300 h-8'}`} />
+                  <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-4' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-4' : 'bg-slate-300 h-4'}`} />
+                  <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-5' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-5' : 'bg-slate-300 h-7'}`} />
+                  <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-2' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-2' : 'bg-slate-300 h-5'}`} />
+                  <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-4' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-4' : 'bg-slate-300 h-3'}`} />
                 </div>
 
                 {/* State Pills */}
                 <div className="flex flex-wrap items-center justify-center gap-2">
                   {callStatus === 'active_ai' && (
                     <>
-                      {aiIsSpeaking ? (
+                      {(aiVisualState === 'speaking' || aiIsSpeaking) ? (
                         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
                           <Volume2 className="w-3.5 h-3.5 text-indigo-600 animate-pulse" />
                           KAIRA AI is Speaking
                         </span>
-                      ) : isCustomerSpeaking ? (
+                      ) : aiVisualState === 'thinking' ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                          <Sparkles className="w-3.5 h-3.5 text-amber-600 animate-spin" />
+                          AI is Thinking & Searching...
+                        </span>
+                      ) : (aiVisualState === 'listening' || isCustomerSpeaking) ? (
                         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                           <Mic className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
                           Listening to you (Speak freely)
@@ -1156,6 +1281,7 @@ export const CustomerDashboard: React.FC = () => {
                     </>
                   )}
                 </div>
+              </div>
               </div>
 
               {/* Call Status Banners */}
@@ -1546,105 +1672,119 @@ export const CustomerDashboard: React.FC = () => {
             <table className="w-full text-left text-xs text-slate-600">
               <thead className="bg-slate-50 text-slate-700 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
                 <tr>
-                  <th className="py-3 px-4">{t('history.col_datetime')}</th>
-                  <th className="py-3 px-4">{t('history.col_duration')}</th>
-                  <th className="py-3 px-4">{t('history.col_language')}</th>
-                  <th className="py-3 px-4">{t('history.col_type')}</th>
-                  <th className="py-3 px-4">{t('history.col_status')}</th>
-                  <th className="py-3 px-4">Sentiment</th>
-                  <th className="py-3 px-4">{t('history.col_handled_by')}</th>
-                  <th className="py-3 px-4 text-right">{t('history.col_actions')}</th>
+                  <th className="py-3 px-4">Customer Details</th>
+                  <th className="py-3 px-4">Date & Time</th>
+                  <th className="py-3 px-4">Duration</th>
+                  <th className="py-3 px-4">Status</th>
+                  <th className="py-3 px-4">AI Agent Name</th>
+                  <th className="py-3 px-4">Call Summary</th>
+                  <th className="py-3 px-4">Resolution</th>
+                  <th className="py-3 px-4 text-right">Recording & Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {history.map((call) => {
-                  const langMeta = SUPPORTED_LANGUAGES[call.language as LanguageCode] || SUPPORTED_LANGUAGES.en;
+                  const resolution = call.intelligence?.resolutionStatus || call.conversationAnalysis?.resolutionStatus || 'resolved';
+                  const summaryText = call.intelligence?.overallSummary || call.intelligence?.callReason || call.conversationAnalysis?.summary || call.customerQuestion || 'AI Voice support inquiry';
+                  const recUrl = call.recordingUrl || (call.recording ? `/api/recordings/file/${call.recording.id}` : `/api/calls/${call.callId}/recording`);
+
                   return (
-                    <tr key={call.id} className="hover:bg-slate-50/60 transition-colors">
-                      <td className="py-3 px-4 font-medium text-slate-800">
-                        {new Date(call.startTime).toLocaleString()}
+                    <tr key={call.id} className="hover:bg-slate-50/70 transition-colors">
+                      <td className="py-3.5 px-4">
+                        <div className="font-extrabold text-slate-900 text-xs">
+                          {call.customerName || call.customer?.name || user?.name || 'Customer'}
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-mono">
+                          ID: #{call.customerId ? call.customerId.slice(-6).toUpperCase() : (user?.id ? user.id.slice(-6).toUpperCase() : 'CUST')}
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          {call.customerPhone || call.customer?.phone || user?.phone || 'No phone'}
+                        </div>
                       </td>
-                      <td className="py-3 px-4 font-mono font-medium">
+
+                      <td className="py-3.5 px-4 font-medium text-slate-800">
+                        <div>{new Date(call.startTime).toLocaleDateString()}</div>
+                        <div className="text-[10px] text-slate-400">{new Date(call.startTime).toLocaleTimeString()}</div>
+                      </td>
+
+                      <td className="py-3.5 px-4 font-mono font-bold text-slate-700">
                         {formatDuration(call.duration)}
                       </td>
-                      <td className="py-3 px-4">
-                        <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-semibold text-[10px]">
-                          {langMeta.name}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4">
-                        {call.type === 'ai_voice' && (
-                          <span className="px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 font-semibold text-[10px]">
-                            {t('history.type_ai')}
-                          </span>
-                        )}
-                        {call.type === 'admin_transfer' && (
-                          <span className="px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 font-semibold text-[10px]">
-                            {t('history.type_admin')}
-                          </span>
-                        )}
-                        {call.type === 'agent_voice' && (
-                          <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 font-semibold text-[10px]">
-                            {t('history.type_agent')}
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4">
-                        {call.intelligence ? (
-                          <span
-                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${call.intelligence.resolutionStatus === 'resolved'
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : call.intelligence.resolutionStatus === 'partially_resolved'
-                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                : call.intelligence.resolutionStatus === 'escalated_admin'
-                                  ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                                  : 'bg-amber-50 text-amber-700 border border-amber-200'
-                              }`}
-                          >
-                            {call.intelligence.resolutionStatus.replace('_', ' ')}
-                          </span>
-                        ) : (
-                          <span
-                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${call.status === 'completed'
+
+                      <td className="py-3.5 px-4">
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${
+                            call.status === 'completed'
                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                               : call.status === 'active'
                                 ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                : 'bg-red-50 text-red-700 border border-red-200'
-                              }`}
-                          >
-                            {call.status}
-                          </span>
-                        )}
-
-                      </td>
-                      <td className="py-3 px-4">
-                        <SentimentBadge
-                          sentiment={call.overallSentiment}
-                          score={call.sentimentScore}
-                          size="xs"
-                        />
-
-                      </td>
-                      <td className="py-3 px-4 text-slate-700">
-                        {call.transferred ? (
-                          <span className="text-purple-700 font-medium">
-                            Admin {call.admin?.name ? `(${call.admin.name})` : ''}
-                          </span>
-                        ) : call.type === 'agent_voice' ? (
-                          <span className="text-blue-700 font-medium">
-                            Agent {call.agent?.name ? `(${call.agent.name})` : ''}
-                          </span>
-                        ) : (
-                          <span className="text-indigo-700 font-medium">KAIRA AI Voice</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <button
-                          onClick={() => setSelectedHistoryCall(call)}
-                          className="px-3 py-1 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 text-slate-700 rounded-lg font-medium transition-colors cursor-pointer"
+                                : 'bg-slate-100 text-slate-700 border border-slate-200'
+                          }`}
                         >
-                          {t('history.view_transcript')}
-                        </button>
+                          {call.status}
+                        </span>
+                      </td>
+
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-1.5">
+                          <Bot className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                          <span className="font-bold text-indigo-950">
+                            {call.agentName || (call.type === 'ai_voice' ? 'KAIRA AI Support Specialist' : call.type === 'admin_transfer' ? 'Admin' : 'Agent')}
+                          </span>
+                        </div>
+                      </td>
+
+                      <td className="py-3.5 px-4 max-w-xs">
+                        <p className="line-clamp-2 text-[11px] text-slate-600 font-medium leading-relaxed" title={summaryText}>
+                          {summaryText}
+                        </p>
+                      </td>
+
+                      <td className="py-3.5 px-4">
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${
+                            resolution === 'resolved'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : resolution === 'partially_resolved'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : resolution === 'escalated_admin'
+                                  ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                                  : 'bg-amber-50 text-amber-700 border border-amber-200'
+                          }`}
+                        >
+                          {resolution.replace('_', ' ')}
+                        </span>
+                      </td>
+
+                      <td className="py-3.5 px-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          {/* Audio Playback button */}
+                          {(call.recordingUrl || call.recording || call.recordingStatus === 'completed' || call.duration > 2) ? (
+                            <button
+                              onClick={() => handlePlayRecording(recUrl, call.id)}
+                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${
+                                playingRecordingId === call.id
+                                  ? 'bg-red-600 text-white animate-pulse ring-2 ring-red-400'
+                                  : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
+                              }`}
+                              title={playingRecordingId === call.id ? 'Pause Recording' : 'Listen to Call Recording'}
+                            >
+                              {playingRecordingId === call.id ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                              <span>{playingRecordingId === call.id ? 'Playing' : 'Listen'}</span>
+                            </button>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 italic">No audio</span>
+                          )}
+
+                          {/* View Transcript modal button */}
+                          <button
+                            onClick={() => setSelectedHistoryCall(call)}
+                            className="p-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-lg border border-slate-200 cursor-pointer shadow-2xs"
+                            title="View Transcript & Intelligence"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1690,6 +1830,39 @@ export const CustomerDashboard: React.FC = () => {
               </div>
             </div>
 
+            {/* Audio Recording Playback in Modal */}
+            {(selectedHistoryCall.recordingUrl || selectedHistoryCall.recording || selectedHistoryCall.recordingStatus === 'completed' || selectedHistoryCall.duration > 2) && (
+              <div className="p-3 bg-indigo-50/70 border border-indigo-200/80 rounded-2xl flex items-center justify-between gap-3 shadow-2xs">
+                <div className="flex items-center gap-2">
+                  <Volume2 className="w-4 h-4 text-indigo-600" />
+                  <div>
+                    <span className="text-xs font-bold text-indigo-950 block">Call Recording Audio</span>
+                    <span className="text-[10px] text-indigo-600 font-mono">Format: WebM / Opus HD</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handlePlayRecording(selectedHistoryCall.recordingUrl || `/api/calls/${selectedHistoryCall.callId}/recording`, selectedHistoryCall.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer ${
+                      playingRecordingId === selectedHistoryCall.id
+                        ? 'bg-red-600 text-white animate-pulse'
+                        : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                    }`}
+                  >
+                    {playingRecordingId === selectedHistoryCall.id ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                    <span>{playingRecordingId === selectedHistoryCall.id ? 'Pause' : 'Play Audio'}</span>
+                  </button>
+                  <a
+                    href={selectedHistoryCall.recordingUrl || `/api/calls/${selectedHistoryCall.callId}/recording`}
+                    download={`call-${selectedHistoryCall.callId}.webm`}
+                    className="p-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl cursor-pointer"
+                    title="Download Audio File"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              </div>
+            )}
 
             {/* Post-Call Sentiment Evaluation */}
             <PostCallSentimentSummary

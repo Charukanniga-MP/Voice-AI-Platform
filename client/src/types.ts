@@ -110,6 +110,19 @@ export interface CallRecord {
   transcripts?: CallTranscript[];
   transferRequests?: CallTransferRequest[];
   sentimentRecords?: SentimentRecord[];
+  recording?: {
+    id: string;
+    callId?: string;
+    storagePath?: string | null;
+    fileName?: string | null;
+    fileSize?: number | null;
+    mimeType?: string | null;
+    duration?: number;
+    recordingStatus?: string;
+    audioQuality?: string | null;
+    createdAt?: string;
+  } | null;
+  conversationAnalysis?: any;
 }
 
 export interface KnowledgeEntry {

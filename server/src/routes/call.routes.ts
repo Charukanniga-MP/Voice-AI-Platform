@@ -407,8 +407,11 @@ router.get('/my-history', authenticate, async (req: Request, res: Response) => {
         transcripts: { orderBy: { timestamp: 'asc' } },
         admin: { select: { name: true } },
         agent: { select: { name: true } },
+        customer: { select: { id: true, name: true, email: true, phone: true } },
         sentimentRecords: { where: { isFinal: true } },
-        intelligence: true
+        intelligence: true,
+        recording: true,
+        conversationAnalysis: true
       },
       orderBy: { startTime: 'desc' }
     });
