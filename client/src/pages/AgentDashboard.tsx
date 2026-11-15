@@ -91,10 +91,6 @@ export const AgentDashboard: React.FC = () => {
     (user?.agentStatus as 'available' | 'busy') || 'available'
   );
 
-  const [supportedLanguages, setSupportedLanguages] = useState<string[]>(
-    user?.supportedLanguages ? user.supportedLanguages.split(',') : ['en', 'ta', 'te', 'ml', 'hi']
-  );
-
   // Incoming call state & ringing
   const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
   const [incomingRingSec, setIncomingRingSec] = useState(0);
@@ -224,33 +220,6 @@ export const AgentDashboard: React.FC = () => {
         });
       } catch (err) {
         console.warn('Could not save agent status:', err);
-      }
-    }
-  };
-
-  // Sync Supported Languages
-  const handleToggleLanguage = async (code: string) => {
-    let next: string[];
-    if (supportedLanguages.includes(code)) {
-      if (supportedLanguages.length === 1) return; // Must have at least 1 language
-      next = supportedLanguages.filter(l => l !== code);
-    } else {
-      next = [...supportedLanguages, code];
-    }
-    setSupportedLanguages(next);
-
-    const socket = getSocket();
-    socket.emit('agent:languages_update', { supportedLanguages: next });
-
-    if (token) {
-      try {
-        await fetch('/api/auth/preferences', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ supportedLanguages: next })
-        });
-      } catch (err) {
-        console.warn('Could not save agent languages:', err);
       }
     }
   };
@@ -1388,29 +1357,6 @@ export const AgentDashboard: React.FC = () => {
               Follow-Up Tasks
             </button>
           </div>
-        </div>
-
-        {/* Supported Languages Multi-select Pills */}
-        <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2">
-          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 mr-1">
-            <Globe className="w-3.5 h-3.5 text-indigo-600" />
-            My Fluent Languages:
-          </span>
-          {(Object.entries(SUPPORTED_LANGUAGES) as [LanguageCode, typeof SUPPORTED_LANGUAGES[LanguageCode]][]).map(([code, meta]) => {
-            const isSupported = supportedLanguages.includes(code);
-            return (
-              <button
-                key={code}
-                onClick={() => handleToggleLanguage(code)}
-                className={`px-2.5 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer ${isSupported
-                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
-                  : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'
-                  }`}
-              >
-                {meta.nativeName} ({meta.name})
-              </button>
-            );
-          })}
         </div>
       </div>
 
