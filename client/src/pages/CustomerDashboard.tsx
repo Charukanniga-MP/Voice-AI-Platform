@@ -137,13 +137,13 @@ export const CustomerDashboard: React.FC = () => {
       audio.onended = () => {
         setPlayingRecordingId(null);
         activeAudioPlayerRef.current = null;
-        URL.revokeObjectURL(objectUrl);
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
         activeAudioObjectUrlRef.current = null;
       };
       audio.onerror = () => {
         setPlayingRecordingId(null);
         activeAudioPlayerRef.current = null;
-        URL.revokeObjectURL(objectUrl);
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
         activeAudioObjectUrlRef.current = null;
         alert('Unable to play recording. The recording may be unavailable or still processing.');
       };
@@ -161,6 +161,28 @@ export const CustomerDashboard: React.FC = () => {
   };
 
 
+  const handleDownloadRecording = async (recordingUrl: string, filename: string) => {
+    try {
+      const authToken = token || localStorage.getItem('kaira_token') || localStorage.getItem('token');
+      const response = await fetch(recordingUrl, {
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
+      });
+      if (!response.ok) throw new Error(`Recording request failed (${response.status})`);
+      const blob = await response.blob();
+      if (!blob.size) throw new Error('The recording file is empty');
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (err) {
+      console.warn('Recording download error:', err);
+      alert('Could not download the recording. Check your authorization and try again.');
+    }
+  };
   // Live Sentiment Telemetry State
   const [liveSentiment, setLiveSentiment] = useState<{
     sentiment: SentimentType;
@@ -1956,14 +1978,17 @@ export const CustomerDashboard: React.FC = () => {
                     {playingRecordingId === selectedHistoryCall.id ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
                     <span>{playingRecordingId === selectedHistoryCall.id ? 'Pause' : 'Play Audio'}</span>
                   </button>
-                  <a
-                    href={selectedHistoryCall.recordingUrl || `/api/calls/${selectedHistoryCall.callId}/recording`}
-                    download={`call-${selectedHistoryCall.callId}.webm`}
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadRecording(
+                      selectedHistoryCall.recordingUrl || `/api/calls/${selectedHistoryCall.callId}/recording`,
+                      `call-${selectedHistoryCall.callId}.webm`
+                    )}
                     className="p-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl cursor-pointer"
                     title="Download Audio File"
                   >
                     <Download className="w-3.5 h-3.5" />
-                  </a>
+                  </button>
                 </div>
               </div>
             )}

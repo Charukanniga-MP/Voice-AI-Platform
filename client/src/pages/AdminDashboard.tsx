@@ -517,6 +517,28 @@ export const AdminDashboard: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  const handleDownloadRecording = async (recordingUrl: string, filename: string) => {
+    try {
+      const authToken = token || localStorage.getItem('kaira_token') || localStorage.getItem('token');
+      const response = await fetch(recordingUrl, {
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
+      });
+      if (!response.ok) throw new Error(`Recording request failed (${response.status})`);
+      const blob = await response.blob();
+      if (!blob.size) throw new Error('The recording file is empty');
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (err) {
+      console.warn('Recording download error:', err);
+      alert('Could not download the recording. Check your authorization and try again.');
+    }
+  };
   // Fetch Call Quality Stats & Telemetry
   const fetchQualityStats = async () => {
     if (!token) return;
@@ -4342,14 +4364,17 @@ export const AdminDashboard: React.FC = () => {
                       </span>
                     ) : null}
                   </div>
-                  <a
-                    href={`${selectedCallDetails.recordingUrl}?download=true`}
-                    download
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadRecording(
+                      `${selectedCallDetails.recordingUrl}?download=true`,
+                      `KAIRA-Recording-${selectedCallDetails.callId}.webm`
+                    )}
                     className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-purple-700 hover:text-purple-900 bg-white border border-purple-200 rounded-lg shadow-2xs hover:bg-purple-50 transition-colors"
                   >
                     <Download className="w-3.5 h-3.5" />
                     Download
-                  </a>
+                  </button>
                 </div>
                 <audio
                   controls
