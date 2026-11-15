@@ -81,6 +81,11 @@ export const hi: Record<TranslationKey, string> = {
   'dashboard.select_language_title': 'अपनी पसंदीदा संचार भाषा चुनें:',
 
   // Calling Console & Session Bar
+  'recording.consent_title': 'कॉल रिकॉर्डिंग की अनुमति दें?',
+  'recording.consent_description': 'यदि यह कॉल किसी सहायता विशेषज्ञ से जुड़ती है, तो बातचीत रिकॉर्ड और संग्रहीत की जा सकती है। आप रिकॉर्डिंग के बिना भी जारी रख सकते हैं।',
+  'recording.continue_without': 'रिकॉर्डिंग के बिना जारी रखें',
+  'recording.allow_continue': 'रिकॉर्डिंग की अनुमति दें और जारी रखें',
+  'recording.cancel_call': 'कॉल रद्द करें',
   'call.session_title': 'ग्राहक सहायता कॉल सत्र',
   'call.status_ready': 'तैयार • पसंदीदा भाषा: {language} ({nativeName})',
   'call.status_connecting': 'कम विलंबता वाला वॉयस चैनल जोड़ा जा रहा है...',

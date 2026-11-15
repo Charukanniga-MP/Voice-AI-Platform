@@ -81,6 +81,11 @@ export const ta: Record<TranslationKey, string> = {
   'dashboard.select_language_title': 'நீங்கள் விரும்பும் தொடர்பு மொழியைத் தேர்ந்தெடுக்கவும்:',
 
   // Calling Console & Session Bar
+  'recording.consent_title': 'அழைப்பைப் பதிவு செய்ய அனுமதிக்கிறீர்களா?',
+  'recording.consent_description': 'இந்த அழைப்பு ஆதரவு நிபுணருடன் இணைக்கப்பட்டால், உரையாடல் பதிவு செய்யப்பட்டு சேமிக்கப்படலாம். பதிவு இல்லாமலும் தொடரலாம்.',
+  'recording.continue_without': 'பதிவில்லாமல் தொடரவும்',
+  'recording.allow_continue': 'பதிவை அனுமதித்து தொடரவும்',
+  'recording.cancel_call': 'அழைப்பை ரத்து செய்',
   'call.session_title': 'வாடிக்கையாளர் ஆதரவு அழைப்பு அமர்வு',
   'call.status_ready': 'தயார் • விருப்ப மொழி: {language} ({nativeName})',
   'call.status_connecting': 'குரல் அலைவரிசை இணைக்கப்படுகிறது...',

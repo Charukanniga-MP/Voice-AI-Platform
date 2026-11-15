@@ -81,6 +81,11 @@ export const ml: Record<TranslationKey, string> = {
   'dashboard.select_language_title': 'നിങ്ങളുടെ ആശയവിനിമയ ഭാഷ തിരഞ്ഞെടുക്കുക:',
 
   // Calling Console & Session Bar
+  'recording.consent_title': 'കോൾ റെക്കോർഡ് ചെയ്യാൻ അനുവദിക്കുമോ?',
+  'recording.consent_description': 'ഈ കോൾ ഒരു സപ്പോർട്ട് വിദഗ്ധനുമായി ബന്ധിപ്പിച്ചാൽ സംഭാഷണം റെക്കോർഡ് ചെയ്ത് സൂക്ഷിച്ചേക്കാം. റെക്കോർഡിംഗ് ഇല്ലാതെയും തുടരാം.',
+  'recording.continue_without': 'റെക്കോർഡിംഗ് ഇല്ലാതെ തുടരുക',
+  'recording.allow_continue': 'റെക്കോർഡിംഗ് അനുവദിച്ച് തുടരുക',
+  'recording.cancel_call': 'കോൾ റദ്ദാക്കുക',
   'call.session_title': 'ഉപഭോക്തൃ പിന്തുണ കോൾ സെഷൻ',
   'call.status_ready': 'തയ്യാറാണ് • തിരഞ്ഞെടുത്ത ഭാഷ: {language} ({nativeName})',
   'call.status_connecting': 'വോയ്‌സ് ചാനൽ ബന്ധിപ്പിക്കുന്നു...',

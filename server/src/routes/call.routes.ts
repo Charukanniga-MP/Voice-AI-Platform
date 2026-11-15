@@ -790,18 +790,8 @@ if (!fs.existsSync(recordingsDir)) {
   fs.mkdirSync(recordingsDir, { recursive: true });
 }
 
-const recordingStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, recordingsDir);
-  },
-  filename: (req, _file, cb) => {
-    const callId = req.params.callId || 'unknown';
-    cb(null, `${callId}.webm`);
-  }
-});
-
 const uploadRecording = multer({
-  storage: recordingStorage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 }
 });
 
@@ -811,8 +801,8 @@ router.post('/:callId/recording', authenticate, uploadRecording.single('audio'),
     const { callId } = req.params;
     const duration = req.body.duration ? parseInt(req.body.duration) : 0;
 
-    if (!req.file) {
-      res.status(400).json({ error: 'No audio recording file provided.' });
+    if (req.user!.role !== 'customer' || req.body.consentStatus !== 'granted' || !req.file) {
+      res.status(400).json({ error: 'A customer consent grant and audio file are required.' });
       return;
     }
 
@@ -821,12 +811,27 @@ router.post('/:callId/recording', authenticate, uploadRecording.single('audio'),
     });
 
     if (!call) {
-      if (req.file && fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-      }
       res.status(404).json({ error: 'Call record not found.' });
       return;
     }
+
+    if (call.customerId !== req.user!.id) {
+      res.status(403).json({ error: 'Access denied.' });
+      return;
+    }
+
+    const consentRecord = await prisma.callRecording.findUnique({ where: { callRecordId: call.id } });
+    if (consentRecord?.consentStatus !== 'granted') {
+      res.status(403).json({ error: 'Recording consent has not been granted for this call.' });
+      return;
+    }
+
+    const filePath = path.resolve(recordingsDir, `${callId}.webm`);
+    if (!filePath.startsWith(`${recordingsDir}${path.sep}`)) {
+      res.status(400).json({ error: 'Invalid call recording identifier.' });
+      return;
+    }
+    fs.writeFileSync(filePath, req.file.buffer);
 
     const recordingUrl = `/api/calls/${callId}/recording`;
     const updatedCall = await prisma.callRecord.update({
@@ -873,6 +878,10 @@ router.get('/:callId/recording', authenticate, async (req: Request, res: Respons
     }
 
     const filePath = path.resolve(recordingsDir, `${callId}.webm`);
+    if (!filePath.startsWith(`${recordingsDir}${path.sep}`)) {
+      res.status(400).json({ error: 'Invalid call recording identifier.' });
+      return;
+    }
     if (!fs.existsSync(filePath)) {
       res.status(404).json({ error: 'Recording audio file not found on server.' });
       return;

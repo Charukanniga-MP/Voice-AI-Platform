@@ -81,6 +81,11 @@ export const kn: Record<TranslationKey, string> = {
   'dashboard.select_language_title': 'ನಿಮ್ಮ ಆದ್ಯತೆಯ ಸಂವಹನ ಭಾಷೆಯನ್ನು ಆಯ್ಕೆಮಾಡಿ:',
 
   // Calling Console & Session Bar
+  'recording.consent_title': 'ಕರೆ ರೆಕಾರ್ಡಿಂಗ್‌ಗೆ ಅನುಮತಿಸುತ್ತೀರಾ?',
+  'recording.consent_description': 'ಈ ಕರೆ ಬೆಂಬಲ ತಜ್ಞರೊಂದಿಗೆ ಸಂಪರ್ಕಗೊಂಡರೆ, ಸಂಭಾಷಣೆಯನ್ನು ರೆಕಾರ್ಡ್ ಮಾಡಿ ಸಂಗ್ರಹಿಸಬಹುದು. ರೆಕಾರ್ಡಿಂಗ್ ಇಲ್ಲದೆಯೂ ಮುಂದುವರಿಸಬಹುದು.',
+  'recording.continue_without': 'ರೆಕಾರ್ಡಿಂಗ್ ಇಲ್ಲದೆ ಮುಂದುವರಿಸಿ',
+  'recording.allow_continue': 'ರೆಕಾರ್ಡಿಂಗ್‌ಗೆ ಅನುಮತಿಸಿ ಮುಂದುವರಿಸಿ',
+  'recording.cancel_call': 'ಕರೆಯನ್ನು ರದ್ದುಮಾಡಿ',
   'call.session_title': 'ಗ್ರಾಹಕ ಬೆಂಬಲ ಕರೆ ಸೆಷನ್',
   'call.status_ready': 'ಸಿದ್ಧವಾಗಿದೆ • ಆದ್ಯತೆಯ ಭಾಷೆ: {language} ({nativeName})',
   'call.status_connecting': 'ಧ್ವನಿ ಮಾರ್ಗ ಸಂಪರ್ಕಗೊಳ್ಳುತ್ತಿದೆ...',

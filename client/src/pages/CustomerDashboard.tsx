@@ -89,6 +89,9 @@ export const CustomerDashboard: React.FC = () => {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(new Date());
   const [showAudioDeviceModal, setShowAudioDeviceModal] = useState(false);
+  const [showRecordingConsentModal, setShowRecordingConsentModal] = useState(false);
+  const [pendingRecordingCallType, setPendingRecordingCallType] = useState<'ai' | 'agent' | null>(null);
+  const recordingConsentRef = useRef<'granted' | 'declined' | 'not_requested'>('not_requested');
 
   // AI visual states: 'idle' | 'listening' | 'thinking' | 'speaking'
   const [aiVisualState, setAiVisualState] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
@@ -420,6 +423,7 @@ export const CustomerDashboard: React.FC = () => {
 
       // Establish WebRTC connection to Agent
       try {
+        await persistRecordingConsent(data.callId);
         await webrtcManager.startCall(data.agentSocketId, data.callId);
         // Start live human speech recognition in customer's preferred language
         voiceService.setLanguage(selectedLanguage);
@@ -542,6 +546,7 @@ export const CustomerDashboard: React.FC = () => {
       voiceService.cancelSpeech();
 
       try {
+        await persistRecordingConsent(data.callId);
         await webrtcManager.startCall(data.adminSocketId, data.callId);
         startSpeechRecognition(data.callId, true);
       } catch (err) {
@@ -805,7 +810,9 @@ export const CustomerDashboard: React.FC = () => {
   };
 
   // 1. Customer initiates Support Agent Voice Call
-  const handleStartAgentCall = async () => {
+  const handleStartAgentCall = async (consent: 'granted' | 'declined') => {
+    recordingConsentRef.current = consent;
+    webrtcManager.setRecordingConsent('not_requested');
     try {
       // Check microphone permission first
       const perm = await audioDeviceManager.checkMicrophonePermission();
@@ -846,7 +853,9 @@ export const CustomerDashboard: React.FC = () => {
   };
 
   // 2. Customer initiates AI Voice Assistant Call
-  const handleStartAiCall = async () => {
+  const handleStartAiCall = async (consent: 'granted' | 'declined') => {
+    recordingConsentRef.current = consent;
+    webrtcManager.setRecordingConsent('not_requested');
     try {
       // Check microphone permission first
       const perm = await audioDeviceManager.checkMicrophonePermission();
@@ -883,6 +892,44 @@ export const CustomerDashboard: React.FC = () => {
       setCallStatus('idle');
       setShowAudioDeviceModal(true);
     }
+  };
+
+  const persistRecordingConsent = async (activeCallId: string): Promise<void> => {
+    const consentStatus = recordingConsentRef.current;
+    const authToken = token || localStorage.getItem('kaira_token') || localStorage.getItem('token');
+    try {
+      if (!authToken) throw new Error('No customer authorization token is available');
+      const response = await fetch(`/api/recordings/${encodeURIComponent(activeCallId)}/consent`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({ consentStatus })
+      });
+      if (!response.ok) throw new Error(`Consent could not be saved (${response.status})`);
+      webrtcManager.setRecordingConsent(consentStatus);
+    } catch (err) {
+      console.warn('[Recording] Could not persist consent; recording will remain disabled:', err);
+      recordingConsentRef.current = 'not_requested';
+      webrtcManager.setRecordingConsent('not_requested');
+      window.alert('We could not save your recording preference. Your call will continue without recording.');
+    }
+  };
+
+  const requestRecordingConsent = (callType: 'ai' | 'agent') => {
+    setPendingRecordingCallType(callType);
+    setShowRecordingConsentModal(true);
+  };
+
+  const handleRecordingConsentDecision = (consent: 'granted' | 'declined') => {
+    const callType = pendingRecordingCallType;
+    setShowRecordingConsentModal(false);
+    setPendingRecordingCallType(null);
+    recordingConsentRef.current = consent;
+    webrtcManager.setRecordingConsent('not_requested');
+    if (callType === 'ai') void handleStartAiCall(consent);
+    if (callType === 'agent') void handleStartAgentCall(consent);
   };
 
   // 3. Cancel waiting in queue
@@ -926,6 +973,7 @@ export const CustomerDashboard: React.FC = () => {
     voiceService.cancelSpeech();
     voiceService.stopListening();
     webrtcManager.endCall();
+    recordingConsentRef.current = 'not_requested';
     setTimeout(fetchHistory, 600);
   };
 
@@ -1144,7 +1192,7 @@ export const CustomerDashboard: React.FC = () => {
                   </div>
 
                   <button
-                    onClick={handleStartAiCall}
+                    onClick={() => requestRecordingConsent('ai')}
                     className="w-full min-h-[50px] sm:min-h-[54px] py-3.5 sm:py-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-green-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white font-extrabold text-sm sm:text-base shadow-xl shadow-emerald-600/30 hover:shadow-2xl hover:shadow-emerald-600/40 active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-2 sm:gap-3"
                   >
                     <PhoneCall className="w-5 h-5 animate-bounce" />
@@ -1167,7 +1215,7 @@ export const CustomerDashboard: React.FC = () => {
                   </div>
                 </div>
                 <button
-                  onClick={handleStartAgentCall}
+                  onClick={() => requestRecordingConsent('agent')}
                   className="px-4 py-2.5 rounded-xl border border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold cursor-pointer transition-colors flex items-center justify-center gap-2"
                 >
                   <PhoneCall className="w-3.5 h-3.5 text-slate-500" />
@@ -2158,6 +2206,55 @@ export const CustomerDashboard: React.FC = () => {
           </div>
         </div>
       )}
+      {showRecordingConsentModal && (
+        <div className="fixed inset-0 z-[70] bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="recording-consent-title"
+            className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl border border-slate-200 space-y-5"
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 shrink-0 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center">
+                <Radio className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h2 id="recording-consent-title" className="text-base font-bold text-slate-900">{t('recording.consent_title')}</h2>
+                <p className="text-sm leading-relaxed text-slate-600">
+                  {t('recording.consent_description')}
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-col-reverse sm:flex-row gap-2">
+              <button
+                type="button"
+                onClick={() => handleRecordingConsentDecision('declined')}
+                className="flex-1 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                {t('recording.continue_without')}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRecordingConsentDecision('granted')}
+                className="flex-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"
+              >
+                {t('recording.allow_continue')}
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setShowRecordingConsentModal(false);
+                setPendingRecordingCallType(null);
+              }}
+              className="w-full text-xs font-medium text-slate-500 hover:text-slate-700"
+            >
+              {t('recording.cancel_call')}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Audio Device Settings Modal */}
       <AudioDeviceModal
         isOpen={showAudioDeviceModal}

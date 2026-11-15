@@ -79,6 +79,11 @@ export const en = {
   'dashboard.select_language_title': 'Select Your Preferred Communication Language:',
 
   // Calling Console & Session Bar
+  'recording.consent_title': 'Allow call recording?',
+  'recording.consent_description': 'If this call connects you with a support specialist, the conversation may be recorded and stored. You can continue without recording.',
+  'recording.continue_without': 'Continue without recording',
+  'recording.allow_continue': 'Allow recording & continue',
+  'recording.cancel_call': 'Cancel call',
   'call.session_title': 'Customer Support Call Session',
   'call.status_ready': 'Ready • Preferred Language: {language} ({nativeName})',
   'call.status_connecting': 'Allocating low-latency voice channel...',

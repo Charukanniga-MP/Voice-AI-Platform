@@ -14,10 +14,79 @@ const upload = multer({
 
 const router = Router();
 
+// Record a customer's explicit recording decision before any audio is captured.
+router.post(
+  '/:callId/consent',
+  authenticate,
+  authorizeRoles('customer'),
+  async (req: Request, res: Response) => {
+    try {
+      const { callId } = req.params;
+      const { consentStatus } = req.body;
+      if (consentStatus !== 'granted' && consentStatus !== 'declined') {
+        return res.status(400).json({ error: 'A granted or declined recording decision is required.' });
+      }
+
+      const call = await prisma.callRecord.findUnique({ where: { callId } });
+      if (!call) return res.status(404).json({ error: 'Call record not found.' });
+      if (call.customerId !== req.user!.id) return res.status(403).json({ error: 'Access denied.' });
+
+      const existing = await prisma.callRecording.findUnique({ where: { callRecordId: call.id } });
+      if (existing?.storagePath) {
+        return res.status(409).json({ error: 'Recording consent has already been applied to this call.' });
+      }
+
+      const retentionExpiry = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+      const recording = await prisma.callRecording.upsert({
+        where: { callRecordId: call.id },
+        update: {
+          consentStatus,
+          recordingStatus: consentStatus === 'granted' ? 'processing' : 'declined',
+          storagePath: null,
+          fileName: null,
+          fileSize: 0,
+          duration: 0,
+          retentionExpiry,
+          updatedAt: new Date()
+        },
+        create: {
+          callRecordId: call.id,
+          callId,
+          consentStatus,
+          recordingStatus: consentStatus === 'granted' ? 'processing' : 'declined',
+          duration: 0,
+          fileSize: 0,
+          retentionExpiry
+        }
+      });
+
+      await prisma.recordingAuditLog.create({
+        data: {
+          recordingId: recording.id,
+          action: 'CONSENT_RECORDED',
+          performedBy: req.user!.email || req.user!.name || req.user!.id,
+          userRole: 'customer',
+          ipAddress: req.ip,
+          userAgent: req.headers['user-agent'] as string,
+          details: consentStatus === 'granted'
+            ? 'Customer granted consent before recording began.'
+            : 'Customer declined recording. No audio was captured.'
+        }
+      });
+
+      return res.json({ success: true, consentStatus, recordingStatus: recording.recordingStatus });
+    } catch (err: any) {
+      console.error('[RecordingsRoute] Error recording consent:', err);
+      return res.status(500).json({ error: 'Could not save recording consent.' });
+    }
+  }
+);
+
 // Upload call recording audio (requires authentication)
 router.post(
   '/upload',
   authenticate,
+  authorizeRoles('customer'),
   upload.single('audio'),
   async (req: Request, res: Response) => {
     try {
@@ -33,11 +102,24 @@ router.post(
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
+      if (consentStatus !== 'granted' || !req.file || !callId) {
+        return res.status(400).json({ error: 'Audio upload requires a saved consent grant and a recording file.' });
+      }
+
+      const call = await prisma.callRecord.findUnique({ where: { callId } });
+      if (!call) return res.status(404).json({ error: 'Call record not found.' });
+      if (call.customerId !== user.id) return res.status(403).json({ error: 'Access denied.' });
+
+      const consentRecord = await prisma.callRecording.findUnique({ where: { callRecordId: call.id } });
+      if (consentRecord?.consentStatus !== 'granted') {
+        return res.status(403).json({ error: 'Recording consent has not been granted for this call.' });
+      }
+
       const result = await recordingService.saveRecording({
         callId: callId || '',
         audioBuffer: req.file?.buffer,
         duration: duration ? parseInt(duration, 10) : undefined,
-        consentStatus: (consentStatus as any) || 'not_requested',
+        consentStatus: 'granted',
         mimeType: mimeType || req.file?.mimetype || 'audio/webm',
         performedBy: user.email || user.name || user.id,
         ipAddress: req.ip,

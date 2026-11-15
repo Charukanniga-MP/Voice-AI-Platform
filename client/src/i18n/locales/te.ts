@@ -81,6 +81,11 @@ export const te: Record<TranslationKey, string> = {
   'dashboard.select_language_title': 'మీ ప్రాధాన్యత కమ్యూనికేషన్ భాషను ఎంచుకోండి:',
 
   // Calling Console & Session Bar
+  'recording.consent_title': 'కాల్ రికార్డింగ్‌కు అనుమతిస్తారా?',
+  'recording.consent_description': 'ఈ కాల్ సపోర్ట్ నిపుణుడితో అనుసంధానమైతే, సంభాషణను రికార్డ్ చేసి నిల్వ చేయవచ్చు. రికార్డింగ్ లేకుండానే కొనసాగించవచ్చు.',
+  'recording.continue_without': 'రికార్డింగ్ లేకుండా కొనసాగించండి',
+  'recording.allow_continue': 'రికార్డింగ్‌కు అనుమతించి కొనసాగించండి',
+  'recording.cancel_call': 'కాల్‌ను రద్దు చేయండి',
   'call.session_title': 'కస్టమర్ సపోర్ట్ కాల్ సెషన్',
   'call.status_ready': 'సిద్ధం • ప్రాధాన్య భాష: {language} ({nativeName})',
   'call.status_connecting': 'తక్కువ-లేటెన్సీ వాయిస్ ఛానెల్ కేటాయిస్తోంది...',

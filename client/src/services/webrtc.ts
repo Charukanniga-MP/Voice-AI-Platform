@@ -24,6 +24,7 @@ export class WebRTCManager {
   private recordedChunks: Blob[] = [];
   private recordingStartTime: number | null = null;
   private isRecording: boolean = false;
+  private recordingConsent: 'granted' | 'declined' | 'not_requested' = 'not_requested';
   private remoteStream: MediaStream | null = null;
   private audioContext: AudioContext | null = null;
 
@@ -269,7 +270,7 @@ export class WebRTCManager {
     // On remote track received
     this.peerConnection.ontrack = (event) => {
       console.log('[WebRTC] Received remote audio stream track');
-      this.startRecording();
+      if (this.recordingConsent === 'granted') this.startRecording();
       const audio = this.getAudioElement();
       audio.srcObject = event.streams[0];
       this.remoteStream = event.streams[0];
@@ -312,7 +313,7 @@ export class WebRTCManager {
       if (state === 'connected') {
         this.handleReconnectionSuccess();
         this.inspectActiveCandidatePair();
-        this.startRecording();
+        if (this.recordingConsent === 'granted') this.startRecording();
       } else if (state === 'disconnected' || state === 'failed') {
         this.handleDisconnection(`Connection state: ${state}`);
       }
@@ -555,8 +556,12 @@ export class WebRTCManager {
   // Clean up all streams and close peer connection
   
   // Start high-fidelity bidirectional WebRTC call recording
+  public setRecordingConsent(consent: 'granted' | 'declined' | 'not_requested'): void {
+    this.recordingConsent = consent;
+  }
+
   public startRecording(): void {
-    if (this.isRecording || !this.callId) return;
+    if (this.recordingConsent !== 'granted' || this.isRecording || !this.callId) return;
     try {
       if (typeof window === 'undefined' || typeof MediaRecorder === 'undefined') return;
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -608,22 +613,24 @@ export class WebRTCManager {
   public async stopAndUploadRecording(): Promise<void> {
     if (!this.isRecording || !this.mediaRecorder) return;
     const currentCallId = this.callId;
+    const consentStatus = this.recordingConsent;
     const duration = this.recordingStartTime ? Math.round((Date.now() - this.recordingStartTime) / 1000) : 0;
     this.isRecording = false;
 
     return new Promise<void>((resolve) => {
       this.mediaRecorder!.onstop = async () => {
         try {
-          if (this.recordedChunks.length > 0 && currentCallId) {
-            const blob = new Blob(this.recordedChunks, { type: 'audio/webm' });
+          if (consentStatus === 'granted' && this.recordedChunks.length > 0 && currentCallId) {
+            const mimeType = this.mediaRecorder?.mimeType || 'audio/webm';
+            const blob = new Blob(this.recordedChunks, { type: mimeType });
             console.log(`[WebRTC Recording] Uploading recording for call ${currentCallId}: ${blob.size} bytes, ${duration}s`);
             
             const formData = new FormData();
             formData.append('audio', blob, `${currentCallId}.webm`);
             formData.append('callId', currentCallId);
             formData.append('duration', String(duration));
-            formData.append('consentStatus', 'granted');
-            formData.append('mimeType', 'audio/webm');
+            formData.append('consentStatus', consentStatus);
+            formData.append('mimeType', mimeType);
 
             const token = this.authToken || localStorage.getItem('kaira_token') || localStorage.getItem('token');
             const headers: Record<string, string> = {};
@@ -707,6 +714,7 @@ export class WebRTCManager {
     this.callId = null;
     this.isMuted = false;
     this.isInitiator = false;
+    this.recordingConsent = 'not_requested';
   }
 }
 
