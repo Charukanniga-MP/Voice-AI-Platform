@@ -97,35 +97,67 @@ export const CustomerDashboard: React.FC = () => {
   const [playingRecordingId, setPlayingRecordingId] = useState<string | null>(null);
   const activeAudioPlayerRef = useRef<HTMLAudioElement | null>(null);
 
-  const handlePlayRecording = (recordingUrl: string, recCallId: string) => {
+  const activeAudioObjectUrlRef = useRef<string | null>(null);
+
+  const handlePlayRecording = async (recordingUrl: string, recCallId: string) => {
     if (playingRecordingId === recCallId) {
-      if (activeAudioPlayerRef.current) {
-        activeAudioPlayerRef.current.pause();
+      activeAudioPlayerRef.current?.pause();
+      activeAudioPlayerRef.current = null;
+      if (activeAudioObjectUrlRef.current) {
+        URL.revokeObjectURL(activeAudioObjectUrlRef.current);
+        activeAudioObjectUrlRef.current = null;
       }
       setPlayingRecordingId(null);
       return;
     }
 
-    if (activeAudioPlayerRef.current) {
-      activeAudioPlayerRef.current.pause();
+    activeAudioPlayerRef.current?.pause();
+    if (activeAudioObjectUrlRef.current) {
+      URL.revokeObjectURL(activeAudioObjectUrlRef.current);
+      activeAudioObjectUrlRef.current = null;
     }
 
-    const audio = new Audio(recordingUrl);
-    activeAudioPlayerRef.current = audio;
     setPlayingRecordingId(recCallId);
+    try {
+      const token = localStorage.getItem('kaira_token') || localStorage.getItem('token');
+      const response = await fetch(recordingUrl, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined
+      });
+      if (!response.ok) {
+        throw new Error(`Recording request failed (${response.status})`);
+      }
 
-    audio.onended = () => {
-      setPlayingRecordingId(null);
-    };
-    audio.onerror = () => {
-      setPlayingRecordingId(null);
-      alert('Unable to play recording. The audio stream may still be processing.');
-    };
+      const audioBlob = await response.blob();
+      if (!audioBlob.size) throw new Error('The recording file is empty');
 
-    audio.play().catch(err => {
+      const objectUrl = URL.createObjectURL(audioBlob);
+      activeAudioObjectUrlRef.current = objectUrl;
+      const audio = new Audio(objectUrl);
+      activeAudioPlayerRef.current = audio;
+      audio.onended = () => {
+        setPlayingRecordingId(null);
+        activeAudioPlayerRef.current = null;
+        URL.revokeObjectURL(objectUrl);
+        activeAudioObjectUrlRef.current = null;
+      };
+      audio.onerror = () => {
+        setPlayingRecordingId(null);
+        activeAudioPlayerRef.current = null;
+        URL.revokeObjectURL(objectUrl);
+        activeAudioObjectUrlRef.current = null;
+        alert('Unable to play recording. The recording may be unavailable or still processing.');
+      };
+      await audio.play();
+    } catch (err) {
       console.warn('Playback error:', err);
       setPlayingRecordingId(null);
-    });
+      activeAudioPlayerRef.current = null;
+      if (activeAudioObjectUrlRef.current) {
+        URL.revokeObjectURL(activeAudioObjectUrlRef.current);
+        activeAudioObjectUrlRef.current = null;
+      }
+      alert('Unable to play recording. Check that the recording is available and try again.');
+    }
   };
 
 
