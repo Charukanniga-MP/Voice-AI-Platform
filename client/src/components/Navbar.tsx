@@ -10,13 +10,12 @@ export const Navbar: React.FC = () => {
 
   return (
     <header className="bg-white/95 backdrop-blur-md border-b border-slate-200/80 sticky top-0 z-40 shadow-xs">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-18 sm:h-20 flex items-center justify-between">
-        {/* Official KAIRA Logo Only - Sized Larger & Cleanly Visible */}
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 sm:h-20 flex items-center justify-between">
+        {/* Official KAIRA Logo Only - Sized Responsively & Cleanly Visible */}
         <div className="flex items-center">
           <a
             href="/"
             onClick={(e) => {
-              // Smooth SPA reload / home navigate if needed
               if (window.location.pathname === '/') {
                 e.preventDefault();
               }
@@ -34,12 +33,12 @@ export const Navbar: React.FC = () => {
         </div>
 
         {/* Top-Right Controls: Language Selector + Circular Profile Icon Dropdown */}
-        <div className="flex items-center gap-3 sm:gap-4">
+        <div className="flex items-center gap-2 sm:gap-4">
           {/* Global Language Selector Dropdown */}
           <LanguageSelector variant="dropdown" />
 
           {/* Vertical Divider */}
-          <div className="h-7 w-px bg-slate-200/80" />
+          <div className="h-6 sm:h-7 w-px bg-slate-200/80" />
 
           {/* Circular Profile Icon with User Details & Logout Dropdown */}
           <ProfileDropdown />

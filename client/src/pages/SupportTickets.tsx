@@ -232,10 +232,10 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean; isAgentView?: 
   ).length;
 
   return (
-    <section className="space-y-6">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <section className="space-y-4 sm:space-y-6">
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">
+          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-slate-900">
             {isCustomer ? 'My Support Tickets' : isAgentView ? 'Tickets' : 'Support Tickets'}
           </h1>
           <p className="mt-1 text-xs text-slate-500">
@@ -246,10 +246,10 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean; isAgentView?: 
                 : 'Track customer issues, ownership, priority, and follow-up across all channels.'}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => void fetchTickets()}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer shadow-xs transition-colors"
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer shadow-xs transition-colors min-h-[38px]"
           >
             <RefreshCw className="h-4 w-4" /> Refresh
           </button>
@@ -261,21 +261,21 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean; isAgentView?: 
               }
               setShowForm(value => !value);
             }}
-            className="inline-flex items-center gap-2 rounded-xl bg-purple-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-purple-700 cursor-pointer shadow-sm transition-colors"
+            className="inline-flex items-center gap-2 rounded-xl bg-purple-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-purple-700 cursor-pointer shadow-sm transition-colors min-h-[38px]"
           >
             <Plus className="h-4 w-4" /> {isCustomer ? 'Open New Ticket' : 'New Ticket'}
           </button>
         </div>
       </header>
 
-      {/* Filter Tabs */}
-      <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200 text-xs font-semibold overflow-x-auto">
+      {/* Filter Tabs with Smooth Mobile Horizontal Scrolling */}
+      <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200 text-xs font-semibold overflow-x-auto scrollbar-none">
         {['all', 'open', 'in_progress', 'waiting', 'resolved', 'closed'].map(st => (
           <button
             key={st}
             type="button"
             onClick={() => setStatusFilter(st)}
-            className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer whitespace-nowrap ${
+            className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer whitespace-nowrap min-h-[34px] ${
               statusFilter === st
                 ? 'bg-white text-slate-900 shadow-xs font-bold'
                 : 'text-slate-600 hover:text-slate-900'

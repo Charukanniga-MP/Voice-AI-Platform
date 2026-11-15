@@ -134,29 +134,29 @@ export const CallIntelligenceModal: React.FC<CallIntelligenceModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-fadeIn">
       <div className="bg-white rounded-3xl max-w-3xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
         {/* Top Header */}
-        <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-purple-50/50 via-slate-50 to-blue-50/40">
+        <div className="p-4 sm:p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gradient-to-r from-purple-50/50 via-slate-50 to-blue-50/40">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-purple-600 to-indigo-600 text-white flex items-center justify-center font-bold shadow-md shadow-purple-200">
-              <Sparkles className="w-6 h-6" />
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-tr from-purple-600 to-indigo-600 text-white flex items-center justify-center font-bold shadow-md shadow-purple-200 shrink-0">
+              <Sparkles className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-lg font-black text-slate-900">AI Call Intelligence Report</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-base sm:text-lg font-black text-slate-900">AI Call Intelligence Report</h2>
                 {intel?.resolutionStatus && getResolutionBadge(intel.resolutionStatus)}
               </div>
-              <p className="text-xs text-slate-500 font-mono mt-0.5">
+              <p className="text-[11px] sm:text-xs text-slate-500 font-mono mt-0.5">
                 Call ID: {call?.callId || callId} • Customer: {call?.customerName || 'N/A'} • Duration: {call?.duration || 0}s
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 self-end sm:self-auto">
             <button
               onClick={handleRetry}
               disabled={retrying}
-              className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-xl border border-slate-200 flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
+              className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-xl border border-slate-200 flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer min-h-[36px]"
               title="Force re-run AI intelligence analysis"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${retrying ? 'animate-spin text-purple-600' : ''}`} />
@@ -164,7 +164,7 @@ export const CallIntelligenceModal: React.FC<CallIntelligenceModalProps> = ({
             </button>
             <button
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-100 cursor-pointer transition-colors"
+              className="p-1.5 sm:p-2 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-100 cursor-pointer transition-colors min-h-[36px] min-w-[36px] flex items-center justify-center"
             >
               <X className="w-5 h-5" />
             </button>
@@ -172,7 +172,7 @@ export const CallIntelligenceModal: React.FC<CallIntelligenceModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
           {loading && (
             <div className="py-16 text-center space-y-3">
               <RefreshCw className="w-8 h-8 text-purple-600 animate-spin mx-auto" />

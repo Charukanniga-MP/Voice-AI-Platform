@@ -359,9 +359,9 @@ export const BiReportsSection: React.FC<BiReportsSectionProps> = ({ token }) => 
           </div>
 
           {activeTab === 'analytics' && (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-[11px] font-semibold text-slate-400">Period:</span>
-              <div className="flex items-center bg-slate-100 p-1 rounded-xl">
+              <div className="flex items-center bg-slate-100 p-1 rounded-xl overflow-x-auto scrollbar-none max-w-full">
                 {[
                   { id: 'today', label: 'Today' },
                   { id: 'yesterday', label: 'Yesterday' },
@@ -373,7 +373,7 @@ export const BiReportsSection: React.FC<BiReportsSectionProps> = ({ token }) => 
                   <button
                     key={item.id}
                     onClick={() => setPeriod(item.id)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap min-h-[30px] ${
                       period === item.id ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
@@ -385,7 +385,7 @@ export const BiReportsSection: React.FC<BiReportsSectionProps> = ({ token }) => 
                 onClick={fetchOverview}
                 disabled={loading}
                 title="Refresh Analytics"
-                className="p-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 cursor-pointer transition-all"
+                className="p-2 border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 cursor-pointer transition-all min-h-[36px] min-w-[36px] flex items-center justify-center"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-600' : ''}`} />
               </button>
@@ -416,7 +416,7 @@ export const BiReportsSection: React.FC<BiReportsSectionProps> = ({ token }) => 
         ) : !overview ? null : (
           <div className="space-y-6">
             {/* 1. KPI Cards Grid (12 Key Metrics) */}
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-3.5">
               {/* Total Calls */}
               <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-xs flex flex-col justify-between">
                 <div className="flex items-center justify-between">

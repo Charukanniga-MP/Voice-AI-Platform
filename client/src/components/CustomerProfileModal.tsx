@@ -79,31 +79,31 @@ export const CustomerProfileModal: React.FC<CustomerProfileModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-fadeIn">
       <div className="bg-white rounded-3xl max-w-3xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
         {/* Header */}
-        <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-slate-50 to-blue-50/30">
+        <div className="p-4 sm:p-6 border-b border-slate-100 flex items-start sm:items-center justify-between gap-3 bg-gradient-to-r from-slate-50 to-blue-50/30">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white flex items-center justify-center font-extrabold text-lg shadow-md shadow-blue-200">
-              {data?.customer?.name ? data.customer.name.charAt(0).toUpperCase() : <UserIcon className="w-6 h-6" />}
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-blue-600 text-white flex items-center justify-center font-extrabold text-base sm:text-lg shadow-md shadow-blue-200 shrink-0">
+              {data?.customer?.name ? data.customer.name.charAt(0).toUpperCase() : <UserIcon className="w-5 h-5 sm:w-6 sm:h-6" />}
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-lg font-black text-slate-900">{data?.customer?.name || 'Customer Profile'}</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-base sm:text-lg font-black text-slate-900">{data?.customer?.name || 'Customer Profile'}</h2>
                 {data?.customer?.preferredLanguage && (
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
                     {SUPPORTED_LANGUAGES[data.customer.preferredLanguage as LanguageCode]?.name || data.customer.preferredLanguage.toUpperCase()}
                   </span>
                 )}
               </div>
-              <p className="text-xs text-slate-500 font-mono">
+              <p className="text-[11px] sm:text-xs text-slate-500 font-mono">
                 Customer ID: {customerId} • Member since {data?.customer?.createdAt ? new Date(data.customer.createdAt).toLocaleDateString() : 'N/A'}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-2 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-100 cursor-pointer transition-colors"
+            className="p-1.5 sm:p-2 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-100 cursor-pointer transition-colors min-h-[36px] min-w-[36px] flex items-center justify-center shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
@@ -111,24 +111,24 @@ export const CustomerProfileModal: React.FC<CustomerProfileModalProps> = ({
 
         {/* Contact Strip */}
         {data?.customer && (
-          <div className="px-6 py-3 bg-slate-50/80 border-b border-slate-100 flex flex-wrap items-center gap-6 text-xs text-slate-600">
+          <div className="px-4 sm:px-6 py-2.5 sm:py-3 bg-slate-50/80 border-b border-slate-100 flex flex-wrap items-center gap-3 sm:gap-6 text-xs text-slate-600">
             <div className="flex items-center gap-1.5">
-              <Phone className="w-3.5 h-3.5 text-blue-600" />
+              <Phone className="w-3.5 h-3.5 text-blue-600 shrink-0" />
               <span className="font-mono font-medium">{data.customer.phone || 'No phone recorded'}</span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <Mail className="w-3.5 h-3.5 text-indigo-600" />
-              <span className="font-medium">{data.customer.email}</span>
+            <div className="flex items-center gap-1.5 truncate max-w-xs">
+              <Mail className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <span className="font-medium truncate">{data.customer.email}</span>
             </div>
-            <div className="flex items-center gap-1.5 ml-auto text-slate-400">
-              <Clock className="w-3.5 h-3.5" />
+            <div className="flex items-center gap-1.5 sm:ml-auto text-slate-400 text-[11px]">
+              <Clock className="w-3.5 h-3.5 shrink-0" />
               <span>Last interaction: {new Date(data.customer.lastInteraction).toLocaleDateString()}</span>
             </div>
           </div>
         )}
 
         {/* Content Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
           {loading && (
             <div className="py-16 text-center space-y-3">
               <RefreshCw className="w-8 h-8 text-blue-600 animate-spin mx-auto" />

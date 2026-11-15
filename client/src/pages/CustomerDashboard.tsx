@@ -978,13 +978,12 @@ export const CustomerDashboard: React.FC = () => {
   const isCallActive = ['connecting', 'ringing', 'queued', 'active_agent', 'active_ai', 'transferring', 'active_admin'].includes(callStatus);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 sm:space-y-8">
       {/* Welcome & Language Selection Banner */}
-      <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-indigo-800 rounded-3xl p-6 sm:p-8 text-white shadow-xl shadow-blue-100 relative overflow-hidden">
+      <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-indigo-800 rounded-3xl p-4 sm:p-6 lg:p-8 text-white shadow-xl shadow-blue-100 relative overflow-hidden">
         <div className="absolute -right-10 -bottom-10 w-72 h-72 rounded-full bg-white/10 blur-2xl pointer-events-none" />
-        <div className="relative z-10 max-w-3xl space-y-4">
-          <div className="flex items-center gap-2">
-
+        <div className="relative z-10 max-w-3xl space-y-3.5 sm:space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1.5 px-2.5 py-1 bg-rose-50 border border-rose-200 rounded-lg">
               <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping" />
               <span className="text-[10px] font-bold text-rose-700 uppercase tracking-wider">REC</span>
@@ -999,10 +998,10 @@ export const CustomerDashboard: React.FC = () => {
             </span>
           </div>
 
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+          <h1 className="text-xl sm:text-2xl lg:text-3xl font-extrabold tracking-tight">
             {t('dashboard.welcome_user', { name: user?.name || 'Valued Customer' })}
           </h1>
-          <p className="text-blue-100 text-sm leading-relaxed">
+          <p className="text-blue-100 text-xs sm:text-sm leading-relaxed">
             {t('dashboard.banner_desc')}
           </p>
 
@@ -1012,7 +1011,7 @@ export const CustomerDashboard: React.FC = () => {
               <Globe className="w-4 h-4 text-blue-300" />
               <span>{t('dashboard.select_language_title')}</span>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 sm:gap-2.5">
               {(Object.entries(SUPPORTED_LANGUAGES) as [LanguageCode, typeof SUPPORTED_LANGUAGES[LanguageCode]][]).map(([code, meta]) => {
                 const isSelected = selectedLanguage === code;
                 return (
@@ -1020,13 +1019,13 @@ export const CustomerDashboard: React.FC = () => {
                     key={code}
                     disabled={isCallActive}
                     onClick={() => handleLanguageChange(code)}
-                    className={`px-3 py-2.5 rounded-2xl text-left border transition-all cursor-pointer ${isSelected
+                    className={`px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-2xl text-left border transition-all cursor-pointer ${isSelected
                       ? 'bg-white text-indigo-900 border-white shadow-md font-bold scale-[1.02]'
                       : 'bg-white/10 text-white border-white/20 hover:bg-white/20 hover:border-white/40'
                       } ${isCallActive ? 'opacity-60 cursor-not-allowed' : ''}`}
                   >
-                    <div className="text-sm font-extrabold leading-tight">{meta.nativeName}</div>
-                    <div className={`text-[11px] ${isSelected ? 'text-indigo-600 font-semibold' : 'text-blue-200'}`}>
+                    <div className="text-xs sm:text-sm font-extrabold leading-tight">{meta.nativeName}</div>
+                    <div className={`text-[10px] sm:text-[11px] ${isSelected ? 'text-indigo-600 font-semibold' : 'text-blue-200'}`}>
                       {meta.name}
                     </div>
                   </button>
@@ -1040,10 +1039,10 @@ export const CustomerDashboard: React.FC = () => {
       {/* Main Calling Stage Console */}
       <div className="bg-white rounded-3xl shadow-xl shadow-slate-100 border border-slate-200/80 overflow-hidden">
         {/* Top Session Bar */}
-        <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-4 bg-slate-50/70">
+        <div className="px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 bg-slate-50/70">
           <div className="flex items-center gap-3">
             <div
-              className={`w-3.5 h-3.5 rounded-full ${callStatus === 'idle'
+              className={`w-3.5 h-3.5 rounded-full shrink-0 ${callStatus === 'idle'
                 ? 'bg-slate-300'
                 : callStatus === 'queued'
                   ? 'bg-amber-500 animate-pulse'
@@ -1067,14 +1066,14 @@ export const CustomerDashboard: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
             {/* Live Call Quality Indicator */}
             <CallQualityIndicator isCallActive={isCallActive} />
 
             {/* Audio Device Settings Button */}
             <button
               onClick={() => setShowAudioDeviceModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50 text-slate-700 hover:text-blue-700 rounded-xl text-xs font-semibold shadow-2xs transition-all cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50 text-slate-700 hover:text-blue-700 rounded-xl text-xs font-semibold shadow-2xs transition-all cursor-pointer min-h-[36px]"
               title="Audio & Microphone Settings"
             >
               <Settings className="w-3.5 h-3.5 text-slate-500" />
@@ -1082,13 +1081,13 @@ export const CustomerDashboard: React.FC = () => {
             </button>
 
             {/* Live Timer */}
-            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-700 shadow-2xs">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-700 shadow-2xs min-h-[36px]">
               <Clock className="w-3.5 h-3.5 text-slate-400" />
               {formatDuration(duration)}
             </div>
 
             {/* Microphone Status */}
-            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-600 shadow-2xs">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-600 shadow-2xs min-h-[36px]">
               {isMuted ? (
                 <>
                   <MicOff className="w-3.5 h-3.5 text-red-500" />
@@ -1105,26 +1104,26 @@ export const CustomerDashboard: React.FC = () => {
         </div>
 
         {/* Central Call Actions & Active UI */}
-        <div className="p-8 text-center flex flex-col items-center justify-center">
+        <div className="p-4 sm:p-8 text-center flex flex-col items-center justify-center">
           {callStatus === 'idle' && (
-            <div className="w-full max-w-2xl py-4 space-y-6">
+            <div className="w-full max-w-2xl py-2 sm:py-4 space-y-4 sm:space-y-6">
               {/* PRIMARY HERO: Call KAIRA AI Voice Agent */}
-              <div className="p-8 rounded-3xl border-2 border-emerald-200/80 bg-gradient-to-br from-emerald-50/60 via-white to-teal-50/40 text-left shadow-xl shadow-emerald-100/50 relative overflow-hidden transition-all hover:border-emerald-400">
+              <div className="p-4 sm:p-6 lg:p-8 rounded-3xl border-2 border-emerald-200/80 bg-gradient-to-br from-emerald-50/60 via-white to-teal-50/40 text-left shadow-xl shadow-emerald-100/50 relative overflow-hidden transition-all hover:border-emerald-400">
                 <div className="absolute -top-12 -right-12 w-48 h-48 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
 
-                <div className="relative z-10 space-y-5">
-                  <div className="flex items-center justify-between">
-                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-lg shadow-emerald-500/30">
-                      <Bot className="w-9 h-9" />
+                <div className="relative z-10 space-y-4 sm:space-y-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-lg shadow-emerald-500/30 shrink-0">
+                      <Bot className="w-8 h-8 sm:w-9 sm:h-9" />
                     </div>
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 self-start sm:self-auto">
                       <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                       24/7 INSTANT AI SUPPORT • NO WAITING
                     </span>
                   </div>
 
                   <div>
-                    <h3 className="text-xl font-extrabold text-slate-900 tracking-tight">
+                    <h3 className="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight">
                       Call KAIRA AI Voice Agent
                     </h3>
                     <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
@@ -1132,7 +1131,7 @@ export const CustomerDashboard: React.FC = () => {
                     </p>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-500">
+                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 text-[10px] sm:text-[11px] font-semibold text-slate-500">
                     <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-emerald-700 flex items-center gap-1 shadow-2xs">
                       ⚡ Ultra-fast speech (&lt;1.2s)
                     </span>
@@ -1146,7 +1145,7 @@ export const CustomerDashboard: React.FC = () => {
 
                   <button
                     onClick={handleStartAiCall}
-                    className="w-full min-h-[54px] py-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-green-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white font-extrabold text-base shadow-xl shadow-emerald-600/30 hover:shadow-2xl hover:shadow-emerald-600/40 active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-3"
+                    className="w-full min-h-[50px] sm:min-h-[54px] py-3.5 sm:py-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-green-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white font-extrabold text-sm sm:text-base shadow-xl shadow-emerald-600/30 hover:shadow-2xl hover:shadow-emerald-600/40 active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-2 sm:gap-3"
                   >
                     <PhoneCall className="w-5 h-5 animate-bounce" />
                     <span>Call AI Voice Agent Now</span>
@@ -1794,130 +1793,218 @@ export const CustomerDashboard: React.FC = () => {
             {t('history.empty')}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-slate-600">
-              <thead className="bg-slate-50 text-slate-700 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
-                <tr>
-                  <th className="py-3 px-4">Customer Details</th>
-                  <th className="py-3 px-4">Date & Time</th>
-                  <th className="py-3 px-4">Duration</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">AI Agent Name</th>
-                  <th className="py-3 px-4">Call Summary</th>
-                  <th className="py-3 px-4">Resolution</th>
-                  <th className="py-3 px-4 text-right">Recording & Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {history.map((call) => {
-                  const resolution = call.intelligence?.resolutionStatus || call.conversationAnalysis?.resolutionStatus || 'resolved';
-                  const summaryText = call.intelligence?.overallSummary || call.intelligence?.callReason || call.conversationAnalysis?.summary || call.customerQuestion || 'AI Voice support inquiry';
-                  const recUrl = call.recordingUrl || (call.recording ? `/api/recordings/file/${call.recording.id}` : `/api/calls/${call.callId}/recording`);
+          <>
+            {/* 1. Desktop & Laptop Table View (md and above) */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-600">
+                <thead className="bg-slate-50 text-slate-700 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
+                  <tr>
+                    <th className="py-3 px-4">Customer Details</th>
+                    <th className="py-3 px-4">Date & Time</th>
+                    <th className="py-3 px-4">Duration</th>
+                    <th className="py-3 px-4">Status</th>
+                    <th className="py-3 px-4">AI Agent Name</th>
+                    <th className="py-3 px-4">Call Summary</th>
+                    <th className="py-3 px-4">Resolution</th>
+                    <th className="py-3 px-4 text-right">Recording & Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {history.map((call) => {
+                    const resolution = call.intelligence?.resolutionStatus || call.conversationAnalysis?.resolutionStatus || 'resolved';
+                    const summaryText = call.intelligence?.overallSummary || call.intelligence?.callReason || call.conversationAnalysis?.summary || call.customerQuestion || 'AI Voice support inquiry';
+                    const recUrl = call.recordingUrl || (call.recording ? `/api/recordings/file/${call.recording.id}` : `/api/calls/${call.callId}/recording`);
 
-                  return (
-                    <tr key={call.id} className="hover:bg-slate-50/70 transition-colors">
-                      <td className="py-3.5 px-4">
-                        <div className="font-extrabold text-slate-900 text-xs">
-                          {call.customerName || call.customer?.name || user?.name || 'Customer'}
+                    return (
+                      <tr key={call.id} className="hover:bg-slate-50/70 transition-colors">
+                        <td className="py-3.5 px-4">
+                          <div className="font-extrabold text-slate-900 text-xs">
+                            {call.customerName || call.customer?.name || user?.name || 'Customer'}
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-mono">
+                            ID: #{call.customerId ? call.customerId.slice(-6).toUpperCase() : (user?.id ? user.id.slice(-6).toUpperCase() : 'CUST')}
+                          </div>
+                          <div className="text-[10px] text-slate-400">
+                            {call.customerPhone || call.customer?.phone || user?.phone || 'No phone'}
+                          </div>
+                        </td>
+
+                        <td className="py-3.5 px-4 font-medium text-slate-800">
+                          <div>{new Date(call.startTime).toLocaleDateString()}</div>
+                          <div className="text-[10px] text-slate-400">{new Date(call.startTime).toLocaleTimeString()}</div>
+                        </td>
+
+                        <td className="py-3.5 px-4 font-mono font-bold text-slate-700">
+                          {formatDuration(call.duration)}
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${
+                              call.status === 'completed'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : call.status === 'active'
+                                  ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                  : 'bg-slate-100 text-slate-700 border border-slate-200'
+                            }`}
+                          >
+                            {call.status}
+                          </span>
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center gap-1.5">
+                            <Bot className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                            <span className="font-bold text-indigo-950">
+                              {call.agentName || (call.type === 'ai_voice' ? 'KAIRA AI Support Specialist' : call.type === 'admin_transfer' ? 'Admin' : 'Agent')}
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="py-3.5 px-4 max-w-xs">
+                          <p className="line-clamp-2 text-[11px] text-slate-600 font-medium leading-relaxed" title={summaryText}>
+                            {summaryText}
+                          </p>
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${
+                              resolution === 'resolved'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : resolution === 'partially_resolved'
+                                  ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                  : resolution === 'escalated_admin'
+                                    ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                                    : 'bg-amber-50 text-amber-700 border border-amber-200'
+                            }`}
+                          >
+                            {resolution.replace('_', ' ')}
+                          </span>
+                        </td>
+
+                        <td className="py-3.5 px-4 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            {/* Audio Playback button */}
+                            {(call.recordingUrl || call.recording || call.recordingStatus === 'completed' || call.duration > 2) ? (
+                              <button
+                                onClick={() => handlePlayRecording(recUrl, call.id)}
+                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${
+                                  playingRecordingId === call.id
+                                    ? 'bg-red-600 text-white animate-pulse ring-2 ring-red-400'
+                                    : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
+                                }`}
+                                title={playingRecordingId === call.id ? 'Pause Recording' : 'Listen to Call Recording'}
+                              >
+                                {playingRecordingId === call.id ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                                <span>{playingRecordingId === call.id ? 'Playing' : 'Listen'}</span>
+                              </button>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 italic">No audio</span>
+                            )}
+
+                            {/* View Transcript modal button */}
+                            <button
+                              onClick={() => setSelectedHistoryCall(call)}
+                              className="p-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-lg border border-slate-200 cursor-pointer shadow-2xs"
+                              title="View Transcript & Intelligence"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* 2. Adaptive Mobile & Tablet Card View (< md) */}
+            <div className="block md:hidden space-y-3">
+              {history.map((call) => {
+                const resolution = call.intelligence?.resolutionStatus || call.conversationAnalysis?.resolutionStatus || 'resolved';
+                const summaryText = call.intelligence?.overallSummary || call.intelligence?.callReason || call.conversationAnalysis?.summary || call.customerQuestion || 'AI Voice support inquiry';
+                const recUrl = call.recordingUrl || (call.recording ? `/api/recordings/file/${call.recording.id}` : `/api/calls/${call.callId}/recording`);
+
+                return (
+                  <div key={call.id} className="p-4 rounded-2xl border border-slate-200 bg-slate-50/50 space-y-3 shadow-2xs">
+                    {/* Top Row: Partner + Status */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                          <Bot className="w-4 h-4" />
                         </div>
-                        <div className="text-[10px] text-slate-500 font-mono">
-                          ID: #{call.customerId ? call.customerId.slice(-6).toUpperCase() : (user?.id ? user.id.slice(-6).toUpperCase() : 'CUST')}
+                        <div>
+                          <div className="font-extrabold text-slate-900 text-xs">
+                            {call.agentName || (call.type === 'ai_voice' ? 'KAIRA AI Support' : 'Agent')}
+                          </div>
+                          <div className="text-[10px] text-slate-400 font-mono">
+                            {new Date(call.startTime).toLocaleDateString()} at {new Date(call.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
                         </div>
-                        <div className="text-[10px] text-slate-400">
-                          {call.customerPhone || call.customer?.phone || user?.phone || 'No phone'}
-                        </div>
-                      </td>
-
-                      <td className="py-3.5 px-4 font-medium text-slate-800">
-                        <div>{new Date(call.startTime).toLocaleDateString()}</div>
-                        <div className="text-[10px] text-slate-400">{new Date(call.startTime).toLocaleTimeString()}</div>
-                      </td>
-
-                      <td className="py-3.5 px-4 font-mono font-bold text-slate-700">
-                        {formatDuration(call.duration)}
-                      </td>
-
-                      <td className="py-3.5 px-4">
+                      </div>
+                      <div className="flex flex-col items-end gap-1">
                         <span
-                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${
                             call.status === 'completed'
                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : call.status === 'active'
-                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                : 'bg-slate-100 text-slate-700 border border-slate-200'
+                              : 'bg-slate-100 text-slate-700 border border-slate-200'
                           }`}
                         >
                           {call.status}
                         </span>
-                      </td>
-
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-1.5">
-                          <Bot className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                          <span className="font-bold text-indigo-950">
-                            {call.agentName || (call.type === 'ai_voice' ? 'KAIRA AI Support Specialist' : call.type === 'admin_transfer' ? 'Admin' : 'Agent')}
-                          </span>
-                        </div>
-                      </td>
-
-                      <td className="py-3.5 px-4 max-w-xs">
-                        <p className="line-clamp-2 text-[11px] text-slate-600 font-medium leading-relaxed" title={summaryText}>
-                          {summaryText}
-                        </p>
-                      </td>
-
-                      <td className="py-3.5 px-4">
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${
-                            resolution === 'resolved'
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : resolution === 'partially_resolved'
-                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                : resolution === 'escalated_admin'
-                                  ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                                  : 'bg-amber-50 text-amber-700 border border-amber-200'
-                          }`}
-                        >
-                          {resolution.replace('_', ' ')}
+                        <span className="font-mono text-[10px] font-bold text-slate-600">
+                          ⏱ {formatDuration(call.duration)}
                         </span>
-                      </td>
+                      </div>
+                    </div>
 
-                      <td className="py-3.5 px-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          {/* Audio Playback button */}
-                          {(call.recordingUrl || call.recording || call.recordingStatus === 'completed' || call.duration > 2) ? (
-                            <button
-                              onClick={() => handlePlayRecording(recUrl, call.id)}
-                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${
-                                playingRecordingId === call.id
-                                  ? 'bg-red-600 text-white animate-pulse ring-2 ring-red-400'
-                                  : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
-                              }`}
-                              title={playingRecordingId === call.id ? 'Pause Recording' : 'Listen to Call Recording'}
-                            >
-                              {playingRecordingId === call.id ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                              <span>{playingRecordingId === call.id ? 'Playing' : 'Listen'}</span>
-                            </button>
-                          ) : (
-                            <span className="text-[10px] text-slate-400 italic">No audio</span>
-                          )}
+                    {/* Summary */}
+                    <p className="text-xs text-slate-600 leading-relaxed line-clamp-2 bg-white p-2.5 rounded-xl border border-slate-200/60">
+                      {summaryText}
+                    </p>
 
-                          {/* View Transcript modal button */}
+                    {/* Footer Row: Resolution + Actions */}
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${
+                          resolution === 'resolved'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-amber-50 text-amber-700 border border-amber-200'
+                        }`}
+                      >
+                        {resolution.replace('_', ' ')}
+                      </span>
+
+                      <div className="flex items-center gap-2">
+                        {(call.recordingUrl || call.recording || call.recordingStatus === 'completed' || call.duration > 2) && (
                           <button
-                            onClick={() => setSelectedHistoryCall(call)}
-                            className="p-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-lg border border-slate-200 cursor-pointer shadow-2xs"
-                            title="View Transcript & Intelligence"
+                            onClick={() => handlePlayRecording(recUrl, call.id)}
+                            className={`min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${
+                              playingRecordingId === call.id
+                                ? 'bg-red-600 text-white animate-pulse'
+                                : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
+                            }`}
                           >
-                            <FileText className="w-3.5 h-3.5" />
+                            {playingRecordingId === call.id ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                            <span>{playingRecordingId === call.id ? 'Playing' : 'Listen'}</span>
                           </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        )}
+                        <button
+                          onClick={() => setSelectedHistoryCall(call)}
+                          className="min-h-[36px] px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 rounded-xl border border-slate-200 text-xs font-semibold cursor-pointer shadow-2xs flex items-center gap-1"
+                        >
+                          <FileText className="w-3.5 h-3.5 text-slate-500" />
+                          <span>View</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
         )}
       </div>
 

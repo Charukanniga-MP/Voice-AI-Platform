@@ -165,18 +165,18 @@ export const ResetPasswordPage: React.FC<ResetPasswordProps> = ({ onBackToLogin 
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white flex flex-col items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white flex flex-col items-center justify-center p-3 sm:p-4">
       <div className="w-full max-w-md bg-white text-slate-900 rounded-3xl shadow-2xl overflow-hidden border border-slate-100">
         {/* Header Branding */}
-        <div className="bg-indigo-600 px-6 py-6 text-center text-white relative">
-          <div className="w-12 h-12 rounded-2xl bg-white/10 backdrop-blur-sm border border-white/20 flex items-center justify-center mx-auto mb-3 shadow-inner">
-            <span className="font-extrabold text-xl">K</span>
+        <div className="bg-indigo-600 px-4 sm:px-6 py-5 sm:py-6 text-center text-white relative">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-white/10 backdrop-blur-sm border border-white/20 flex items-center justify-center mx-auto mb-2.5 sm:mb-3 shadow-inner">
+            <span className="font-extrabold text-lg sm:text-xl">K</span>
           </div>
-          <h1 className="text-xl font-bold tracking-tight">KAIRA Voice AI Platform</h1>
+          <h1 className="text-lg sm:text-xl font-bold tracking-tight">KAIRA Voice AI Platform</h1>
           <p className="text-xs text-indigo-100 mt-1 font-medium">Identity & Password Security Recovery</p>
         </div>
 
-        <div className="p-6 sm:p-8">
+        <div className="p-5 sm:p-8">
           {verifying ? (
             <div className="py-12 flex flex-col items-center justify-center text-center">
               <Loader2 className="w-8 h-8 text-indigo-600 animate-spin mb-3" />

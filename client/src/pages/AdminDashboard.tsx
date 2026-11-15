@@ -1247,11 +1247,14 @@ export const AdminDashboard: React.FC = () => {
               { id: 'customers', label: 'Customers' },
               { id: 'agents', label: 'Agents' },
               { id: 'calls', label: 'Calls' },
+              { id: 'intelligence', label: 'AI Intelligence' },
+              { id: 'tasks', label: 'Tasks' },
               { id: 'transfers', label: 'Transfers' },
               { id: 'knowledge', label: 'KB' },
               { id: 'quality', label: 'Quality' },
               { id: 'sentiment', label: 'Sentiment' },
               { id: 'tickets', label: 'Tickets' },
+              { id: 'bi', label: 'BI Reports' },
             ].map(tab => (
               <button
                 key={tab.id}
@@ -1259,8 +1262,8 @@ export const AdminDashboard: React.FC = () => {
                   setActiveSection(tab.id as any);
                   setMobileNavOpen(false);
                 }}
-                className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 transition-colors ${activeSection === tab.id
-                    ? 'bg-purple-600 text-white font-bold'
+                className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 transition-colors min-h-[34px] ${activeSection === tab.id
+                    ? 'bg-purple-600 text-white font-bold shadow-xs'
                     : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                   }`}
               >
@@ -1425,7 +1428,7 @@ export const AdminDashboard: React.FC = () => {
       </aside>
 
       {/* 2. MAIN CONTENT AREA */}
-      <main className="flex-1 p-6 md:p-8 space-y-8 overflow-y-auto max-w-7xl">
+      <main className="flex-1 p-3.5 sm:p-6 md:p-8 space-y-6 sm:space-y-8 overflow-y-auto max-w-7xl w-full min-w-0">
 
         {/* MULTI-ADMIN CONCURRENCY & OPERATOR IDENTITY BANNER */}
         <div className="bg-white rounded-3xl border border-slate-200/80 p-5 shadow-xs space-y-4">

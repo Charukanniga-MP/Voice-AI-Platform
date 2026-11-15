@@ -188,25 +188,25 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex flex-col justify-center py-8 sm:py-12 px-3 sm:px-6 lg:px-8 relative overflow-hidden">
       {/* Background Decorative Ambient Glows */}
-      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[36rem] h-[36rem] bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute bottom-10 right-10 w-80 h-80 bg-purple-500/10 rounded-full blur-2xl pointer-events-none" />
+      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 sm:w-[36rem] h-72 sm:h-[36rem] bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-10 right-10 w-60 sm:w-80 h-60 sm:h-80 bg-purple-500/10 rounded-full blur-2xl pointer-events-none" />
 
       {/* Main Container */}
       <div className="sm:mx-auto sm:w-full sm:max-w-md relative z-10">
         {/* Brand Header */}
-        <div className="text-center space-y-3 mb-6">
-          <div className="inline-block p-3 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 shadow-xl shadow-indigo-950/50 mb-1">
+        <div className="text-center space-y-2 sm:space-y-3 mb-5 sm:mb-6">
+          <div className="inline-block p-2.5 sm:p-3 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 shadow-xl shadow-indigo-950/50 mb-1">
             <img
               src="/kaira-logo.png"
               alt="KAIRA Technologies"
-              className="h-12 w-auto object-contain mx-auto drop-shadow-md"
+              className="h-10 sm:h-12 w-auto object-contain mx-auto drop-shadow-md"
             />
           </div>
 
           <div>
-            <h1 className="text-2xl font-black tracking-tight text-white">Welcome to KAIRA</h1>
+            <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white">Welcome to KAIRA</h1>
             <p className="text-xs text-indigo-200 mt-1 font-medium">
               AI Customer Communication Platform
             </p>
@@ -214,7 +214,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
         </div>
 
         {/* Clean White Login Card */}
-        <div className="bg-white/95 backdrop-blur-xl rounded-3xl p-6 sm:p-8 shadow-2xl shadow-black/40 border border-white/40 space-y-5">
+        <div className="bg-white/95 backdrop-blur-xl rounded-3xl p-5 sm:p-8 shadow-2xl shadow-black/40 border border-white/40 space-y-4 sm:space-y-5">
           {/* Error Banner */}
           {error && (
             <div className="p-3.5 rounded-2xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">

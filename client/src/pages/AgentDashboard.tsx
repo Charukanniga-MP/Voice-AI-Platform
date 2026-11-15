@@ -1124,16 +1124,16 @@ export const AgentDashboard: React.FC = () => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+    <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-4 sm:space-y-6">
       {/* Incoming Call Notification Modal & Ringing Sound */}
       {incomingCall && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border-2 border-indigo-500 animate-in fade-in zoom-in-95 duration-200 space-y-5 text-center">
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-3xl max-w-md w-[calc(100vw-2rem)] sm:w-full p-5 sm:p-6 shadow-2xl border-2 border-indigo-500 animate-in fade-in zoom-in-95 duration-200 space-y-4 sm:space-y-5 text-center">
             {/* Ringing Visual */}
-            <div className="relative w-20 h-20 mx-auto">
+            <div className="relative w-16 h-16 sm:w-20 sm:h-20 mx-auto">
               <div className="absolute inset-0 rounded-full bg-indigo-500/20 animate-ping" />
-              <div className="relative w-20 h-20 rounded-full bg-gradient-to-tr from-indigo-600 to-blue-600 text-white flex items-center justify-center shadow-lg shadow-indigo-300">
-                <PhoneCall className="w-9 h-9 animate-bounce" />
+              <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-gradient-to-tr from-indigo-600 to-blue-600 text-white flex items-center justify-center shadow-lg shadow-indigo-300">
+                <PhoneCall className="w-8 h-8 sm:w-9 sm:h-9 animate-bounce" />
               </div>
             </div>
 
@@ -1143,23 +1143,23 @@ export const AgentDashboard: React.FC = () => {
                   Incoming Customer Call ({incomingRingSec}s)
                 </span>
               </div>
-              <h3 className="text-xl font-black text-slate-900 mt-2">{incomingCall.customerName}</h3>
+              <h3 className="text-lg sm:text-xl font-black text-slate-900 mt-2">{incomingCall.customerName}</h3>
               <div className="mt-1.5 flex flex-col items-center gap-1">
                 {incomingCall.customerEmail && (
-                  <p className="text-xs text-slate-600 font-medium flex items-center justify-center gap-1.5">
-                    <Mail className="w-3.5 h-3.5 text-slate-400" />
-                    <span>{incomingCall.customerEmail}</span>
+                  <p className="text-xs text-slate-600 font-medium flex items-center justify-center gap-1.5 truncate max-w-xs">
+                    <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span className="truncate">{incomingCall.customerEmail}</span>
                   </p>
                 )}
                 <p className="text-xs text-slate-700 font-mono font-semibold flex items-center justify-center gap-1.5">
-                  <Phone className="w-3.5 h-3.5 text-slate-400" />
+                  <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                   <span>{incomingCall.customerPhone || 'Not provided'}</span>
                 </p>
               </div>
             </div>
 
             {/* Language Badge */}
-            <div className="p-3.5 bg-blue-50/70 border border-blue-200 rounded-2xl flex items-center justify-between text-left">
+            <div className="p-3 sm:p-3.5 bg-blue-50/70 border border-blue-200 rounded-2xl flex items-center justify-between text-left">
               <div className="flex items-center gap-2.5">
                 <Globe className="w-5 h-5 text-blue-600 shrink-0" />
                 <div>
@@ -1180,7 +1180,7 @@ export const AgentDashboard: React.FC = () => {
             <div className="grid grid-cols-2 gap-3 pt-2">
               <button
                 onClick={handleRejectIncomingCall}
-                className="min-h-[48px] py-3.5 px-4 rounded-2xl bg-slate-100 hover:bg-red-50 hover:text-red-600 hover:border-red-300 border border-slate-200 text-slate-700 font-bold text-xs active:scale-[0.97] transition-all cursor-pointer flex items-center justify-center gap-2"
+                className="min-h-[44px] sm:min-h-[48px] py-3 px-4 rounded-2xl bg-slate-100 hover:bg-red-50 hover:text-red-600 hover:border-red-300 border border-slate-200 text-slate-700 font-bold text-xs active:scale-[0.97] transition-all cursor-pointer flex items-center justify-center gap-2"
               >
                 <PhoneOff className="w-4 h-4 text-red-500" />
                 Reject
@@ -1188,7 +1188,7 @@ export const AgentDashboard: React.FC = () => {
 
               <button
                 onClick={handleAcceptIncomingCall}
-                className="min-h-[48px] py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white font-black text-xs shadow-lg shadow-emerald-500/25 active:scale-[0.97] transition-all cursor-pointer flex items-center justify-center gap-2"
+                className="min-h-[44px] sm:min-h-[48px] py-3 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white font-black text-xs shadow-lg shadow-emerald-500/25 active:scale-[0.97] transition-all cursor-pointer flex items-center justify-center gap-2"
               >
                 <PhoneCall className="w-4 h-4" />
                 Accept Call
@@ -1285,15 +1285,15 @@ export const AgentDashboard: React.FC = () => {
       )}
 
       {/* Top Header & Agent Status Bar */}
-      <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+      <div className="bg-white p-4 sm:p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Support Agent Console</h1>
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+              <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">Support Agent Console</h1>
               {/* Agent Status Toggle */}
               <button
                 onClick={handleToggleStatus}
-                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border transition-all cursor-pointer ${agentStatus === 'available'
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-all cursor-pointer min-h-[36px] ${agentStatus === 'available'
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
                   : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
                   }`}
@@ -1304,7 +1304,7 @@ export const AgentDashboard: React.FC = () => {
               </button>
 
               {/* Waiting Queue Count Pill */}
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200 min-h-[36px]">
                 <Users className="w-3.5 h-3.5 text-blue-600" />
                 Queue: {queueCount} Waiting
               </div>
@@ -1312,7 +1312,7 @@ export const AgentDashboard: React.FC = () => {
               {/* Audio Device Settings Pill */}
               <button
                 onClick={() => setShowAudioDeviceModal(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-all cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-all cursor-pointer min-h-[36px]"
                 title="Microphone & Speaker Test / Device Selection"
               >
                 <Settings className="w-3.5 h-3.5 text-slate-500" />
@@ -1324,11 +1324,11 @@ export const AgentDashboard: React.FC = () => {
             </p>
           </div>
 
-          {/* Navigation Tabs */}
-          <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200 text-xs font-semibold overflow-x-auto">
+          {/* Navigation Tabs with Smooth Mobile Horizontal Scrolling */}
+          <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200 text-xs font-semibold overflow-x-auto scrollbar-none w-full lg:w-auto">
             <button
               onClick={() => setActiveTab('ai_monitor')}
-              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === 'ai_monitor' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+              className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === 'ai_monitor' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
                 }`}
             >
               <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
@@ -1341,14 +1341,14 @@ export const AgentDashboard: React.FC = () => {
             </button>
             <button
               onClick={() => setActiveTab('outgoing')}
-              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${activeTab === 'outgoing' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+              className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 py-1.5 rounded-xl transition-all cursor-pointer ${activeTab === 'outgoing' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
                 }`}
             >
               Outgoing Calls
             </button>
             <button
               onClick={() => setActiveTab('console')}
-              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === 'console' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+              className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === 'console' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
                 }`}
             >
               {activeCall && (activeCall.state === 'connected' || activeCall.state === 'on_hold') && (
@@ -1358,14 +1358,14 @@ export const AgentDashboard: React.FC = () => {
             </button>
             <button
               onClick={() => setActiveTab('history')}
-              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${activeTab === 'history' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+              className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 py-1.5 rounded-xl transition-all cursor-pointer ${activeTab === 'history' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
                 }`}
             >
               Call History
             </button>
             <button
               onClick={() => setActiveTab('knowledge')}
-              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === 'knowledge' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+              className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === 'knowledge' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
                 }`}
             >
               <BookOpen className="w-3.5 h-3.5 text-blue-600" />
@@ -1373,7 +1373,7 @@ export const AgentDashboard: React.FC = () => {
             </button>
             <button
               onClick={() => setActiveTab('tickets')}
-              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === 'tickets' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+              className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === 'tickets' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
                 }`}
             >
               <MessageSquare className="w-3.5 h-3.5 text-purple-600" />
@@ -1381,7 +1381,7 @@ export const AgentDashboard: React.FC = () => {
             </button>
             <button
               onClick={() => setActiveTab('tasks')}
-              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === 'tasks' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+              className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === 'tasks' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
                 }`}
             >
               <ListTodo className="w-3.5 h-3.5 text-amber-600" />
