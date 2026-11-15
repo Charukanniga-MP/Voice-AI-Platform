@@ -378,6 +378,10 @@ export const CustomerDashboard: React.FC = () => {
     // 6. AI Voice call ready
     socket.on('call:ready', (data: { callId: string; greeting: string; language: string; audioUrl?: string }) => {
       setCallStatus('active_ai');
+      if (data.language && data.language in SUPPORTED_LANGUAGES) {
+        setSelectedLanguage(data.language as LanguageCode);
+        voiceService.setLanguage(data.language);
+      }
       setActivePartner({ name: 'KAIRA AI', role: 'ai', language: data.language });
       setTranscripts(prev => [
         ...prev,
@@ -417,6 +421,11 @@ export const CustomerDashboard: React.FC = () => {
       // Calculate true round-trip latency
       const roundTrip = speechEndTimeRef.current ? (Date.now() - speechEndTimeRef.current) : (data.latency?.totalRoundTripMs || data.latency?.aiMs || 0);
       setLiveLatency(roundTrip);
+
+      if (data.language && data.language in SUPPORTED_LANGUAGES && data.language !== selectedLanguage) {
+        setSelectedLanguage(data.language as LanguageCode);
+        voiceService.setLanguage(data.language);
+      }
 
       setAiIsSpeaking(true);
       aiIsSpeakingRef.current = true;
@@ -610,6 +619,17 @@ export const CustomerDashboard: React.FC = () => {
   const startSpeechRecognition = (activeCallId: string, isHumanCall: boolean = false) => {
     voiceService.setLanguage(selectedLanguage);
 
+    // Auto-detect customer's spoken language in real-time
+    voiceService.onLanguageDetected = (langCode: string) => {
+      if (langCode && langCode in SUPPORTED_LANGUAGES && langCode !== selectedLanguage) {
+        console.log(`[Customer] Spoken language auto-detected: ${langCode}. Syncing session.`);
+        setSelectedLanguage(langCode as LanguageCode);
+        voiceService.setLanguage(langCode);
+        const socket = getSocket();
+        socket.emit('call:set_language', { callId: activeCallId, language: langCode });
+      }
+    };
+
     voiceService.onInterruption = () => {
       voiceService.cancelSpeech();
       setAiIsSpeaking(false);
@@ -627,6 +647,17 @@ export const CustomerDashboard: React.FC = () => {
 
     voiceService.startListening((text, isFinal) => {
       const trimmed = text.trim();
+
+      // Check text for multi-language script auto-detection
+      const detected = voiceService.detectScriptLanguage(trimmed);
+      let currentActiveLang = selectedLanguage;
+      if (detected && detected in SUPPORTED_LANGUAGES && detected !== selectedLanguage) {
+        currentActiveLang = detected as LanguageCode;
+        setSelectedLanguage(detected as LanguageCode);
+        voiceService.setLanguage(detected);
+        const socket = getSocket();
+        socket.emit('call:set_language', { callId: activeCallId, language: detected });
+      }
 
       // --- ECHO GUARD & NATURAL VOICE INTERRUPTION (BARGE-IN) ---
       if (!isHumanCall && trimmed.length > 0 && (aiIsSpeakingRef.current || (typeof window !== 'undefined' && window.speechSynthesis?.speaking))) {
@@ -669,7 +700,7 @@ export const CustomerDashboard: React.FC = () => {
               sender: 'customer',
               senderName: user?.name || 'Customer',
               text: text.trim(),
-              language: selectedLanguage,
+              language: currentActiveLang,
               timestamp: new Date().toISOString()
             }
           ];
@@ -682,7 +713,7 @@ export const CustomerDashboard: React.FC = () => {
             sender: 'customer',
             senderName: user?.name || 'Customer',
             text: text.trim(),
-            language: selectedLanguage
+            language: currentActiveLang
           });
         } else {
           socket.emit('call:query', {
@@ -690,7 +721,7 @@ export const CustomerDashboard: React.FC = () => {
             query: text.trim(),
             customerId: user?.id,
             duration,
-            language: selectedLanguage,
+            language: currentActiveLang,
             clientSentAt: speechEndTimeRef.current
           });
         }
@@ -1470,49 +1501,65 @@ export const CustomerDashboard: React.FC = () => {
           </div>
         )}
 
-        {/* Live Conversation Transcript */}
+        {/* Live Conversation Transcript & Real-Time Chatbot Synchronization */}
         <div className="border-t border-slate-200/80 bg-slate-50/60 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <MessageSquare className="w-4 h-4 text-indigo-600" />
-              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                {t('transcript.title')}
-              </h3>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+                <MessageSquare className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                    Live AI Voice Chatbot (Synchronized)
+                  </h3>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    Live Sync Active
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Instant real-time transcription, language detection, and audio synchronization
+                </p>
+              </div>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="text-[11px] text-slate-400">
-                {t('transcript.exchanges_recorded', { count: transcripts.length })}
+            <div className="flex items-center gap-2.5">
+              <span className="text-[11px] text-slate-400 font-medium">
+                {transcripts.length} exchanges
               </span>
               {transcripts.length > 0 && (
                 <button
                   onClick={() => handleDownloadTranscript(transcripts, `KAIRA-LiveCall-${callId || 'active'}`)}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg text-[11px] font-semibold text-slate-600 cursor-pointer shadow-2xs transition-colors"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 rounded-xl text-xs font-semibold text-slate-700 cursor-pointer shadow-2xs transition-colors"
                   title="Export call transcript as text file"
                 >
                   <Download className="w-3.5 h-3.5 text-slate-500" />
-                  Export .txt
+                  <span>Export .txt</span>
                 </button>
               )}
             </div>
           </div>
 
-          <div className="bg-white rounded-2xl border border-slate-200 p-4 h-72 overflow-y-auto space-y-3.5 shadow-2xs">
+          <div className="bg-white rounded-2xl border border-slate-200/90 p-4 h-80 overflow-y-auto space-y-4 shadow-2xs">
             {transcripts.length === 0 && !interimText && (
               <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs text-center p-4 space-y-3">
                 <div>
-                  <MessageSquare className="w-8 h-8 text-slate-300 mx-auto mb-2 stroke-1" />
-                  <p>{t('transcript.empty_notice')}</p>
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-500 flex items-center justify-center mx-auto mb-2">
+                    <Bot className="w-6 h-6" />
+                  </div>
+                  <p className="font-semibold text-slate-600">AI Customer Support Voice & Chat Ready</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Start speaking or type a question below to begin live conversation</p>
                 </div>
                 <div className="space-y-1.5 max-w-md pt-2">
                   <div className="flex items-center justify-center gap-1.5 text-[11px] font-semibold text-slate-500">
                     <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
-                    <span>Suggested questions (click or speak aloud):</span>
+                    <span>Frequently asked customer questions:</span>
                   </div>
                   <div className="flex flex-wrap justify-center gap-1.5">
                     {SUGGESTED_QUESTIONS.map((q) => (
                       <span
                         key={q}
-                        className="px-2.5 py-1 text-[11px] bg-indigo-50 text-indigo-700 border border-indigo-200/80 rounded-lg font-medium"
+                        className="px-2.5 py-1 text-[11px] bg-slate-50 text-slate-700 border border-slate-200/80 rounded-lg font-medium shadow-2xs"
                       >
                         "{q}"
                       </span>
@@ -1533,26 +1580,37 @@ export const CustomerDashboard: React.FC = () => {
                   }`}
               >
                 {tItem.sender === 'system' ? (
-                  <span className="px-3 py-1 bg-amber-50 border border-amber-200 text-amber-800 text-[11px] rounded-full font-medium my-1">
+                  <span className="px-3.5 py-1 bg-amber-50 border border-amber-200 text-amber-800 text-[11px] rounded-full font-medium my-1 shadow-2xs">
                     {tItem.text}
                   </span>
                 ) : (
-                  <div className="max-w-[85%] sm:max-w-[75%] space-y-1">
-                    <span className="text-[10px] font-semibold text-slate-400 px-1 block">
-                      {tItem.senderName || (tItem.sender === 'customer' ? t('transcript.speaker_you') : tItem.sender === 'ai' ? t('transcript.speaker_ai') : t('transcript.speaker_agent'))}
-                    </span>
+                  <div className="max-w-[85%] sm:max-w-[78%] space-y-1">
+                    <div className={`flex items-center gap-2 px-1 text-[10px] font-bold text-slate-400 ${tItem.sender === 'customer' ? 'justify-end' : 'justify-start'}`}>
+                      <span>
+                        {tItem.senderName || (tItem.sender === 'customer' ? (user?.name || 'Customer') : 'KAIRA AI Support Specialist')}
+                      </span>
+                      {tItem.language && (
+                        <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 uppercase font-mono text-[9px]">
+                          {tItem.language}
+                        </span>
+                      )}
+                      <span>
+                        {tItem.timestamp ? new Date(tItem.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}
+                      </span>
+                    </div>
+
                     <div
-                      className={`px-4 py-2.5 rounded-2xl text-xs leading-relaxed ${tItem.sender === 'customer'
-                        ? 'bg-blue-600 text-white rounded-tr-xs shadow-xs'
+                      className={`px-4 py-3 rounded-2xl text-xs leading-relaxed ${tItem.sender === 'customer'
+                        ? 'bg-emerald-600 text-white rounded-tr-xs shadow-md shadow-emerald-600/10'
                         : tItem.sender === 'ai'
-                          ? 'bg-slate-100 text-slate-800 rounded-tl-xs border border-slate-200'
-                          : 'bg-emerald-50 text-emerald-950 border border-emerald-200 rounded-tl-xs'
+                          ? 'bg-gradient-to-br from-slate-50 to-indigo-50/30 text-slate-800 rounded-tl-xs border border-indigo-100 shadow-2xs'
+                          : 'bg-indigo-50 text-indigo-950 border border-indigo-200 rounded-tl-xs'
                         }`}
                     >
-                      <div>{tItem.text}</div>
+                      <div className="font-normal">{tItem.text}</div>
                       {/* Translation subtitle */}
                       {tItem.translation && (
-                        <div className={`mt-1.5 pt-1.5 border-t text-[11px] font-normal italic ${tItem.sender === 'customer' ? 'border-blue-400/50 text-blue-100' : 'border-emerald-200 text-emerald-700'
+                        <div className={`mt-1.5 pt-1.5 border-t text-[11px] font-normal italic ${tItem.sender === 'customer' ? 'border-emerald-500/50 text-emerald-100' : 'border-slate-200 text-indigo-700'
                           }`}>
                           {t('transcript.translation_prefix', { text: tItem.translation })}
                         </div>
@@ -1563,10 +1621,25 @@ export const CustomerDashboard: React.FC = () => {
               </div>
             ))}
 
+            {/* Live Streaming Speech Bubble */}
             {interimText && (
               <div className="flex flex-col items-end">
-                <div className="max-w-[85%] px-4 py-2 bg-blue-50 text-blue-700 text-xs rounded-2xl rounded-tr-xs border border-blue-200 italic animate-pulse">
+                <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 px-1 mb-1">
+                  <Mic className="w-3 h-3 animate-pulse" />
+                  <span>Speaking in real-time...</span>
+                </div>
+                <div className="max-w-[85%] px-4 py-2.5 bg-emerald-50 text-emerald-800 text-xs rounded-2xl rounded-tr-xs border border-emerald-200 italic shadow-2xs animate-pulse">
                   {interimText}...
+                </div>
+              </div>
+            )}
+
+            {/* AI Thinking Indicator in Chatbot */}
+            {aiVisualState === 'thinking' && (
+              <div className="flex flex-col items-start">
+                <div className="flex items-center gap-2 px-3 py-2 bg-indigo-50/80 border border-indigo-200/80 rounded-2xl text-xs text-indigo-800 animate-pulse shadow-2xs">
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-600 animate-spin" />
+                  <span>KAIRA AI is thinking & searching Knowledge Base...</span>
                 </div>
               </div>
             )}

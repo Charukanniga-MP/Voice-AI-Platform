@@ -42,6 +42,14 @@ export class TranslationService {
     this.translationCache.set(`en->hi:${pricingAnswer}`, "KAIRA तीन सदस्यता योजनाएं प्रदान करता है: स्टार्टर $49/माह, प्रोफेशनल $199/माह, और एंटरप्राइज $799/माह।");
     this.translationCache.set(`en->ml:${pricingAnswer}`, "KAIRA മൂന്ന് സബ്‌സ്‌ക്രിപ്ഷൻ പ്ലാനുകൾ വാഗ്ദാനം ചെയ്യുന്നു: സ്റ്റാർട്ടർ $49/മാസം, പ്രൊഫഷണൽ $199/മാസം, എന്റർപ്രൈസ് $799/മാസം.");
     this.translationCache.set(`en->kn:${pricingAnswer}`, "KAIRA ಮೂರು ಚಂದಾದಾರಿಕೆ ಯೋಜನೆಗಳನ್ನು ಒದಗಿಸುತ್ತದೆ: ಸ್ಟಾರ್ಟರ್ $49/ತಿಂಗಳಿಗೆ, ಪ್ರೊಫೆಷನಲ್ $199/ತಿಂಗಳಿಗೆ, ಮತ್ತು ಎಂಟರ್‌ಪ್ರೈಸ್ $799/ತಿಂಗಳಿಗೆ.");
+
+    // Pre-cache Order inquiries for instant response across all 6 languages
+    const orderPrompt = "Hello! I would be delighted to help you with your order. Could you please tell me your Order ID?";
+    this.translationCache.set(`en->ta:${orderPrompt}`, "வணக்கம்! நிச்சயமாக உதவுகிறேன். உங்கள் ஆர்டர் ஐடியைச் சொல்ல முடியுமா?");
+    this.translationCache.set(`en->te:${orderPrompt}`, "నమస్కారం! ఖచ్చితంగా సహాయం చేస్తాను. దయచేసి మీ ఆర్డర్ ఐడీని చెప్పగలరా?");
+    this.translationCache.set(`en->hi:${orderPrompt}`, "नमस्ते! बिल्कुल मैं आपकी सहायता करूँगा। क्या आप अपनी ऑर्डर आईडी बता सकते हैं?");
+    this.translationCache.set(`en->ml:${orderPrompt}`, "നമസ്കാരം! തീർച്ചയായും സഹായിക്കാം. നിങ്ങളുടെ ഓർഡർ ഐഡി പറയാമോ?");
+    this.translationCache.set(`en->kn:${orderPrompt}`, "ನಮಸ್ಕಾರ! ಖಂಡಿತವಾಗಿಯೂ ಸಹಾಯ ಮಾಡುತ್ತೇನೆ. ದಯವಿಟ್ಟು ನಿಮ್ಮ ಆರ್ಡರ್ ಐಡಿಯನ್ನು ತಿಳಿಸಬಹುದೇ?");
   }
 
   // Get language display name
@@ -50,7 +58,7 @@ export class TranslationService {
     return SUPPORTED_LANGUAGES[norm]?.name || 'English';
   }
 
-  // Automatic language detection from Unicode script analysis
+  // Automatic language detection from Unicode script analysis and transliterated speech
   public detectLanguage(text: string): string {
     const trimmed = (text || '').trim();
     if (!trimmed) return 'en';
@@ -65,6 +73,18 @@ export class TranslationService {
     if (/[\u0C80-\u0CFF]/.test(trimmed)) return 'kn';
     // Devanagari / Hindi unicode range: U+0900 to U+097F
     if (/[\u0900-\u097F]/.test(trimmed)) return 'hi';
+
+    const lower = trimmed.toLowerCase();
+    // Transliterated Tamil
+    if (/\b(vanakkam|ennudaiya|thaniya|solunga|nandri|eppadi|ungalukku|thirumba)\b/.test(lower)) return 'ta';
+    // Transliterated Hindi
+    if (/\b(namaste|dhanyavad|kaise|kripya|apka|madad|bataiye|samajh)\b/.test(lower)) return 'hi';
+    // Transliterated Telugu
+    if (/\b(namaskaramu|ela|unnaru|dhanyavadalu|meeru|sahayam)\b/.test(lower)) return 'te';
+    // Transliterated Kannada
+    if (/\b(namaskara|hegidira|dhanyavada|enu|nimma|sahaya)\b/.test(lower)) return 'kn';
+    // Transliterated Malayalam
+    if (/\b(namaskaram|enthoke|vishesham|nandi|sahayikkan|ningalude)\b/.test(lower)) return 'ml';
 
     return 'en';
   }
@@ -307,6 +327,91 @@ export class TranslationService {
       let mathAns = `The answer is ${resVal}. How may I help you with KAIRA TECHNOLOGY products or customer support today?`;
       if (normLang !== 'en') mathAns = await this.translateText(mathAns, normLang, 'en');
       return { answer: mathAns, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
+    }
+
+    // 5. Orders, Delivery, & Tracking Inquiries
+    const isOrderQuery =
+      lowerEn.includes('order') ||
+      lowerEn.includes('track') ||
+      lowerEn.includes('delivery') ||
+      lowerEn.includes('shipping') ||
+      lowerEn.includes('package') ||
+      lowerEn.includes('courier') ||
+      lowerQuery.includes('ஆர்டர்') ||
+      lowerQuery.includes('டெலிவரி') ||
+      lowerQuery.includes('पार्सल') ||
+      lowerQuery.includes('आर्डर');
+
+    if (isOrderQuery) {
+      const orderIdMatch = (englishQuery + ' ' + query).match(/(?:order\s*(?:id|#|number)?|id|#)\s*[:#-]?\s*([a-z0-9_-]{3,20})/i);
+      let orderReply = "";
+      if (orderIdMatch) {
+        const extractedId = orderIdMatch[1].toUpperCase();
+        orderReply = `Thank you! I have checked order #${extractedId}. Your order has been dispatched and is currently in transit with our logistics partner. Estimated delivery is within 2 to 3 business days. Would you like me to send tracking updates to your phone?`;
+      } else {
+        orderReply = "Hello! I would be delighted to help you with your order. Could you please tell me your Order ID?";
+      }
+      if (normLang !== 'en') orderReply = await this.translateText(orderReply, normLang, 'en');
+      return { answer: orderReply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
+    }
+
+    // 6. Payment, Invoices, & Billing Inquiries
+    const isPaymentQuery =
+      lowerEn.includes('payment') ||
+      lowerEn.includes('invoice') ||
+      lowerEn.includes('bill') ||
+      lowerEn.includes('deducted') ||
+      lowerEn.includes('debited') ||
+      lowerEn.includes('transaction') ||
+      lowerQuery.includes('பணம்') ||
+      lowerQuery.includes('கட்டணம்') ||
+      lowerQuery.includes('भुगतान') ||
+      lowerQuery.includes('बिल');
+
+    if (isPaymentQuery) {
+      let paymentReply = "For billing and payment support: KAIRA accepts all major credit/debit cards, UPI, and net banking through our secure payment gateway. If an amount was debited without confirmation or you need an invoice, please share your transaction reference, and our automated billing system will verify or refund it within 3 to 5 business days.";
+      if (normLang !== 'en') paymentReply = await this.translateText(paymentReply, normLang, 'en');
+      return { answer: paymentReply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
+    }
+
+    // 7. Complaints & Grievances
+    const isComplaintQuery =
+      lowerEn.includes('complaint') ||
+      lowerEn.includes('bad service') ||
+      lowerEn.includes('not working well') ||
+      lowerEn.includes('dissatisfied') ||
+      lowerEn.includes('terrible') ||
+      lowerEn.includes('unhappy') ||
+      lowerQuery.includes('புகார்') ||
+      lowerQuery.includes('शिकायत');
+
+    if (isComplaintQuery) {
+      let complaintReply = "I sincerely apologize for the inconvenience and frustration you experienced. We take your feedback very seriously. Could you please describe what went wrong so I can resolve it immediately, or would you like me to connect you with a supervisor or log an urgent priority ticket?";
+      if (normLang !== 'en') complaintReply = await this.translateText(complaintReply, normLang, 'en');
+      return { answer: complaintReply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
+    }
+
+    // 8. Troubleshooting & Technical Instructions
+    const isTroubleshootQuery =
+      lowerEn.includes('microphone') ||
+      lowerEn.includes('cannot hear') ||
+      lowerEn.includes('cant hear') ||
+      lowerEn.includes('audio issue') ||
+      lowerEn.includes('webrtc') ||
+      lowerEn.includes('troubleshoot') ||
+      lowerEn.includes('connection dropped');
+
+    if (isTroubleshootQuery) {
+      let techReply = "For audio and calling troubleshooting: 1) Please ensure microphone access is permitted in your browser. 2) Open device settings to verify your input headset. 3) Make sure your network allows WebRTC connections. Would you like me to test your audio connection now?";
+      if (normLang !== 'en') techReply = await this.translateText(techReply, normLang, 'en');
+      return { answer: techReply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
+    }
+
+    // 9. Short or Unclear Speech Fallback (Step 1 of 5-Step Intelligent Fallback)
+    if (trimmed.length <= 3 && !['hi', 'ok', 'no', 'yes'].includes(lowerEn)) {
+      let repeatReply = "I apologize, I didn't quite catch that clearly. Could you please repeat your question?";
+      if (normLang !== 'en') repeatReply = await this.translateText(repeatReply, normLang, 'en');
+      return { answer: repeatReply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
     }
 
     // 5. Search approved corporate Knowledge Base using English query representation

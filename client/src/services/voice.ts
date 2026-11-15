@@ -28,6 +28,25 @@ export class VoiceService {
   private lastInterimTranscript: string = '';
   public onInterruption?: () => void;
   public onSpeechStart?: () => void;
+  public onLanguageDetected?: (lang: string) => void;
+
+  // Real-time automatic language identification from customer speech
+  public detectScriptLanguage(text: string): string | null {
+    const trimmed = (text || '').trim();
+    if (!trimmed) return null;
+    if (/[\u0B80-\u0BFF]/.test(trimmed)) return 'ta';
+    if (/[\u0C00-\u0C7F]/.test(trimmed)) return 'te';
+    if (/[\u0D00-\u0D7F]/.test(trimmed)) return 'ml';
+    if (/[\u0C80-\u0CFF]/.test(trimmed)) return 'kn';
+    if (/[\u0900-\u097F]/.test(trimmed)) return 'hi';
+    const lower = trimmed.toLowerCase();
+    if (/\b(vanakkam|ennudaiya|thaniya|solunga|nandri|eppadi|ungalukku|thirumba)\b/.test(lower)) return 'ta';
+    if (/\b(namaste|dhanyavad|kaise|kripya|apka|madad|bataiye|samajh)\b/.test(lower)) return 'hi';
+    if (/\b(namaskaramu|ela|unnaru|dhanyavadalu|meeru|sahayam)\b/.test(lower)) return 'te';
+    if (/\b(namaskara|hegidira|dhanyavada|enu|nimma|sahaya)\b/.test(lower)) return 'kn';
+    if (/\b(namaskaram|enthoke|vishesham|nandi|sahayikkan|ningalude)\b/.test(lower)) return 'ml';
+    return null;
+  }
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -144,6 +163,15 @@ export class VoiceService {
           finalTranscript = transcript.trim();
         } else {
           interim += transcript;
+        }
+      }
+
+      // Automatic Language Identification from live speech
+      const spokenText = (finalTranscript || interim).trim();
+      if (spokenText) {
+        const detected = this.detectScriptLanguage(spokenText);
+        if (detected && detected !== this.currentLang.slice(0, 2) && this.onLanguageDetected) {
+          this.onLanguageDetected(detected);
         }
       }
 
