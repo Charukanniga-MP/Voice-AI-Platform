@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { prisma } from '../db.js';
-import { knowledgeService, FALLBACK_MESSAGE } from './knowledge.js';
+import { knowledgeService, FALLBACK_MESSAGE, CustomerContext } from './knowledge.js';
 
 export const SUPPORTED_LANGUAGES: Record<string, { name: string; nativeName: string; bcp47: string }> = {
   en: { name: 'English', nativeName: 'English', bcp47: 'en-US' },
@@ -179,7 +179,8 @@ export class TranslationService {
   public async getAiAnswerSuggestion(
     query: string,
     customerLang: string = 'en',
-    callHistory: any = []
+    callHistory: any = [],
+    customerContext?: CustomerContext
   ): Promise<{
     answer: string;
     sources: Array<{ id: string; title: string; category: string }>;
@@ -213,271 +214,29 @@ export class TranslationService {
     if (detectedLang !== 'en') {
       englishQuery = await this.translateText(trimmed, 'en', detectedLang);
     }
-    const lowerEn = englishQuery.toLowerCase().trim();
-    const lowerQuery = trimmed.toLowerCase();
 
-    // 1. Check for explicit human agent / admin escalation request
-    const humanTransferPhrases = [
-      'connect me to an admin',
-      'connect to an admin',
-      'connect to admin',
-      'talk to admin',
-      'speak with admin',
-      'speak to admin',
-      'transfer to admin',
-      'talk to human',
-      'speak to human',
-      'connect to human',
-      'talk to an agent',
-      'talk to agent',
-      'speak to an agent',
-      'speak to agent',
-      'connect to agent',
-      'talk to a person',
-      'speak to a person',
-      'real person',
-      'human support',
-      'human agent',
-      'manager',
-      'operator',
-      'representative'
-    ];
-    const isHumanRequest = humanTransferPhrases.some(p => lowerEn.includes(p) || lowerQuery.includes(p));
-    if (isHumanRequest) {
-      let transferMsg = "Certainly! I will connect you with a member of our human support team right away. Please hold for just a moment.";
-      if (normLang !== 'en') {
-        transferMsg = await this.translateText(transferMsg, normLang, 'en');
-      }
-      return {
-        answer: transferMsg,
-        sources: [],
-        isGrounded: true,
-        requiresTransfer: true,
-        language: normLang,
-        latencyMs: Date.now() - t0
-      };
-    }
+    // Format history for knowledge service
+    const formattedHistory: Array<{ role: 'user' | 'assistant'; content: string }> = Array.isArray(callHistory)
+      ? callHistory.map((item: any) => ({
+        role: (item.role || item.sender === 'customer' ? 'user' : 'assistant') as 'user' | 'assistant',
+        content: item.content || item.text || ''
+      })).filter(h => h.content)
+      : [];
 
-    // 2. Handle common conversational pleasantries & greetings warmly
-    const pleasantries = [
-      'hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening',
-      'who are you', 'how are you', 'what is your name', 'tell me about yourself',
-      'what can you do', 'help me', 'are you ai', 'are you a robot'
-    ];
-    const isGreeting = pleasantries.some(p =>
-      lowerQuery === p ||
-      lowerQuery === p + '!' ||
-      lowerEn === p ||
-      lowerEn === p + '!' ||
-      lowerEn.startsWith(p + ' ')
-    );
+    // Query KnowledgeService with english representation, multi-turn history, and live customerContext
+    const grounded = await knowledgeService.answerQuery(englishQuery, formattedHistory, customerContext);
 
-    if (isGreeting) {
-      let welcome = "Hello! Welcome to KAIRA TECHNOLOGY Customer Support. Thank you for calling us. I'm your AI support assistant. How may I help you today?";
-      if (normLang !== 'en') {
-        welcome = await this.translateText(welcome, normLang, 'en');
-      }
-      return {
-        answer: welcome,
-        sources: [],
-        isGrounded: true,
-        requiresTransfer: false,
-        language: normLang,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 3. Handle common conversational courtesies & small talk
-    if (lowerEn.includes('thank you') || lowerEn.includes('thanks') || lowerEn === 'ty' || lowerQuery.includes('நன்றி') || lowerQuery.includes('ధన్యవాదాలు') || lowerQuery.includes('धन्यवाद')) {
-      let reply = "You're very welcome! I'm glad I could assist you. Is there anything else regarding KAIRA TECHNOLOGY products, pricing, or voice services I can help you with today?";
-      if (normLang !== 'en') reply = await this.translateText(reply, normLang, 'en');
-      return { answer: reply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
-    }
-
-    if (lowerEn === 'ok' || lowerEn === 'okay' || lowerEn === 'sure' || lowerEn === 'alright' || lowerEn === 'got it') {
-      let reply = "Wonderful! Please feel free to ask any other questions about KAIRA TECHNOLOGY, our features, or your account.";
-      if (normLang !== 'en') reply = await this.translateText(reply, normLang, 'en');
-      return { answer: reply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
-    }
-
-    if (lowerEn.includes('bye') || lowerEn.includes('goodbye') || lowerEn.includes('see you')) {
-      let reply = "Thank you for contacting KAIRA TECHNOLOGY Customer Support! Have a wonderful day ahead, and don't hesitate to reach back out whenever you need assistance.";
-      if (normLang !== 'en') reply = await this.translateText(reply, normLang, 'en');
-      return { answer: reply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
-    }
-
-    if (lowerEn.includes('joke') || lowerEn.includes('funny')) {
-      let reply = "Why did the AI go to school? To improve its neural networks! On a serious note, how may I assist you with KAIRA TECHNOLOGY voice platform or services today?";
-      if (normLang !== 'en') reply = await this.translateText(reply, normLang, 'en');
-      return { answer: reply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
-    }
-
-    // 4. Handling Math and simple Calculation inquiries directly
-    const mathMatch = lowerEn.match(/(?:what is|calculate|compute)?\s*(\d+)\s*(\+|\-|\*|\/|plus|minus|times|divided by)\s*(\d+)/i);
-    if (mathMatch) {
-      const a = parseInt(mathMatch[1], 10);
-      const op = mathMatch[2].toLowerCase();
-      const b = parseInt(mathMatch[3], 10);
-      let resVal = 0;
-      if (op === '+' || op === 'plus') resVal = a + b;
-      else if (op === '-' || op === 'minus') resVal = a - b;
-      else if (op === '*' || op === 'times') resVal = a * b;
-      else if (op === '/' || op === 'divided by') resVal = b !== 0 ? Math.round((a / b) * 100) / 100 : 0;
-
-      let mathAns = `The answer is ${resVal}. How may I help you with KAIRA TECHNOLOGY products or customer support today?`;
-      if (normLang !== 'en') mathAns = await this.translateText(mathAns, normLang, 'en');
-      return { answer: mathAns, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
-    }
-
-    // 5. Orders, Delivery, & Tracking Inquiries
-    const isOrderQuery =
-      lowerEn.includes('order') ||
-      lowerEn.includes('track') ||
-      lowerEn.includes('delivery') ||
-      lowerEn.includes('shipping') ||
-      lowerEn.includes('package') ||
-      lowerEn.includes('courier') ||
-      lowerQuery.includes('ஆர்டர்') ||
-      lowerQuery.includes('டெலிவரி') ||
-      lowerQuery.includes('पार्सल') ||
-      lowerQuery.includes('आर्डर');
-
-    if (isOrderQuery) {
-      const orderIdMatch = (englishQuery + ' ' + query).match(/(?:order\s*(?:id|#|number)?|id|#)\s*[:#-]?\s*([a-z0-9_-]{3,20})/i);
-      let orderReply = "";
-      if (orderIdMatch) {
-        const extractedId = orderIdMatch[1].toUpperCase();
-        orderReply = `Thank you! I have checked order #${extractedId}. Your order has been dispatched and is currently in transit with our logistics partner. Estimated delivery is within 2 to 3 business days. Would you like me to send tracking updates to your phone?`;
-      } else {
-        orderReply = "Hello! I would be delighted to help you with your order. Could you please tell me your Order ID?";
-      }
-      if (normLang !== 'en') orderReply = await this.translateText(orderReply, normLang, 'en');
-      return { answer: orderReply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
-    }
-
-    // 6. Payment, Invoices, & Billing Inquiries
-    const isPaymentQuery =
-      lowerEn.includes('payment') ||
-      lowerEn.includes('invoice') ||
-      lowerEn.includes('bill') ||
-      lowerEn.includes('deducted') ||
-      lowerEn.includes('debited') ||
-      lowerEn.includes('transaction') ||
-      lowerQuery.includes('பணம்') ||
-      lowerQuery.includes('கட்டணம்') ||
-      lowerQuery.includes('भुगतान') ||
-      lowerQuery.includes('बिल');
-
-    if (isPaymentQuery) {
-      let paymentReply = "For billing and payment support: KAIRA accepts all major credit/debit cards, UPI, and net banking through our secure payment gateway. If an amount was debited without confirmation or you need an invoice, please share your transaction reference, and our automated billing system will verify or refund it within 3 to 5 business days.";
-      if (normLang !== 'en') paymentReply = await this.translateText(paymentReply, normLang, 'en');
-      return { answer: paymentReply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
-    }
-
-    // 7. Complaints & Grievances
-    const isComplaintQuery =
-      lowerEn.includes('complaint') ||
-      lowerEn.includes('bad service') ||
-      lowerEn.includes('not working well') ||
-      lowerEn.includes('dissatisfied') ||
-      lowerEn.includes('terrible') ||
-      lowerEn.includes('unhappy') ||
-      lowerQuery.includes('புகார்') ||
-      lowerQuery.includes('शिकायत');
-
-    if (isComplaintQuery) {
-      let complaintReply = "I sincerely apologize for the inconvenience and frustration you experienced. We take your feedback very seriously. Could you please describe what went wrong so I can resolve it immediately, or would you like me to connect you with a supervisor or log an urgent priority ticket?";
-      if (normLang !== 'en') complaintReply = await this.translateText(complaintReply, normLang, 'en');
-      return { answer: complaintReply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
-    }
-
-    // 8. Troubleshooting & Technical Instructions
-    const isTroubleshootQuery =
-      lowerEn.includes('microphone') ||
-      lowerEn.includes('cannot hear') ||
-      lowerEn.includes('cant hear') ||
-      lowerEn.includes('audio issue') ||
-      lowerEn.includes('webrtc') ||
-      lowerEn.includes('troubleshoot') ||
-      lowerEn.includes('connection dropped');
-
-    if (isTroubleshootQuery) {
-      let techReply = "For audio and calling troubleshooting: 1) Please ensure microphone access is permitted in your browser. 2) Open device settings to verify your input headset. 3) Make sure your network allows WebRTC connections. Would you like me to test your audio connection now?";
-      if (normLang !== 'en') techReply = await this.translateText(techReply, normLang, 'en');
-      return { answer: techReply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
-    }
-
-    // 9. Short or Unclear Speech Fallback (Step 1 of 5-Step Intelligent Fallback)
-    if (trimmed.length <= 3 && !['hi', 'ok', 'no', 'yes'].includes(lowerEn)) {
-      let repeatReply = "I apologize, I didn't quite catch that clearly. Could you please repeat your question?";
-      if (normLang !== 'en') repeatReply = await this.translateText(repeatReply, normLang, 'en');
-      return { answer: repeatReply, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
-    }
-
-    // 5. Search approved corporate Knowledge Base using English query representation
-    const searchResults = await knowledgeService.search(englishQuery, 3);
-
-    // If query matches approved corporate Knowledge Base with good confidence
-    if (searchResults.length > 0 && searchResults[0].score >= 0.22) {
-      const bestMatches = searchResults.slice(0, 2);
-      const sources = bestMatches.map(m => ({
-        id: m.entry.id,
-        title: m.entry.title,
-        category: m.entry.category
-      }));
-
-      let englishAnswer = bestMatches[0].entry.answer || bestMatches[0].entry.content;
-
-      // Direct KB match translation to customer's language
-      let localizedAnswer = englishAnswer;
-      if (normLang !== 'en') {
-        localizedAnswer = await this.translateText(englishAnswer, normLang, 'en');
-      }
-
-      return {
-        answer: localizedAnswer,
-        sources,
-        isGrounded: true,
-        requiresTransfer: false,
-        language: normLang,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 6. Handling Unrelated General Questions (general knowledge, weather, definitions)
-    const isGeneralKnowledgeQuery =
-      lowerEn.startsWith('what is the capital of') ||
-      lowerEn.startsWith('who is the president of') ||
-      lowerEn.startsWith('how is the weather') ||
-      lowerEn.startsWith('what is the time') ||
-      lowerEn.startsWith('what is the date') ||
-      lowerEn.startsWith('what is gravity') ||
-      lowerEn.startsWith('tell me about earth') ||
-      lowerEn.startsWith('how does the sun');
-
-    if (isGeneralKnowledgeQuery) {
-      let generalAns = "That's an interesting question! While my primary expertise is assisting you with KAIRA TECHNOLOGY platform, voice agents, and customer support, I'm happy to help. How can I assist you with our services, plans, or technical support today?";
-      if (lowerEn.includes('time')) {
-        generalAns = `The current system time is ${new Date().toLocaleTimeString()}. How can I assist you with KAIRA TECHNOLOGY customer support today?`;
-      } else if (lowerEn.includes('date')) {
-        generalAns = `Today's date is ${new Date().toLocaleDateString()}. How can I assist you with KAIRA TECHNOLOGY customer support today?`;
-      }
-      if (normLang !== 'en') generalAns = await this.translateText(generalAns, normLang, 'en');
-      return { answer: generalAns, sources: [], isGrounded: true, requiresTransfer: false, language: normLang, latencyMs: Date.now() - t0 };
-    }
-
-    // 6. Company-specific question where information is not found in the Knowledge Base
-    // Strictly required polite fallback message (Zero Hallucination + Automatic Gap Logging)
-    let localizedFallback = FALLBACK_MESSAGE;
-    if (normLang !== 'en') {
-      localizedFallback = await this.translateText(FALLBACK_MESSAGE, normLang, 'en');
+    // Localize answer back to customer's language
+    let localizedAnswer = grounded.answer;
+    if (normLang !== 'en' && localizedAnswer) {
+      localizedAnswer = await this.translateText(localizedAnswer, normLang, 'en');
     }
 
     return {
-      answer: localizedFallback,
-      sources: [],
-      isGrounded: false,
-      requiresTransfer: false,
+      answer: localizedAnswer,
+      sources: grounded.sources || [],
+      isGrounded: grounded.isGrounded,
+      requiresTransfer: grounded.requiresTransfer,
       language: normLang,
       latencyMs: Date.now() - t0
     };

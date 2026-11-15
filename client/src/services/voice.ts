@@ -1,3 +1,5 @@
+import { audioDeviceManager } from './audioDevice.js';
+
 // Cross-browser speech recognition declaration
 declare global {
   interface Window {
@@ -26,6 +28,7 @@ export class VoiceService {
   private audioUnlocked: boolean = false;
   private vadTimer: any = null;
   private lastInterimTranscript: string = '';
+  private currentSpeechSequenceId: number = 0;
   public onInterruption?: () => void;
   public onSpeechStart?: () => void;
   public onLanguageDetected?: (lang: string) => void;
@@ -128,7 +131,7 @@ export class VoiceService {
 
   // Start speech recognition with fast VAD and automatic customer interruption support
   public startListening(
-    onResult: (text: string, isFinal: boolean) => void,
+    onResult: (text: string, isFinal: boolean, utteranceId?: string) => void,
     onError?: (err: any) => void
   ) {
     if (!this.recognition) {
@@ -181,23 +184,25 @@ export class VoiceService {
           this.vadTimer = null;
         }
         this.lastInterimTranscript = '';
-        onResult(finalTranscript, true);
+        const utteranceId = 'utt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+        onResult(finalTranscript, true, utteranceId);
       } else if (interim.trim()) {
         this.lastInterimTranscript = interim.trim();
         onResult(this.lastInterimTranscript, false);
 
-        // Fast Voice Activity Detection (VAD) Debounce:
-        // If customer stops speaking for 250ms on a meaningful utterance, finalize without waiting for browser delay!
+        // Voice Activity Detection (VAD) Debounce:
+        // Wait 800ms after customer pauses to ensure sentences aren't split mid-speech
         if (this.vadTimer) clearTimeout(this.vadTimer);
         if (this.lastInterimTranscript.length >= 2) {
           this.vadTimer = setTimeout(() => {
             if (this.lastInterimTranscript && this.isListening) {
               const textToEmit = this.lastInterimTranscript;
               this.lastInterimTranscript = '';
-              console.log('[VoiceService] Fast VAD detected end of speech:', textToEmit);
-              onResult(textToEmit, true);
+              const utteranceId = 'utt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+              console.log('[VoiceService] VAD detected end of speech (800ms debounce):', textToEmit);
+              onResult(textToEmit, true, utteranceId);
             }
-          }, 260);
+          }, 800);
         }
       }
     };
@@ -264,6 +269,9 @@ export class VoiceService {
       // Customer interruption / cleanup previous speech
       this.cancelSpeech();
 
+      // Allocate strict speech sequence tracking to prevent overlapping audio
+      const speechSeq = ++this.currentSpeechSequenceId;
+
       const rawLang = (langCode || this.currentLang.slice(0, 2) || 'en').toLowerCase().slice(0, 2);
       const targetLang = LANGUAGE_BCP47[rawLang] ? rawLang : 'en';
 
@@ -272,11 +280,13 @@ export class VoiceService {
       const audio = new Audio(audioUrl);
       this.currentAudio = audio;
       audio.volume = this.currentVolume;
+      audioDeviceManager.applySpeakerToAudioElement(audio);
 
       let hasStarted = false;
       let hasResolved = false;
 
       const finish = () => {
+        if (speechSeq !== this.currentSpeechSequenceId) return;
         if (!hasResolved) {
           hasResolved = true;
           this.currentAudio = null;
@@ -286,6 +296,10 @@ export class VoiceService {
       };
 
       audio.onplay = () => {
+        if (speechSeq !== this.currentSpeechSequenceId) {
+          audio.pause();
+          return;
+        }
         if (!hasStarted) {
           hasStarted = true;
           if (onStartAudio) onStartAudio();
@@ -297,15 +311,17 @@ export class VoiceService {
       };
 
       audio.onerror = (err) => {
+        if (speechSeq !== this.currentSpeechSequenceId) return;
         console.warn('[VoiceService] Server TTS error, falling back to Web SpeechSynthesis:', err);
         this.currentAudio = null;
-        this.speakWithSpeechSynthesis(cleanText, onEnd, targetLang, onStartAudio).then(resolve);
+        this.speakWithSpeechSynthesis(cleanText, onEnd, targetLang, onStartAudio, speechSeq).then(resolve);
       };
 
       audio.play().catch((playErr) => {
+        if (speechSeq !== this.currentSpeechSequenceId) return;
         console.warn('[VoiceService] HTML5 Audio autoplay policy error, falling back to Web SpeechSynthesis:', playErr);
         this.currentAudio = null;
-        this.speakWithSpeechSynthesis(cleanText, onEnd, targetLang, onStartAudio).then(resolve);
+        this.speakWithSpeechSynthesis(cleanText, onEnd, targetLang, onStartAudio, speechSeq).then(resolve);
       });
     });
   }
@@ -315,16 +331,16 @@ export class VoiceService {
     text: string,
     onEnd?: () => void,
     langCode?: string,
-    onStartAudio?: () => void
+    onStartAudio?: () => void,
+    speechSeq?: number
   ): Promise<void> {
     return new Promise((resolve) => {
-      if (!this.synth) {
+      const activeSeq = speechSeq || this.currentSpeechSequenceId;
+      if (activeSeq !== this.currentSpeechSequenceId || !this.synth) {
         if (onEnd) onEnd();
         resolve();
         return;
       }
-
-      this.cancelSpeech();
 
       const utterance = new SpeechSynthesisUtterance(text);
       this.currentUtterance = utterance;
@@ -353,16 +369,22 @@ export class VoiceService {
       utterance.volume = this.currentVolume;
 
       utterance.onstart = () => {
+        if (activeSeq !== this.currentSpeechSequenceId) {
+          this.cancelSpeech();
+          return;
+        }
         if (onStartAudio) onStartAudio();
       };
 
       utterance.onend = () => {
+        if (activeSeq !== this.currentSpeechSequenceId) return;
         this.currentUtterance = null;
         if (onEnd) onEnd();
         resolve();
       };
 
       utterance.onerror = () => {
+        if (activeSeq !== this.currentSpeechSequenceId) return;
         this.currentUtterance = null;
         if (onEnd) onEnd();
         resolve();
@@ -374,6 +396,7 @@ export class VoiceService {
 
   // Cancel any currently playing speech immediately (Interruption support)
   public cancelSpeech() {
+    this.currentSpeechSequenceId++;
     if (this.currentAudio) {
       try {
         this.currentAudio.pause();

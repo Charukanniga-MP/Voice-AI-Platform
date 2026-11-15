@@ -102,6 +102,21 @@ export const CustomerDashboard: React.FC = () => {
 
   const activeAudioObjectUrlRef = useRef<string | null>(null);
 
+  // Call session greeting and utterance deduplication locks
+  const greetedCallsRef = useRef<Set<string>>(new Set());
+  const dispatchedUtteranceIdsRef = useRef<Set<string>>(new Set());
+  const callIdRef = useRef<string | null>(callId);
+  const callStatusRef = useRef(callStatus);
+  const selectedLanguageRef = useRef<LanguageCode>(selectedLanguage);
+  const userRef = useRef(user);
+
+  useEffect(() => {
+    callIdRef.current = callId;
+    callStatusRef.current = callStatus;
+    selectedLanguageRef.current = selectedLanguage;
+    userRef.current = user;
+  });
+
   const handlePlayRecording = async (recordingUrl: string, recCallId: string) => {
     if (playingRecordingId === recCallId) {
       activeAudioPlayerRef.current?.pause();
@@ -434,13 +449,25 @@ export const CustomerDashboard: React.FC = () => {
     });
 
     // 6. AI Voice call ready
-    socket.on('call:ready', (data: { callId: string; greeting: string; language: string; audioUrl?: string }) => {
+    socket.on('call:ready', (data: { callId: string; greeting: string; language: string; audioUrl?: string; greetingPlayed?: boolean }) => {
       setCallStatus('active_ai');
       if (data.language && data.language in SUPPORTED_LANGUAGES) {
         setSelectedLanguage(data.language as LanguageCode);
         voiceService.setLanguage(data.language);
       }
       setActivePartner({ name: 'KAIRA AI', role: 'ai', language: data.language });
+
+      // Start listening right away so customer can interrupt or speak naturally
+      startSpeechRecognition(data.callId, false);
+
+      // Enforce single greeting per call session
+      if (greetedCallsRef.current.has(data.callId) || data.greetingPlayed || !data.greeting) {
+        console.log('[Customer] Greeting already played or suppressed for call:', data.callId);
+        return;
+      }
+
+      greetedCallsRef.current.add(data.callId);
+
       setTranscripts(prev => [
         ...prev,
         {
@@ -457,14 +484,20 @@ export const CustomerDashboard: React.FC = () => {
       aiIsSpeakingRef.current = true;
       currentAiSpeechTextRef.current = data.greeting;
 
-      // Start listening right away so customer can interrupt or speak naturally
-      startSpeechRecognition(data.callId, false);
-
       voiceService.speak(data.greeting, () => {
         setAiIsSpeaking(false);
         aiIsSpeakingRef.current = false;
         currentAiSpeechTextRef.current = '';
       }, data.language);
+    });
+
+    // 6B. Human specialist takeover silences AI immediately
+    socket.on('call:ai_silenced', (data: { callId: string; speakerType: string; adminName?: string }) => {
+      console.log('[Customer] AI silenced for human specialist takeover:', data);
+      voiceService.cancelSpeech();
+      setAiIsSpeaking(false);
+      aiIsSpeakingRef.current = false;
+      currentAiSpeechTextRef.current = '';
     });
 
     // 7. AI response
@@ -663,6 +696,7 @@ export const CustomerDashboard: React.FC = () => {
       socket.off('customer:queue_cancelled');
       socket.off('customer:call_accepted');
       socket.off('call:ready');
+      socket.off('call:ai_silenced');
       socket.off('call:ai_response');
       socket.off('transfer:connected');
       socket.off('call:language_changed');
@@ -704,7 +738,7 @@ export const CustomerDashboard: React.FC = () => {
       setIsCustomerSpeaking(true);
     };
 
-    voiceService.startListening((text, isFinal) => {
+    voiceService.startListening((text, isFinal, utteranceId) => {
       const trimmed = text.trim();
 
       // Check text for multi-language script auto-detection
@@ -743,6 +777,18 @@ export const CustomerDashboard: React.FC = () => {
         setIsCustomerSpeaking(false);
         if (!trimmed) return;
 
+        // Deduplicate customer utterance dispatch
+        if (utteranceId && dispatchedUtteranceIdsRef.current.has(utteranceId)) {
+          return;
+        }
+        if (utteranceId) {
+          dispatchedUtteranceIdsRef.current.add(utteranceId);
+          if (dispatchedUtteranceIdsRef.current.size > 200) {
+            const first = dispatchedUtteranceIdsRef.current.values().next().value;
+            if (first) dispatchedUtteranceIdsRef.current.delete(first);
+          }
+        }
+
         speechEndTimeRef.current = Date.now();
 
         setTranscripts(prev => {
@@ -780,7 +826,8 @@ export const CustomerDashboard: React.FC = () => {
             query: text.trim(),
             customerId: user?.id,
             duration,
-            language: currentActiveLang,
+            language: currentActiveLang || selectedLanguage,
+            utteranceId,
             clientSentAt: speechEndTimeRef.current
           });
         }
@@ -970,6 +1017,7 @@ export const CustomerDashboard: React.FC = () => {
     setQueueInfo(null);
     setLiveSentiment(null);
     setTransferNotice(null);
+    dispatchedUtteranceIdsRef.current.clear();
     voiceService.cancelSpeech();
     voiceService.stopListening();
     webrtcManager.endCall();
@@ -1292,15 +1340,14 @@ export const CustomerDashboard: React.FC = () => {
                 <div className="relative mb-3">
                   {/* Visual Status Halo Ring */}
                   <div
-                    className={`w-28 h-28 rounded-full flex items-center justify-center transition-all duration-500 ${
-                      aiVisualState === 'speaking'
-                        ? 'bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 p-1 animate-pulse shadow-xl shadow-indigo-500/40 ring-4 ring-indigo-300/50'
-                        : aiVisualState === 'thinking'
-                          ? 'bg-gradient-to-tr from-amber-400 via-purple-500 to-indigo-600 p-1 animate-spin shadow-lg shadow-amber-400/30'
-                          : aiVisualState === 'listening'
-                            ? 'bg-gradient-to-tr from-emerald-500 to-teal-400 p-1 shadow-lg shadow-emerald-500/30 ring-4 ring-emerald-300/40 animate-pulse'
-                            : 'bg-slate-200 p-1 shadow-xs'
-                    }`}
+                    className={`w-28 h-28 rounded-full flex items-center justify-center transition-all duration-500 ${aiVisualState === 'speaking'
+                      ? 'bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 p-1 animate-pulse shadow-xl shadow-indigo-500/40 ring-4 ring-indigo-300/50'
+                      : aiVisualState === 'thinking'
+                        ? 'bg-gradient-to-tr from-amber-400 via-purple-500 to-indigo-600 p-1 animate-spin shadow-lg shadow-amber-400/30'
+                        : aiVisualState === 'listening'
+                          ? 'bg-gradient-to-tr from-emerald-500 to-teal-400 p-1 shadow-lg shadow-emerald-500/30 ring-4 ring-emerald-300/40 animate-pulse'
+                          : 'bg-slate-200 p-1 shadow-xs'
+                      }`}
                   >
                     <div className="w-full h-full bg-white rounded-full flex items-center justify-center shadow-inner">
                       <div className="w-22 h-22 rounded-full bg-gradient-to-tr from-indigo-600 to-teal-600 text-white flex items-center justify-center shadow-md">
@@ -1492,8 +1539,8 @@ export const CustomerDashboard: React.FC = () => {
                   type="button"
                   onClick={handleToggleMute}
                   className={`min-h-[48px] min-w-[48px] px-4 py-3 rounded-2xl border font-semibold text-xs transition-all cursor-pointer flex items-center gap-2 active:scale-95 shadow-xs ${isMuted
-                      ? 'bg-red-50 border-red-300 text-red-700 hover:bg-red-100 ring-2 ring-red-500/20'
-                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
+                    ? 'bg-red-50 border-red-300 text-red-700 hover:bg-red-100 ring-2 ring-red-500/20'
+                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
                     }`}
                   title={isMuted ? t('call.unmute') : t('call.mute')}
                 >
@@ -1888,13 +1935,12 @@ export const CustomerDashboard: React.FC = () => {
 
                         <td className="py-3.5 px-4">
                           <span
-                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${
-                              call.status === 'completed'
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${call.status === 'completed'
                                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                 : call.status === 'active'
                                   ? 'bg-blue-50 text-blue-700 border border-blue-200'
                                   : 'bg-slate-100 text-slate-700 border border-slate-200'
-                            }`}
+                              }`}
                           >
                             {call.status}
                           </span>
@@ -1917,15 +1963,14 @@ export const CustomerDashboard: React.FC = () => {
 
                         <td className="py-3.5 px-4">
                           <span
-                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${
-                              resolution === 'resolved'
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${resolution === 'resolved'
                                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                 : resolution === 'partially_resolved'
                                   ? 'bg-blue-50 text-blue-700 border border-blue-200'
                                   : resolution === 'escalated_admin'
                                     ? 'bg-purple-50 text-purple-700 border border-purple-200'
                                     : 'bg-amber-50 text-amber-700 border border-amber-200'
-                            }`}
+                              }`}
                           >
                             {resolution.replace('_', ' ')}
                           </span>
@@ -1937,11 +1982,10 @@ export const CustomerDashboard: React.FC = () => {
                             {(call.recordingUrl || call.recording || call.recordingStatus === 'completed' || call.duration > 2) ? (
                               <button
                                 onClick={() => handlePlayRecording(recUrl, call.id)}
-                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${
-                                  playingRecordingId === call.id
+                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${playingRecordingId === call.id
                                     ? 'bg-red-600 text-white animate-pulse ring-2 ring-red-400'
                                     : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
-                                }`}
+                                  }`}
                                 title={playingRecordingId === call.id ? 'Pause Recording' : 'Listen to Call Recording'}
                               >
                                 {playingRecordingId === call.id ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
@@ -1994,11 +2038,12 @@ export const CustomerDashboard: React.FC = () => {
                       </div>
                       <div className="flex flex-col items-end gap-1">
                         <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${
-                            call.status === 'completed'
+                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${call.status === 'completed'
                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : 'bg-slate-100 text-slate-700 border border-slate-200'
-                          }`}
+                              : call.status === 'active'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : 'bg-slate-100 text-slate-700 border border-slate-200'
+                            }`}
                         >
                           {call.status}
                         </span>
@@ -2016,11 +2061,10 @@ export const CustomerDashboard: React.FC = () => {
                     {/* Footer Row: Resolution + Actions */}
                     <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">
                       <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${
-                          resolution === 'resolved'
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${resolution === 'resolved'
                             ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                             : 'bg-amber-50 text-amber-700 border border-amber-200'
-                        }`}
+                          }`}
                       >
                         {resolution.replace('_', ' ')}
                       </span>
@@ -2029,11 +2073,10 @@ export const CustomerDashboard: React.FC = () => {
                         {(call.recordingUrl || call.recording || call.recordingStatus === 'completed' || call.duration > 2) && (
                           <button
                             onClick={() => handlePlayRecording(recUrl, call.id)}
-                            className={`min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${
-                              playingRecordingId === call.id
+                            className={`min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${playingRecordingId === call.id
                                 ? 'bg-red-600 text-white animate-pulse'
                                 : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
-                            }`}
+                              }`}
                           >
                             {playingRecordingId === call.id ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
                             <span>{playingRecordingId === call.id ? 'Playing' : 'Listen'}</span>
@@ -2104,11 +2147,10 @@ export const CustomerDashboard: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => handlePlayRecording(selectedHistoryCall.recordingUrl || `/api/calls/${selectedHistoryCall.callId}/recording`, selectedHistoryCall.id)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer ${
-                      playingRecordingId === selectedHistoryCall.id
-                        ? 'bg-red-600 text-white animate-pulse'
-                        : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                    }`}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer ${playingRecordingId === selectedHistoryCall.id
+                      ? 'bg-red-600 text-white animate-pulse'
+                      : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                      }`}
                   >
                     {playingRecordingId === selectedHistoryCall.id ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
                     <span>{playingRecordingId === selectedHistoryCall.id ? 'Pause' : 'Play Audio'}</span>
@@ -2148,12 +2190,12 @@ export const CustomerDashboard: React.FC = () => {
                     AI Call Summary
                   </div>
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${selectedHistoryCall.intelligence.resolutionStatus === 'resolved'
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : selectedHistoryCall.intelligence.resolutionStatus === 'partially_resolved'
-                        ? 'bg-blue-100 text-blue-800'
-                        : selectedHistoryCall.intelligence.resolutionStatus === 'escalated_admin'
-                          ? 'bg-purple-100 text-purple-800'
-                          : 'bg-amber-100 text-amber-800'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : selectedHistoryCall.intelligence.resolutionStatus === 'partially_resolved'
+                      ? 'bg-blue-100 text-blue-800'
+                      : selectedHistoryCall.intelligence.resolutionStatus === 'escalated_admin'
+                        ? 'bg-purple-100 text-purple-800'
+                        : 'bg-amber-100 text-amber-800'
                     }`}>
                     {selectedHistoryCall.intelligence.resolutionStatus.replace('_', ' ')}
                   </span>

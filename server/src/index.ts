@@ -1,13 +1,18 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import dns from 'node:dns';
+
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch { }
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Load environment variables before any other module executes
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
-dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, '../.env'), override: true });
+dotenv.config({ override: true });
 
 import express from 'express';
 import http from 'http';

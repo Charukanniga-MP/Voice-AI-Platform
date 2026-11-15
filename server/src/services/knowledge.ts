@@ -6,6 +6,22 @@ interface SearchResult {
   score: number;
 }
 
+export interface CustomerContext {
+  customerId?: string | null;
+  customerName?: string;
+  customerEmail?: string | null;
+  customerPhone?: string | null;
+  tickets?: Array<{
+    id: string;
+    subject: string;
+    description: string;
+    status: string;
+    priority: string;
+    createdAt?: Date;
+    updatedAt?: Date;
+  }>;
+}
+
 export interface GroundedResponse {
   answer: string;
   isGrounded: boolean;
@@ -30,7 +46,7 @@ const STOP_WORDS = new Set([
   'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not',
   'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'just',
   'don', 'now', 'you', 'your', 'me', 'my', 'i', 'we', 'our', 'tell', 'give',
-  'know', 'please', 'like', 'want'
+  'know', 'please', 'like', 'want', 'how', 'much', 'what', 'where', 'when', 'which', 'who', 'why', 'does'
 ]);
 
 const STEM = (w: string) => w.toLowerCase().replace(/(ies|es|s|ing|ed)$/, '');
@@ -141,10 +157,24 @@ class KnowledgeService {
     }
 
     // Normalization based on query token count
-    const normalizedScore = score / queryTokens.length;
+    let normalizedScore = score / queryTokens.length;
+
+    // Domain category intent bonus
+    const lowerQuery = query.toLowerCase().trim();
+    if (/\b(cost|price|pricing|rate|fee|plan|plans|subscription|how much)\b/i.test(lowerQuery) && entry.category === 'pricing') {
+      normalizedScore += 0.35;
+    }
+    if (/\b(product|products|feature|features|offering|solution)\b/i.test(lowerQuery) && (entry.category === 'products' || entry.category === 'services')) {
+      normalizedScore += 0.30;
+    }
+    if (/\b(policy|policies|refund|cancel|cancellation|terms)\b/i.test(lowerQuery) && entry.category === 'policies') {
+      normalizedScore += 0.30;
+    }
+    if (/\b(hour|hours|time|schedule|open|contact|support|call)\b/i.test(lowerQuery) && (entry.category === 'hours' || entry.category === 'support')) {
+      normalizedScore += 0.30;
+    }
 
     // Exact phrase match bonus
-    const lowerQuery = query.toLowerCase().trim();
     if (entry.question && entry.question.toLowerCase().includes(lowerQuery)) {
       return Math.min(1.0, normalizedScore + 0.3);
     }
@@ -177,7 +207,8 @@ class KnowledgeService {
   // Answer customer query with fast voice-optimized response
   public async answerQuery(
     query: string,
-    history: Array<{ role: 'user' | 'assistant'; content: string }> = []
+    history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
+    customerContext?: CustomerContext
   ): Promise<GroundedResponse> {
     const t0 = Date.now();
     const trimmedQuery = query.trim();
@@ -194,6 +225,10 @@ class KnowledgeService {
 
     const cleanInput = trimmedQuery.toLowerCase().replace(/['".,!?;:]/g, '').trim();
 
+    // Strip leading conversational greetings if followed by an actual question
+    const strippedQuery = cleanInput.replace(/^(hello|hi|hey|good\s+(morning|afternoon|evening)|howdy)\s*(there|kaira|assistant)?[\s,]+/i, '').trim();
+    const effectiveQuery = strippedQuery.length >= 3 ? strippedQuery : cleanInput;
+
     // 1. Explicit request to speak with a human / Admin
     if (
       /\b(speak\s+to|talk\s+to|connect(\s+me)?(\s+to)?|transfer(\s+me)?(\s+to)?|put\s+me\s+through\s+to|let\s+me\s+speak\s+to|want|need)\s+(an?\s+)?(admin|agent|human|person|representative|support|specialist)\b/i.test(cleanInput) ||
@@ -209,11 +244,50 @@ class KnowledgeService {
       };
     }
 
-    // 2. Greetings
-    if (
-      /^(hi|hello|hey|good\s+(morning|afternoon|evening)|howdy)(\s+(there|kaira|assistant))?$/i.test(cleanInput) ||
-      cleanInput === 'hi' || cleanInput === 'hello' || cleanInput === 'hey'
-    ) {
+    // 2. Support Ticket Status Inquiry (Live DB Grounded)
+    if (/\b(ticket|tickets|complaint|complaints|issue\s+status|ticket\s+status|check\s+my\s+ticket|my\s+request)\b/i.test(effectiveQuery)) {
+      if (customerContext?.tickets && customerContext.tickets.length > 0) {
+        const topTicket = customerContext.tickets[0];
+        const ticketIdShort = topTicket.id.length > 6 ? topTicket.id.slice(-6).toUpperCase() : topTicket.id.toUpperCase();
+        return {
+          answer: `I found your support ticket #${ticketIdShort} regarding "${topTicket.subject}". Its current status is ${topTicket.status} with ${topTicket.priority} priority.`,
+          isGrounded: true,
+          requiresTransfer: false,
+          sources: [{ id: topTicket.id, title: topTicket.subject, category: 'support' }],
+          confidence: 1.0,
+          latencyMs: Date.now() - t0
+        };
+      } else if (customerContext) {
+        return {
+          answer: "You currently have no open support tickets on your account. If you are experiencing an issue, I can transfer you to our live support team or open a ticket for you.",
+          isGrounded: true,
+          requiresTransfer: false,
+          sources: [],
+          confidence: 1.0,
+          latencyMs: Date.now() - t0
+        };
+      }
+    }
+
+    // 3. Customer Profile / Account Details Inquiry (Live DB Grounded)
+    if (/\b(my\s+account|my\s+profile|(?:my\s+)?(?:registered\s+)?email|(?:my\s+)?(?:registered\s+)?phone|(?:registered\s+)?name|who\s+am\s+i|my\s+details)\b/i.test(effectiveQuery)) {
+      if (customerContext && (customerContext.customerName || customerContext.customerEmail)) {
+        return {
+          answer: `Your account is registered under ${customerContext.customerName || 'our records'}${customerContext.customerEmail ? ' with email ' + customerContext.customerEmail : ''}. How can I assist you with your account today?`,
+          isGrounded: true,
+          requiresTransfer: false,
+          sources: [],
+          confidence: 1.0,
+          latencyMs: Date.now() - t0
+        };
+      }
+    }
+
+    // 4. Greetings (Strictly when input is only a greeting)
+    const isPureGreeting = /^(hi|hello|hey|good\s+(morning|afternoon|evening)|howdy)(\s+(there|kaira|assistant))?$/i.test(cleanInput) ||
+      cleanInput === 'hi' || cleanInput === 'hello' || cleanInput === 'hey';
+
+    if (isPureGreeting) {
       return {
         answer: "Hello! Welcome to KAIRA. I am your AI voice assistant. How can I help you today with our platform, pricing, or voice services?",
         isGrounded: true,
@@ -224,7 +298,7 @@ class KnowledgeService {
       };
     }
 
-    // 3. How are you
+    // 5. How are you
     if (/\b(how\s+are\s+you|how\s+are\s+things|hows\s+it\s+going|how\s+is\s+it\s+going)\b/i.test(cleanInput)) {
       return {
         answer: "I am doing great, thank you! How may I assist you with KAIRA's voice platform or customer communication today?",
@@ -236,7 +310,7 @@ class KnowledgeService {
       };
     }
 
-    // 4. Who are you / What can you do
+    // 6. Who are you / What can you do
     if (/\b(who\s+are\s+you|what\s+can\s+you\s+do|what\s+is\s+your\s+name|what\s+are\s+you)\b/i.test(cleanInput)) {
       return {
         answer: "I am KAIRA's real-time AI Voice Agent. I can help you explore our features, explain pricing tiers, answer support inquiries, or connect you with human staff if needed.",
@@ -298,7 +372,10 @@ class KnowledgeService {
     }
 
     // Search corporate knowledge base
-    const matches = await this.search(trimmedQuery);
+    let matches = await this.search(effectiveQuery);
+    if (matches.length === 0 && effectiveQuery !== trimmedQuery) {
+      matches = await this.search(trimmedQuery);
+    }
 
     // If matching KB entry found
     if (matches.length > 0 && matches[0].score >= 0.20) {
@@ -412,6 +489,60 @@ If they ask for company-specific private data or account changes, explain you ca
       }
     }
 
+    // Math calculation handling
+    const mathMatch = cleanInput.match(/(?:what is|calculate|compute)?\s*(\d+)\s*(\+|\-|\*|\/|plus|minus|times|divided by)\s*(\d+)/i);
+    if (mathMatch) {
+      const a = parseInt(mathMatch[1], 10);
+      const op = mathMatch[2].toLowerCase();
+      const b = parseInt(mathMatch[3], 10);
+      let resVal = 0;
+      if (op === '+' || op === 'plus') resVal = a + b;
+      else if (op === '-' || op === 'minus') resVal = a - b;
+      else if (op === '*' || op === 'times') resVal = a * b;
+      else if (op === '/' || op === 'divided by') resVal = b !== 0 ? Math.round((a / b) * 100) / 100 : 0;
+
+      return {
+        answer: `The answer is ${resVal}. How may I help you with KAIRA's platform or voice services today?`,
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0,
+        latencyMs: Date.now() - t0
+      };
+    }
+
+    // Technology and platform general definitions
+    if (/\b(what is (an )?ai agent|what is voice ai|what is kaira)\b/i.test(cleanInput)) {
+      return {
+        answer: "An AI voice agent is an intelligent conversational system that speaks, listens, and resolves customer inquiries in real time. KAIRA is our enterprise platform powering these voice agents.",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 0.95,
+        latencyMs: Date.now() - t0
+      };
+    }
+    if (/\b(what is webrtc|webrtc)\b/i.test(cleanInput)) {
+      return {
+        answer: "WebRTC is an open-source technology that enables real-time high-fidelity voice and video communications directly in web browsers without plugins.",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 0.95,
+        latencyMs: Date.now() - t0
+      };
+    }
+    if (/\b(what is cloud computing)\b/i.test(cleanInput)) {
+      return {
+        answer: "Cloud computing is the on-demand delivery of IT resources including computing power, storage, and networking over the internet with pay-as-you-go pricing.",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 0.95,
+        latencyMs: Date.now() - t0
+      };
+    }
+
     // Intelligent conversational fallback when general question is outside KB and offline
     // Check for specific common topics
     if (/\b(pizza|food|burger|order|delivery|restaurant)\b/i.test(cleanInput)) {
@@ -447,9 +578,9 @@ If they ask for company-specific private data or account changes, explain you ca
       };
     }
 
-    // Default polite conversational response
+    // Default polite conversational fallback for ungrounded company questions
     return {
-      answer: "I understand. I can help you with KAIRA's voice capabilities, pricing plans, and platform setup. Could you please share more details, or would you like to speak with a human administrator?",
+      answer: FALLBACK_MESSAGE,
       isGrounded: false,
       requiresTransfer: false,
       sources: [],
