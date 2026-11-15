@@ -12,7 +12,7 @@ import { CallRecord, CallTranscript, LanguageCode, SUPPORTED_LANGUAGES } from '.
 import {
   PhoneCall, PhoneOff, Mic, MicOff, Volume2, VolumeX,
   Clock, ShieldAlert, Sparkles, MessageSquare, History, User as UserIcon,
-  Headphones, Globe, Star, Users, CheckCircle2, RefreshCw, Settings,
+  Headphones, Star, Users, CheckCircle2, RefreshCw, Settings,
   Send, Download, Lightbulb, Play, Pause, Bot, Radio, FileText, CheckCircle
 } from 'lucide-react';
 import { SentimentBadge } from '../components/SentimentBadge.js';
@@ -979,7 +979,7 @@ export const CustomerDashboard: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-      {/* Welcome & Language Selection Banner */}
+      {/* Welcome Banner */}
       <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-indigo-800 rounded-3xl p-6 sm:p-8 text-white shadow-xl shadow-blue-100 relative overflow-hidden">
         <div className="absolute -right-10 -bottom-10 w-72 h-72 rounded-full bg-white/10 blur-2xl pointer-events-none" />
         <div className="relative z-10 max-w-3xl space-y-4">
@@ -1005,35 +1005,6 @@ export const CustomerDashboard: React.FC = () => {
           <p className="text-blue-100 text-sm leading-relaxed">
             {t('dashboard.banner_desc')}
           </p>
-
-          {/* 6 Languages Selector */}
-          <div className="pt-2">
-            <div className="flex items-center gap-2 mb-2 text-xs font-semibold text-blue-200">
-              <Globe className="w-4 h-4 text-blue-300" />
-              <span>{t('dashboard.select_language_title')}</span>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
-              {(Object.entries(SUPPORTED_LANGUAGES) as [LanguageCode, typeof SUPPORTED_LANGUAGES[LanguageCode]][]).map(([code, meta]) => {
-                const isSelected = selectedLanguage === code;
-                return (
-                  <button
-                    key={code}
-                    disabled={isCallActive}
-                    onClick={() => handleLanguageChange(code)}
-                    className={`px-3 py-2.5 rounded-2xl text-left border transition-all cursor-pointer ${isSelected
-                      ? 'bg-white text-indigo-900 border-white shadow-md font-bold scale-[1.02]'
-                      : 'bg-white/10 text-white border-white/20 hover:bg-white/20 hover:border-white/40'
-                      } ${isCallActive ? 'opacity-60 cursor-not-allowed' : ''}`}
-                  >
-                    <div className="text-sm font-extrabold leading-tight">{meta.nativeName}</div>
-                    <div className={`text-[11px] ${isSelected ? 'text-indigo-600 font-semibold' : 'text-blue-200'}`}>
-                      {meta.name}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
         </div>
       </div>
 

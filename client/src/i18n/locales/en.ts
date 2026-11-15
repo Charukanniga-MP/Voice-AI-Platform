@@ -75,7 +75,7 @@ export const en = {
   'dashboard.platform_badge': 'Multilingual Voice Platform',
   'dashboard.supported_languages_badge': '6 Languages Supported',
   'dashboard.welcome_user': 'Welcome, {name}',
-  'dashboard.banner_desc': 'Communicate naturally with our dedicated Support Specialists and AI Assistant in your preferred regional language. Choose your language below to begin.',
+  'dashboard.banner_desc': 'Communicate naturally with our dedicated Support Specialists and AI Assistant in your preferred regional language.',
   'dashboard.select_language_title': 'Select Your Preferred Communication Language:',
 
   // Calling Console & Session Bar
