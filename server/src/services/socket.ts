@@ -20,6 +20,22 @@ interface CallQueryLock {
 }
 const activeCallQueryLocks = new Map<string, CallQueryLock>();
 
+export interface CallSessionState {
+  callId: string;
+  customerId: string | null;
+  customerName: string;
+  customerSocketId: string;
+  language: string;
+  speakerType: 'ai' | 'human_agent';
+  humanSpeakerId: string | null;
+  humanSpeakerName: string | null;
+  greetingPlayed: boolean;
+  processedUtteranceIds: Set<string>;
+  createdAt: number;
+}
+
+export const callSessions = new Map<string, CallSessionState>();
+
 interface ConnectedUser {
   socketId: string;
   userId: string;
@@ -869,6 +885,22 @@ export function initSocketServer(io: SocketIOServer) {
         console.log(`[AICall] Starting AI call: ${data.callId} for ${data.customerName}`);
         socket.join(`call:${data.callId}`);
 
+        // Check if active session already exists for this callId (Idempotent session creation)
+        const existingSession = callSessions.get(data.callId);
+        if (existingSession) {
+          existingSession.customerSocketId = socket.id;
+          console.log(`[AICall] Reconnected to existing session: ${data.callId}. Suppressing duplicate greeting.`);
+          socket.emit('call:ready', {
+            callId: data.callId,
+            greeting: '',
+            greetingPlayed: true,
+            agentName: 'KAIRA AI Support Specialist',
+            status: 'active',
+            language: existingSession.language
+          });
+          return;
+        }
+
         let call = await prisma.callRecord.findUnique({
           where: { callId: data.callId }
         });
@@ -901,7 +933,22 @@ export function initSocketServer(io: SocketIOServer) {
           });
         }
 
-        // Welcome greeting in customer's preferred language
+        // Register session ownership and lock
+        callSessions.set(data.callId, {
+          callId: data.callId,
+          customerId: validCustomerId,
+          customerName: data.customerName,
+          customerSocketId: socket.id,
+          language: callLang,
+          speakerType: 'ai',
+          humanSpeakerId: null,
+          humanSpeakerName: null,
+          greetingPlayed: true,
+          processedUtteranceIds: new Set(),
+          createdAt: Date.now()
+        });
+
+        // Welcome greeting in customer's preferred language (generated only ONCE per session)
         let greeting = "Hello! Welcome to KAIRA TECHNOLOGY Customer Support. Thank you for calling us. I'm your AI support assistant. How may I help you today?";
         if (callLang !== 'en') {
           greeting = await translationService.translateText(greeting, callLang, 'en');
@@ -930,6 +977,7 @@ export function initSocketServer(io: SocketIOServer) {
           callId: data.callId,
           responseId,
           greeting,
+          greetingPlayed: false,
           agentName: 'KAIRA AI Support Specialist',
           status: 'active',
           language: callLang,
@@ -1061,11 +1109,32 @@ export function initSocketServer(io: SocketIOServer) {
       duration?: number;
       language?: string;
       clientMessageId?: string;
+      utteranceId?: string;
       clientSentAt?: number;
     }) => {
       try {
         const queryText = (data.query || '').trim();
         if (!queryText) return;
+
+        // Verify single active AI voice speaker per call
+        const session = callSessions.get(data.callId);
+        if (session && session.speakerType !== 'ai') {
+          console.log(`[AICall] Dropped call:query on ${data.callId}: active speaker is human agent ${session.humanSpeakerName}`);
+          return;
+        }
+
+        // Deduplicate customer utterance to prevent repeated responses
+        if (data.utteranceId && session) {
+          if (session.processedUtteranceIds.has(data.utteranceId)) {
+            console.log(`[AICall] Duplicate utterance ${data.utteranceId} dropped for call ${data.callId}`);
+            return;
+          }
+          session.processedUtteranceIds.add(data.utteranceId);
+          if (session.processedUtteranceIds.size > 200) {
+            const firstItem = session.processedUtteranceIds.values().next().value;
+            if (firstItem) session.processedUtteranceIds.delete(firstItem);
+          }
+        }
 
         const now = Date.now();
         const existingLock = activeCallQueryLocks.get(data.callId);
@@ -1096,7 +1165,6 @@ export function initSocketServer(io: SocketIOServer) {
           lastClientMessageId: data.clientMessageId,
           inFlight: true
         });
-
         const call = await prisma.callRecord.findUnique({
           where: { callId: data.callId }
         });
@@ -1106,6 +1174,36 @@ export function initSocketServer(io: SocketIOServer) {
         }
 
         const callLang = data.language || call.language || 'en';
+
+        // Retrieve real customer profile and support tickets from database
+        let customerContext: any = {
+          customerId: call.customerId,
+          customerName: call.customerName,
+          customerPhone: call.customerPhone
+        };
+        try {
+          const [userInfo, userTickets] = await Promise.all([
+            call.customerId ? prisma.user.findUnique({ where: { id: call.customerId } }) : null,
+            prisma.supportTicket.findMany({
+              where: {
+                OR: [
+                  ...(call.customerId ? [{ customerId: call.customerId }] : []),
+                  { customerName: call.customerName }
+                ]
+              },
+              orderBy: { createdAt: 'desc' },
+              take: 5
+            })
+          ]);
+          if (userInfo) {
+            customerContext.customerEmail = userInfo.email;
+            if (userInfo.phone) customerContext.customerPhone = userInfo.phone;
+            if (userInfo.name) customerContext.customerName = userInfo.name;
+          }
+          customerContext.tickets = userTickets;
+        } catch (fetchErr) {
+          console.warn('[AICall] Could not fetch customer tickets/profile:', fetchErr);
+        }
 
         // 1. Asynchronously record customer's speech in DB transcript without blocking response pipeline
         prisma.callTranscript.create({
@@ -1180,8 +1278,8 @@ export function initSocketServer(io: SocketIOServer) {
         const callContext = activeCallContexts.get(data.callId) || [];
         callContext.push({ sender: 'customer', text: queryText, timestamp: new Date() });
 
-        // Multilingual grounded knowledge retrieval with universal question intelligence
-        const response = await translationService.getAiAnswerSuggestion(queryText, callLang, callContext);
+        // Multilingual grounded knowledge retrieval with universal question intelligence & live customer context
+        const response = await translationService.getAiAnswerSuggestion(queryText, callLang, callContext, customerContext);
 
         const aiResponseTime = Date.now();
         const clientSpeechEnd = (data as any).clientSentAt || (data as any).speechEndTime || aiResponseTime;
@@ -1393,6 +1491,7 @@ export function initSocketServer(io: SocketIOServer) {
           socket.emit('call:ai_response', {
             responseId: aiResponseId,
             clientMessageId: data.clientMessageId,
+            utteranceId: data.utteranceId,
             answer: aiText,
             isTransferring: false,
             agentName: 'KAIRA AI Support Specialist',
@@ -1456,6 +1555,15 @@ export function initSocketServer(io: SocketIOServer) {
       try {
         const text = data.text.trim();
         if (!text) return;
+
+        // Prevent unauthorized agent audio from interrupting AI without explicit takeover
+        if (data.sender === 'agent' || data.sender === 'admin') {
+          const session = callSessions.get(data.callId);
+          if (session && session.speakerType === 'ai') {
+            console.warn(`[Call] Rejected agent speech: Call ${data.callId} is locked to AI speaker. Human takeover required.`);
+            return;
+          }
+        }
 
         const call = await prisma.callRecord.findUnique({
           where: { callId: data.callId }
@@ -1608,25 +1716,16 @@ export function initSocketServer(io: SocketIOServer) {
       }
     });
 
-    // 13. Admin accepts a live call transfer
+    // 13. Admin accepts a live call transfer or human specialist takeover
     socket.on('transfer:accept', async (data: { transferId: string; adminId: string; adminName: string }) => {
       try {
         console.log(`[Transfer] Admin ${data.adminName} accepted transfer ${data.transferId}`);
 
-        const transfer = await prisma.callTransferRequest.findUnique({
-          where: { id: data.transferId },
-          include: { callRecord: true }
-        });
-
-        if (!transfer) {
-          socket.emit('transfer:error', { message: 'Transfer request not found.' });
-          return;
-        }
-
-        if (transfer.status === 'accepted' || transfer.status === 'connected') {
-          socket.emit('transfer:already_handled', { message: 'This transfer was already accepted by another Admin.' });
-          return;
-        }
+        let targetCallId = '';
+        let targetCallRecordId = '';
+        let targetCustomerName = '';
+        let targetCustomerPhone = '';
+        let targetQuestion = '';
 
         let validAdminId: string | null = null;
         if (data.adminId) {
@@ -1634,34 +1733,93 @@ export function initSocketServer(io: SocketIOServer) {
           if (adminExists) validAdminId = adminExists.id;
         }
 
-        await prisma.callTransferRequest.update({
-          where: { id: data.transferId },
-          data: {
-            status: 'connected',
-            adminId: validAdminId,
-            respondedAt: new Date()
+        if (data.transferId && data.transferId.startsWith('direct_takeover_')) {
+          targetCallId = data.transferId.replace('direct_takeover_', '');
+          const call = await prisma.callRecord.findUnique({ where: { callId: targetCallId } });
+          if (!call) {
+            socket.emit('transfer:error', { message: 'Call not found for direct takeover.' });
+            return;
           }
-        });
+          targetCallRecordId = call.id;
+          targetCustomerName = call.customerName;
+          targetCustomerPhone = call.customerPhone || '';
+          targetQuestion = 'Direct specialist takeover';
 
-        await prisma.callRecord.update({
-          where: { id: transfer.callRecordId },
-          data: {
-            adminId: validAdminId,
-            transferred: true,
-            status: 'active'
+          await prisma.callRecord.update({
+            where: { id: targetCallRecordId },
+            data: {
+              adminId: validAdminId,
+              transferred: true,
+              status: 'active'
+            }
+          });
+        } else {
+          const transfer = await prisma.callTransferRequest.findUnique({
+            where: { id: data.transferId },
+            include: { callRecord: true }
+          });
+
+          if (!transfer) {
+            socket.emit('transfer:error', { message: 'Transfer request not found.' });
+            return;
           }
+
+          if (transfer.status === 'accepted' || transfer.status === 'connected') {
+            socket.emit('transfer:already_handled', { message: 'This transfer was already accepted by another Admin.' });
+            return;
+          }
+
+          targetCallId = transfer.callRecord.callId;
+          targetCallRecordId = transfer.callRecordId;
+          targetCustomerName = transfer.customerName;
+          targetCustomerPhone = transfer.customerPhone || '';
+          targetQuestion = transfer.question || '';
+
+          await prisma.callTransferRequest.update({
+            where: { id: data.transferId },
+            data: {
+              status: 'connected',
+              adminId: validAdminId,
+              respondedAt: new Date()
+            }
+          });
+
+          await prisma.callRecord.update({
+            where: { id: targetCallRecordId },
+            data: {
+              adminId: validAdminId,
+              transferred: true,
+              status: 'active'
+            }
+          });
+        }
+
+        // Lock session to human agent and silence AI immediately
+        const session = callSessions.get(targetCallId);
+        if (session) {
+          session.speakerType = 'human_agent';
+          session.humanSpeakerId = validAdminId || data.adminId;
+          session.humanSpeakerName = data.adminName;
+        }
+
+        // Emit call:ai_silenced to stop AI speech immediately on all clients in room
+        io.to(`call:${targetCallId}`).emit('call:ai_silenced', {
+          callId: targetCallId,
+          speakerType: 'human_agent',
+          adminId: data.adminId,
+          adminName: data.adminName
         });
 
         await prisma.callTranscript.create({
           data: {
-            callRecordId: transfer.callRecordId,
+            callRecordId: targetCallRecordId,
             sender: 'system',
             senderName: 'System',
             text: `Call transferred to Admin: ${data.adminName}. Live two-way voice connection established.`
           }
         });
 
-        socket.join(`call:${transfer.callRecord.callId}`);
+        socket.join(`call:${targetCallId}`);
 
         io.to('role:admin').emit('transfer:status_updated', {
           transferId: data.transferId,
@@ -1670,15 +1828,15 @@ export function initSocketServer(io: SocketIOServer) {
         });
 
         socket.emit('transfer:accepted_success', {
-          callId: transfer.callRecord.callId,
+          callId: targetCallId,
           transferId: data.transferId,
-          customerName: transfer.customerName,
-          customerPhone: transfer.customerPhone,
-          question: transfer.question
+          customerName: targetCustomerName,
+          customerPhone: targetCustomerPhone,
+          question: targetQuestion
         });
 
-        io.to(`call:${transfer.callRecord.callId}`).emit('transfer:connected', {
-          callId: transfer.callRecord.callId,
+        io.to(`call:${targetCallId}`).emit('transfer:connected', {
+          callId: targetCallId,
           adminId: data.adminId,
           adminName: data.adminName,
           adminSocketId: socket.id
@@ -2186,9 +2344,10 @@ export function initSocketServer(io: SocketIOServer) {
             }
           });
 
-          // Clean up in-memory conversation context and query deduplication locks
+          // Clean up in-memory conversation context, query deduplication locks, and session state
           activeCallContexts.delete(data.callId);
           activeCallQueryLocks.delete(data.callId);
+          callSessions.delete(data.callId);
 
           // Asynchronously trigger post-call AI intelligence analysis and conversation summary
           setTimeout(() => {

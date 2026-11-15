@@ -76,15 +76,29 @@ router.all('/tts', async (req: Request, res: Response) => {
     const buffers: Buffer[] = [];
 
     for (const chunk of chunks) {
-      const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(chunk)}`;
-      const audioRes = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-      });
+      let audioRes: any = null;
+      try {
+        const url = `https://clients5.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=gtx&q=${encodeURIComponent(chunk)}`;
+        audioRes = await fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        });
+      } catch { }
 
-      if (!audioRes.ok) {
-        throw new Error(`TTS upstream error: HTTP ${audioRes.status}`);
+      if (!audioRes || !audioRes.ok) {
+        try {
+          const fallbackUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(chunk)}`;
+          audioRes = await fetch(fallbackUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+          });
+        } catch { }
+      }
+
+      if (!audioRes || !audioRes.ok) {
+        throw new Error(`TTS upstream error: HTTP ${audioRes?.status || 'network error'}`);
       }
 
       const arrBuf = await audioRes.arrayBuffer();

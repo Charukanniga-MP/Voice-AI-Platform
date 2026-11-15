@@ -11,6 +11,8 @@
  * 4. Full multilingual speech support.
  */
 
+import { audioDeviceManager } from './audioDevice.js';
+
 export interface PlaybackOptions {
   responseId?: string;
   langCode?: string;
@@ -192,6 +194,7 @@ export class VoiceOutputController {
       const audio = new Audio(audioUrl);
       this.currentAudio = audio;
       audio.volume = options.volume !== undefined ? options.volume : this.currentVolume;
+      audioDeviceManager.applySpeakerToAudioElement(audio);
 
       let hasStarted = false;
       let hasResolved = false;

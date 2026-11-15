@@ -6,8 +6,28 @@ import { prisma } from '../db.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { validate, callRatingSchema, callNotesSchema } from '../middleware/validation.js';
 import { callIntelligenceService } from '../services/callIntelligence.js';
+import { callSessions } from '../services/socket.js';
 
 const router = Router();
+
+// Live active call session lock status (for health monitoring and verification)
+router.get('/session-lock/:callId', (req: Request, res: Response) => {
+  const session = callSessions.get(req.params.callId);
+  if (!session) {
+    res.status(404).json({ found: false, message: 'Session not found or call ended.' });
+    return;
+  }
+  res.json({
+    found: true,
+    callId: session.callId,
+    speakerType: session.speakerType,
+    humanSpeakerId: session.humanSpeakerId,
+    humanSpeakerName: session.humanSpeakerName,
+    greetingPlayed: session.greetingPlayed,
+    activeSessionsTotal: callSessions.size,
+    processedUtterancesCount: session.processedUtteranceIds.size
+  });
+});
 
 // 1. Dashboard Statistics (Admin only - calculated from real DB records)
 router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, res: Response) => {

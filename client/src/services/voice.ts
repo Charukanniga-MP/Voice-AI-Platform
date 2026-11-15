@@ -136,7 +136,7 @@ export class VoiceService {
 
   // Start speech recognition with deduplicated VAD and automatic interruption support
   public startListening(
-    onResult: (text: string, isFinal: boolean) => void,
+    onResult: (text: string, isFinal: boolean, utteranceId?: string) => void,
     onError?: (err: any) => void
   ) {
     if (!this.recognition) {
@@ -203,7 +203,8 @@ export class VoiceService {
         }
 
         this.lastFinalUtterance = { text: cleanFinal, timestamp: now };
-        onResult(finalTranscript, true);
+        const utteranceId = 'utt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+        onResult(finalTranscript, true, utteranceId);
       } else if (interim.trim()) {
         this.lastInterimTranscript = interim.trim();
         onResult(this.lastInterimTranscript, false);
@@ -227,8 +228,9 @@ export class VoiceService {
               }
 
               this.lastFinalUtterance = { text: cleanText, timestamp: now };
+              const utteranceId = 'utt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
               console.log('[VoiceService] Fast VAD detected end of speech (finalized):', textToEmit);
-              onResult(textToEmit, true);
+              onResult(textToEmit, true, utteranceId);
             }
           }, 320);
         }

@@ -66,7 +66,7 @@ async function runSingleVoiceMultilingualTests() {
       code,
       'en'
     );
-    assert(greeting && greeting.length > 10, `Greeting for [${code}] generated/cached: "${greeting.slice(0, 40)}..."`);
+    assert(Boolean(greeting && greeting.length > 10), `Greeting for [${code}] generated/cached: "${greeting.slice(0, 40)}..."`);
   }
 
   // TEST 4: Single-Voice Backend Socket Deduplication & Locking
