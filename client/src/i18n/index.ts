@@ -9,7 +9,7 @@ import { LanguageCode } from '../types.js';
 export { en, ta, te, ml, kn, hi };
 export type { TranslationKey };
 
-export const translations: Record<LanguageCode, Record<TranslationKey, string>> = {
+export const translations: Record<string, Record<TranslationKey, string>> = {
   en,
   ta,
   te,
@@ -19,7 +19,7 @@ export const translations: Record<LanguageCode, Record<TranslationKey, string>> 
 };
 
 export const translate = (
-  lang: LanguageCode,
+  lang: LanguageCode | string,
   key: TranslationKey,
   params?: Record<string, string | number>
 ): string => {

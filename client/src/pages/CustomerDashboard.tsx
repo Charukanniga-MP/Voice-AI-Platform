@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext.js';
 import { useLanguage } from '../context/LanguageContext.js';
 import { getSocket, registerSocketUser } from '../services/socket.js';
 import { voiceService } from '../services/voice.js';
+import { voiceOutputController } from '../services/voiceOutputController.js';
 import { webrtcManager } from '../services/webrtc.js';
 import { SupportTickets } from './SupportTickets.js';
 import { CallQualityIndicator } from '../components/CallQualityIndicator.js';
@@ -57,6 +58,16 @@ export const CustomerDashboard: React.FC = () => {
   const speechEndTimeRef = useRef<number | null>(null);
   const currentAiSpeechTextRef = useRef('');
   const [textInput, setTextInput] = useState('');
+
+  const lastSentQueryRef = useRef<{ text: string; time: number }>({ text: '', time: 0 });
+  const selectedLanguageRef = useRef<LanguageCode>(selectedLanguage);
+  useEffect(() => { selectedLanguageRef.current = selectedLanguage; }, [selectedLanguage]);
+  const userRef = useRef(user);
+  useEffect(() => { userRef.current = user; }, [user]);
+  const callIdRef = useRef<string | null>(callId);
+  useEffect(() => { callIdRef.current = callId; }, [callId]);
+  const callStatusRef = useRef(callStatus);
+  useEffect(() => { callStatusRef.current = callStatus; }, [callStatus]);
 
   // Agent/Admin details
   const [activePartner, setActivePartner] = useState<{
@@ -324,30 +335,44 @@ export const CustomerDashboard: React.FC = () => {
     return () => clearInterval(interval);
   }, [token]);
 
-  // Send typed query to active AI call
+  // Send typed query to active AI call with deduplication
   const handleSendTextQuery = (qText: string) => {
     const clean = qText.trim();
-    if (!clean || !callId) return;
+    const activeCallId = callIdRef.current;
+    if (!clean || !activeCallId) return;
+
+    const now = Date.now();
+    if (
+      lastSentQueryRef.current.text.toLowerCase() === clean.toLowerCase() &&
+      (now - lastSentQueryRef.current.time) < 2500
+    ) {
+      console.log('[CustomerDashboard] Suppressed duplicate typed query within 2500ms:', clean);
+      return;
+    }
+    lastSentQueryRef.current = { text: clean, time: now };
+
     setTextInput('');
     setTranscripts(prev => [
       ...prev,
       {
         id: 'user_' + Date.now(),
         sender: 'customer',
-        senderName: user?.name || 'You',
+        senderName: userRef.current?.name || 'You',
         text: clean,
-        language: selectedLanguage,
+        language: selectedLanguageRef.current,
         timestamp: new Date().toISOString()
       }
     ]);
+    const clientMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
     const socket = getSocket();
     socket.emit('call:query', {
-      callId,
+      callId: activeCallId,
       query: clean,
-      customerId: user?.id,
+      customerId: userRef.current?.id,
       duration,
-      language: selectedLanguage,
-      clientSentAt: Date.now()
+      language: selectedLanguageRef.current,
+      clientSentAt: now,
+      clientMessageId: clientMsgId
     });
   };
 
@@ -434,7 +459,7 @@ export const CustomerDashboard: React.FC = () => {
     });
 
     // 6. AI Voice call ready
-    socket.on('call:ready', (data: { callId: string; greeting: string; language: string; audioUrl?: string }) => {
+    socket.on('call:ready', (data: { callId: string; greeting: string; language: string; audioUrl?: string; responseId?: string }) => {
       setCallStatus('active_ai');
       if (data.language && data.language in SUPPORTED_LANGUAGES) {
         setSelectedLanguage(data.language as LanguageCode);
@@ -444,7 +469,7 @@ export const CustomerDashboard: React.FC = () => {
       setTranscripts(prev => [
         ...prev,
         {
-          id: 't_' + Date.now(),
+          id: data.responseId || ('t_' + Date.now()),
           sender: 'ai',
           senderName: 'KAIRA AI',
           text: data.greeting,
@@ -464,23 +489,25 @@ export const CustomerDashboard: React.FC = () => {
         setAiIsSpeaking(false);
         aiIsSpeakingRef.current = false;
         currentAiSpeechTextRef.current = '';
-      }, data.language);
+      }, data.language, undefined, data.responseId);
     });
 
-    // 7. AI response
+    // 7. AI response (Single Voice Guarantee: No double voice, no audio overlap)
     socket.on('call:ai_response', (data: {
       answer: string;
       isTransferring: boolean;
       sources?: any[];
       language?: string;
       audioUrl?: string;
+      responseId?: string;
+      clientMessageId?: string;
       latency?: { aiMs: number; totalRoundTripMs: number };
     }) => {
       // Calculate true round-trip latency
       const roundTrip = speechEndTimeRef.current ? (Date.now() - speechEndTimeRef.current) : (data.latency?.totalRoundTripMs || data.latency?.aiMs || 0);
       setLiveLatency(roundTrip);
 
-      if (data.language && data.language in SUPPORTED_LANGUAGES && data.language !== selectedLanguage) {
+      if (data.language && data.language in SUPPORTED_LANGUAGES && data.language !== selectedLanguageRef.current) {
         setSelectedLanguage(data.language as LanguageCode);
         voiceService.setLanguage(data.language);
       }
@@ -492,18 +519,21 @@ export const CustomerDashboard: React.FC = () => {
       setTranscripts(prev => {
         const isDuplicate = prev.some(t =>
           t.sender === 'ai' &&
-          t.text.trim().toLowerCase() === data.answer.trim().toLowerCase() &&
-          Math.abs(Date.now() - new Date(t.timestamp).getTime()) < 4000
+          (
+            (data.responseId && t.id === data.responseId) ||
+            (t.text.trim().toLowerCase() === data.answer.trim().toLowerCase() &&
+             Math.abs(Date.now() - new Date(t.timestamp).getTime()) < 4000)
+          )
         );
         if (isDuplicate) return prev;
         return [
           ...prev,
           {
-            id: 't_' + Date.now(),
+            id: data.responseId || ('t_' + Date.now()),
             sender: 'ai',
             senderName: 'KAIRA AI',
             text: data.answer,
-            language: data.language || selectedLanguage,
+            language: data.language || selectedLanguageRef.current,
             timestamp: new Date().toISOString()
           }
         ];
@@ -515,15 +545,25 @@ export const CustomerDashboard: React.FC = () => {
 
       // Ensure listening stays active for continuous dialogue and barge-in
       if (!data.isTransferring) {
-        startSpeechRecognition(callId || '', false);
+        startSpeechRecognition(callIdRef.current || '', false);
       }
 
-      // Play synthesized natural speech in customer's preferred language
+      // Play synthesized natural speech in customer's preferred language with SINGLE VOICE GUARANTEE
       voiceService.speak(data.answer, () => {
         setAiIsSpeaking(false);
         aiIsSpeakingRef.current = false;
         currentAiSpeechTextRef.current = '';
-      }, data.language || selectedLanguage);
+      }, data.language || selectedLanguageRef.current, undefined, data.responseId);
+    });
+
+    // 7B. AI speech interrupted (barge-in broadcast)
+    socket.on('call:interrupted', () => {
+      console.log('[Customer] AI speech interrupted');
+      voiceOutputController.stop();
+      voiceService.cancelSpeech();
+      setAiIsSpeaking(false);
+      aiIsSpeakingRef.current = false;
+      currentAiSpeechTextRef.current = '';
     });
 
     // 8. Admin transfer connected
@@ -543,6 +583,7 @@ export const CustomerDashboard: React.FC = () => {
         }
       ]);
 
+      voiceOutputController.stop();
       voiceService.cancelSpeech();
 
       try {
@@ -664,6 +705,7 @@ export const CustomerDashboard: React.FC = () => {
       socket.off('customer:call_accepted');
       socket.off('call:ready');
       socket.off('call:ai_response');
+      socket.off('call:interrupted');
       socket.off('transfer:connected');
       socket.off('call:language_changed');
       socket.off('call:live_transcript');
@@ -672,7 +714,7 @@ export const CustomerDashboard: React.FC = () => {
       socket.off('call:ended');
       socket.off('call:sentiment_update', handleSentimentUpdate);
     };
-  }, [callId, callStatus, user, selectedLanguage]);
+  }, [token]);
 
   // Speech recognition helper with automatic interruption and Echo Guard
   const startSpeechRecognition = (activeCallId: string, isHumanCall: boolean = false) => {
@@ -743,7 +785,16 @@ export const CustomerDashboard: React.FC = () => {
         setIsCustomerSpeaking(false);
         if (!trimmed) return;
 
-        speechEndTimeRef.current = Date.now();
+        const now = Date.now();
+        if (
+          lastSentQueryRef.current.text.toLowerCase() === trimmed.toLowerCase() &&
+          (now - lastSentQueryRef.current.time) < 2500
+        ) {
+          console.log('[CustomerDashboard] Suppressed duplicate speech query within 2500ms:', trimmed);
+          return;
+        }
+        lastSentQueryRef.current = { text: trimmed, time: now };
+        speechEndTimeRef.current = now;
 
         setTranscripts(prev => {
           const isDup = prev.some(t =>
@@ -757,7 +808,7 @@ export const CustomerDashboard: React.FC = () => {
             {
               id: 't_' + Date.now(),
               sender: 'customer',
-              senderName: user?.name || 'Customer',
+              senderName: userRef.current?.name || 'Customer',
               text: text.trim(),
               language: currentActiveLang,
               timestamp: new Date().toISOString()
@@ -765,12 +816,13 @@ export const CustomerDashboard: React.FC = () => {
           ];
         });
 
+        const clientMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
         const socket = getSocket();
         if (isHumanCall) {
           socket.emit('call:live_speech', {
             callId: activeCallId,
             sender: 'customer',
-            senderName: user?.name || 'Customer',
+            senderName: userRef.current?.name || 'Customer',
             text: text.trim(),
             language: currentActiveLang
           });
@@ -778,10 +830,11 @@ export const CustomerDashboard: React.FC = () => {
           socket.emit('call:query', {
             callId: activeCallId,
             query: text.trim(),
-            customerId: user?.id,
+            customerId: userRef.current?.id,
             duration,
             language: currentActiveLang,
-            clientSentAt: speechEndTimeRef.current
+            clientSentAt: speechEndTimeRef.current,
+            clientMessageId: clientMsgId
           });
         }
       }
@@ -965,11 +1018,13 @@ export const CustomerDashboard: React.FC = () => {
     setLiveLatency(null);
     setIsCustomerSpeaking(false);
     speechEndTimeRef.current = null;
+    lastSentQueryRef.current = { text: '', time: 0 };
     setInterimText('');
     setIsCallHeld(false);
     setQueueInfo(null);
     setLiveSentiment(null);
     setTransferNotice(null);
+    voiceOutputController.stop();
     voiceService.cancelSpeech();
     voiceService.stopListening();
     webrtcManager.endCall();

@@ -1,4 +1,25 @@
-export type LanguageCode = 'en' | 'ta' | 'te' | 'ml' | 'kn' | 'hi';
+export type LanguageCode =
+  | 'en'
+  | 'ta'
+  | 'te'
+  | 'ml'
+  | 'kn'
+  | 'hi'
+  | 'bn'
+  | 'mr'
+  | 'ar'
+  | 'fr'
+  | 'de'
+  | 'es'
+  | 'zh'
+  | 'ja'
+  | 'ko'
+  | 'it'
+  | 'pt'
+  | 'ru'
+  | 'tr'
+  | 'id'
+  | 'vi';
 
 export const SUPPORTED_LANGUAGES: Record<LanguageCode, { name: string; nativeName: string; bcp47: string }> = {
   en: { name: 'English', nativeName: 'English', bcp47: 'en-US' },
@@ -6,7 +27,22 @@ export const SUPPORTED_LANGUAGES: Record<LanguageCode, { name: string; nativeNam
   te: { name: 'Telugu', nativeName: 'తెలుగు', bcp47: 'te-IN' },
   ml: { name: 'Malayalam', nativeName: 'മലയാളം', bcp47: 'ml-IN' },
   kn: { name: 'Kannada', nativeName: 'ಕನ್ನಡ', bcp47: 'kn-IN' },
-  hi: { name: 'Hindi', nativeName: 'हिन्दी', bcp47: 'hi-IN' }
+  hi: { name: 'Hindi', nativeName: 'हिन्दी', bcp47: 'hi-IN' },
+  bn: { name: 'Bengali', nativeName: 'বাংলা', bcp47: 'bn-IN' },
+  mr: { name: 'Marathi', nativeName: 'मराठी', bcp47: 'mr-IN' },
+  ar: { name: 'Arabic', nativeName: 'العربية', bcp47: 'ar-SA' },
+  fr: { name: 'French', nativeName: 'Français', bcp47: 'fr-FR' },
+  de: { name: 'German', nativeName: 'Deutsch', bcp47: 'de-DE' },
+  es: { name: 'Spanish', nativeName: 'Español', bcp47: 'es-ES' },
+  zh: { name: 'Chinese', nativeName: '中文', bcp47: 'zh-CN' },
+  ja: { name: 'Japanese', nativeName: '日本語', bcp47: 'ja-JP' },
+  ko: { name: 'Korean', nativeName: '한국어', bcp47: 'ko-KR' },
+  it: { name: 'Italian', nativeName: 'Italiano', bcp47: 'it-IT' },
+  pt: { name: 'Portuguese', nativeName: 'Português', bcp47: 'pt-BR' },
+  ru: { name: 'Russian', nativeName: 'Русский', bcp47: 'ru-RU' },
+  tr: { name: 'Turkish', nativeName: 'Türkçe', bcp47: 'tr-TR' },
+  id: { name: 'Indonesian', nativeName: 'Bahasa Indonesia', bcp47: 'id-ID' },
+  vi: { name: 'Vietnamese', nativeName: 'Tiếng Việt', bcp47: 'vi-VN' }
 };
 
 export interface User {

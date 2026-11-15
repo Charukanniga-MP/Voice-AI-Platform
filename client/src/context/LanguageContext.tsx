@@ -21,7 +21,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [language, setLanguageState] = useState<LanguageCode>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem(STORAGE_KEY) as LanguageCode;
-      if (saved && translations[saved]) {
+      if (saved && (SUPPORTED_LANGUAGES as any)[saved]) {
         return saved;
       }
     }
@@ -30,7 +30,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // Automatically sync with user.preferredLanguage when user logs in
   useEffect(() => {
-    if (user?.preferredLanguage && translations[user.preferredLanguage as LanguageCode]) {
+    if (user?.preferredLanguage && (SUPPORTED_LANGUAGES as any)[user.preferredLanguage]) {
       const pref = user.preferredLanguage as LanguageCode;
       setLanguageState(pref);
       voiceService.setLanguage(pref);
@@ -49,7 +49,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [language]);
 
   const setLanguage = useCallback((newLang: LanguageCode) => {
-    if (!translations[newLang]) return;
+    if (!SUPPORTED_LANGUAGES[newLang]) return;
     setLanguageState(newLang);
     voiceService.setLanguage(newLang);
     try {

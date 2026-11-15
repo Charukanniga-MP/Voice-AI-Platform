@@ -8,7 +8,22 @@ export const SUPPORTED_LANGUAGES: Record<string, { name: string; nativeName: str
   te: { name: 'Telugu', nativeName: 'తెలుగు', bcp47: 'te-IN' },
   ml: { name: 'Malayalam', nativeName: 'മലയാളം', bcp47: 'ml-IN' },
   kn: { name: 'Kannada', nativeName: 'ಕನ್ನಡ', bcp47: 'kn-IN' },
-  hi: { name: 'Hindi', nativeName: 'हिन्दी', bcp47: 'hi-IN' }
+  hi: { name: 'Hindi', nativeName: 'हिन्दी', bcp47: 'hi-IN' },
+  bn: { name: 'Bengali', nativeName: 'বাংলা', bcp47: 'bn-IN' },
+  mr: { name: 'Marathi', nativeName: 'मराठी', bcp47: 'mr-IN' },
+  ar: { name: 'Arabic', nativeName: 'العربية', bcp47: 'ar-SA' },
+  fr: { name: 'French', nativeName: 'Français', bcp47: 'fr-FR' },
+  de: { name: 'German', nativeName: 'Deutsch', bcp47: 'de-DE' },
+  es: { name: 'Spanish', nativeName: 'Español', bcp47: 'es-ES' },
+  zh: { name: 'Chinese', nativeName: '中文', bcp47: 'zh-CN' },
+  ja: { name: 'Japanese', nativeName: '日本語', bcp47: 'ja-JP' },
+  ko: { name: 'Korean', nativeName: '한국어', bcp47: 'ko-KR' },
+  it: { name: 'Italian', nativeName: 'Italiano', bcp47: 'it-IT' },
+  pt: { name: 'Portuguese', nativeName: 'Português', bcp47: 'pt-BR' },
+  ru: { name: 'Russian', nativeName: 'Русский', bcp47: 'ru-RU' },
+  tr: { name: 'Turkish', nativeName: 'Türkçe', bcp47: 'tr-TR' },
+  id: { name: 'Indonesian', nativeName: 'Bahasa Indonesia', bcp47: 'id-ID' },
+  vi: { name: 'Vietnamese', nativeName: 'Tiếng Việt', bcp47: 'vi-VN' }
 };
 
 export class TranslationService {
@@ -27,6 +42,21 @@ export class TranslationService {
     this.translationCache.set(`en->hi:${baseGreeting}`, "नमस्ते! KAIRA में आपका स्वागत है। मैं आपका AI सहायक हूँ। आज मैं आपकी क्या सहायता कर सकता हूँ?");
     this.translationCache.set(`en->ml:${baseGreeting}`, "നമസ്കാരം! KAIRA-ലേക്ക് സ്വാഗതം. ഞാൻ നിങ്ങളുടെ AI അസിസ്റ്റന്റാണ്. ഇന്ന് ഞാൻ നിങ്ങളെ എങ്ങനെ സഹായിക്കും?");
     this.translationCache.set(`en->kn:${baseGreeting}`, "ನಮಸ್ಕಾರ! KAIRA ಗೆ ಸುಸ್ವಾಗತ. ನಾನು ನಿಮ್ಮ AI ಸಹಾಯಕ. ಇಂದು ನಾನು ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಲಿ?");
+    this.translationCache.set(`en->bn:${baseGreeting}`, "হ্যালো! কায়রা-তে স্বাগতম। আমি আপনার এআই সহকারী। আজ আমি আপনাকে কীভাবে সাহায্য করতে পারি?");
+    this.translationCache.set(`en->mr:${baseGreeting}`, "नमस्कार! KAIRA मध्ये आपले स्वागत आहे. मी आपला AI सहाय्यक आहे. आज मी आपली काय मदत करू शकतो?");
+    this.translationCache.set(`en->ar:${baseGreeting}`, "مرحباً! أهلاً بكم في كايرا. أنا مساعدكم الذكي. كيف يمكنني مساعدتكم اليوم؟");
+    this.translationCache.set(`en->fr:${baseGreeting}`, "Bonjour! Bienvenue chez KAIRA. Je suis votre assistante IA. Comment puis-je vous aider aujourd'hui?");
+    this.translationCache.set(`en->de:${baseGreeting}`, "Hallo! Willkommen bei KAIRA. Ich bin Ihre KI-Assistentin. Wie kann ich Ihnen heute helfen?");
+    this.translationCache.set(`en->es:${baseGreeting}`, "¡Hola! Bienvenido a KAIRA. Soy su asistente de IA. ¿Cómo puedo ayudarle hoy?");
+    this.translationCache.set(`en->zh:${baseGreeting}`, "您好！欢迎致电 KAIRA 智能客服。我是您的 AI 助手，请问有什么可以帮您？");
+    this.translationCache.set(`en->ja:${baseGreeting}`, "こんにちは！KAIRA へようこそ。私はAIアシスタントです。本日はどのようなご用件でしょうか？");
+    this.translationCache.set(`en->ko:${baseGreeting}`, "안녕하세요! KAIRA에 오신 것을 환영합니다. 저는 AI 상담원입니다. 오늘 무엇을 도와드릴까요?");
+    this.translationCache.set(`en->it:${baseGreeting}`, "Ciao! Benvenuto in KAIRA. Sono la tua assistente AI. Come posso aiutarti oggi?");
+    this.translationCache.set(`en->pt:${baseGreeting}`, "Olá! Bem-vindo à KAIRA. Sou sua assistente de IA. Como posso ajudar hoje?");
+    this.translationCache.set(`en->ru:${baseGreeting}`, "Здравствуйте! Добро пожаловать в KAIRA. Я ваш ИИ-ассистент. Чем я могу помочь вам сегодня?");
+    this.translationCache.set(`en->tr:${baseGreeting}`, "Merhaba! KAIRA'ya hoş geldiniz. Ben yapay zeka asistanınızım. Bugün size nasıl yardımcı olabilirim?");
+    this.translationCache.set(`en->id:${baseGreeting}`, "Halo! Selamat datang di KAIRA. Saya asisten AI Anda. Ada yang bisa saya bantu hari ini?");
+    this.translationCache.set(`en->vi:${baseGreeting}`, "Xin chào! Chào mừng bạn đến với KAIRA. Tôi là trợ lý AI của bạn. Tôi có thể giúp gì cho bạn hôm nay?");
 
     // Pre-cache primary Knowledge Base responses for ultra-fast voice responses (<50ms) across all regional languages
     const productsAnswer = "KAIRA offers three primary products: KAIRA VoiceCore (autonomous bidirectional AI voice agent), KAIRA LiveEscalate (real-time voice call transfer to human administrators and agents), and KAIRA Omnichannel Hub (centralized call analytics, tickets, and monitoring).";
@@ -63,28 +93,44 @@ export class TranslationService {
     const trimmed = (text || '').trim();
     if (!trimmed) return 'en';
 
-    // Tamil unicode range: U+0B80 to U+0BFF
-    if (/[\u0B80-\u0BFF]/.test(trimmed)) return 'ta';
-    // Telugu unicode range: U+0C00 to U+0C7F
-    if (/[\u0C00-\u0C7F]/.test(trimmed)) return 'te';
-    // Malayalam unicode range: U+0D00 to U+0D7F
-    if (/[\u0D00-\u0D7F]/.test(trimmed)) return 'ml';
-    // Kannada unicode range: U+0C80 to U+0CFF
-    if (/[\u0C80-\u0CFF]/.test(trimmed)) return 'kn';
-    // Devanagari / Hindi unicode range: U+0900 to U+097F
-    if (/[\u0900-\u097F]/.test(trimmed)) return 'hi';
+    // Script ranges:
+    if (/[\u0B80-\u0BFF]/.test(trimmed)) return 'ta'; // Tamil
+    if (/[\u0C00-\u0C7F]/.test(trimmed)) return 'te'; // Telugu
+    if (/[\u0D00-\u0D7F]/.test(trimmed)) return 'ml'; // Malayalam
+    if (/[\u0C80-\u0CFF]/.test(trimmed)) return 'kn'; // Kannada
+    if (/[\u0980-\u09FF]/.test(trimmed)) return 'bn'; // Bengali
+    if (/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/.test(trimmed)) return 'ar'; // Arabic
+    if (/[\u3040-\u309F\u30A0-\u30FF]/.test(trimmed)) return 'ja'; // Japanese (Hiragana/Katakana checked before Chinese Kanji)
+    if (/[\u4E00-\u9FFF]/.test(trimmed)) return 'zh'; // Chinese (Hanzi)
+    if (/[\uAC00-\uD7AF\u1100-\u11FF]/.test(trimmed)) return 'ko'; // Korean
+    if (/[\u0400-\u04FF]/.test(trimmed)) return 'ru'; // Russian
+    if (/[\u0102\u0103\u0110\u0111\u01A0\u01A1\u01AF\u01B0\u1EA0-\u1EF9]/.test(trimmed)) return 'vi'; // Vietnamese
+    if (/[\u0900-\u097F]/.test(trimmed)) {
+      if (/(?:आहे|नाही|काय|कसे|माझे|तुमचे|धन्यवाद|नमस्कार)/.test(trimmed)) return 'mr';
+      return 'hi';
+    }
 
     const lower = trimmed.toLowerCase();
-    // Transliterated Tamil
+
+    // Latin-script patterns
+    if (/\b(bonjour|merci|comment|aide|commande|compte|salut|s'il vous plait)\b/.test(lower)) return 'fr';
+    if (/\b(hola|gracias|por favor|como|buenos|dias|tardes|ayuda|pedido|cuenta)\b/.test(lower)) return 'es';
+    if (/\b(hallo|guten|danke|bitte|wie|hilfe|bestellung|konto)\b/.test(lower)) return 'de';
+    if (/\b(ciao|buongiorno|grazie|prego|aiuto|ordine|conto)\b/.test(lower)) return 'it';
+    if (/\b(ol[aá]|obrigad[oa]|por favor|ajuda|pedido|conta|voc[eê]|pre[cç]os?|quais)\b/i.test(lower) || /[\u00E3\u00F5\u00E7]/.test(lower)) return 'pt';
+    if (/\b(merhaba|tesekkur|lutfen|nasil|yardim|siparis|hesap)\b/.test(lower)) return 'tr';
+    if (/\b(halo|terima kasih|tolong|bagaimana|bantuan|pesanan|akun)\b/.test(lower)) return 'id';
+    if (/\b(xin ch[aà]o|c[aá]m [oơ]n|l[aà]m [oơ]n|th[eế] n[aà]o|gi[uú]p [dđ][oõỡ]|b[aạ]n)\b/i.test(lower)) return 'vi';
+
+    // Transliterated Indian language patterns
     if (/\b(vanakkam|ennudaiya|thaniya|solunga|nandri|eppadi|ungalukku|thirumba)\b/.test(lower)) return 'ta';
-    // Transliterated Hindi
     if (/\b(namaste|dhanyavad|kaise|kripya|apka|madad|bataiye|samajh)\b/.test(lower)) return 'hi';
-    // Transliterated Telugu
     if (/\b(namaskaramu|ela|unnaru|dhanyavadalu|meeru|sahayam)\b/.test(lower)) return 'te';
-    // Transliterated Kannada
     if (/\b(namaskara|hegidira|dhanyavada|enu|nimma|sahaya)\b/.test(lower)) return 'kn';
-    // Transliterated Malayalam
     if (/\b(namaskaram|enthoke|vishesham|nandi|sahayikkan|ningalude)\b/.test(lower)) return 'ml';
+    if (/\b(nomoshkar|dhonnobad|kemon|achen|amake|sahajjo)\b/.test(lower)) return 'bn';
+    if (/\b(namaskar|kasa|kay|ahe|nahi|dhanyavad)\b/.test(lower)) return 'mr';
+    if (/\b(marhaba|shukran|afwan|kayf|halik|musaada)\b/.test(lower)) return 'ar';
 
     return 'en';
   }

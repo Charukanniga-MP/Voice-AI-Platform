@@ -6,26 +6,40 @@ declare global {
   }
 }
 
+import { voiceOutputController } from './voiceOutputController.js';
+
 export const LANGUAGE_BCP47: Record<string, string> = {
   en: 'en-US',
   ta: 'ta-IN',
   te: 'te-IN',
   ml: 'ml-IN',
   kn: 'kn-IN',
-  hi: 'hi-IN'
+  hi: 'hi-IN',
+  bn: 'bn-IN',
+  mr: 'mr-IN',
+  ar: 'ar-SA',
+  fr: 'fr-FR',
+  de: 'de-DE',
+  es: 'es-ES',
+  zh: 'zh-CN',
+  ja: 'ja-JP',
+  ko: 'ko-KR',
+  it: 'it-IT',
+  pt: 'pt-BR',
+  ru: 'ru-RU',
+  tr: 'tr-TR',
+  id: 'id-ID',
+  vi: 'vi-VN'
 };
 
 export class VoiceService {
   private recognition: any = null;
   private isListening: boolean = false;
-  private synth: SpeechSynthesis | null = null;
-  private currentUtterance: SpeechSynthesisUtterance | null = null;
-  private currentAudio: HTMLAudioElement | null = null;
   private currentLang: string = 'en-US';
-  private currentVolume: number = 1.0;
-  private audioUnlocked: boolean = false;
   private vadTimer: any = null;
   private lastInterimTranscript: string = '';
+  private lastFinalUtterance: { text: string; timestamp: number } = { text: '', timestamp: 0 };
+
   public onInterruption?: () => void;
   public onSpeechStart?: () => void;
   public onLanguageDetected?: (lang: string) => void;
@@ -34,17 +48,45 @@ export class VoiceService {
   public detectScriptLanguage(text: string): string | null {
     const trimmed = (text || '').trim();
     if (!trimmed) return null;
-    if (/[\u0B80-\u0BFF]/.test(trimmed)) return 'ta';
-    if (/[\u0C00-\u0C7F]/.test(trimmed)) return 'te';
-    if (/[\u0D00-\u0D7F]/.test(trimmed)) return 'ml';
-    if (/[\u0C80-\u0CFF]/.test(trimmed)) return 'kn';
-    if (/[\u0900-\u097F]/.test(trimmed)) return 'hi';
+
+    // Script-based recognition
+    if (/[\u0B80-\u0BFF]/.test(trimmed)) return 'ta'; // Tamil
+    if (/[\u0C00-\u0C7F]/.test(trimmed)) return 'te'; // Telugu
+    if (/[\u0D00-\u0D7F]/.test(trimmed)) return 'ml'; // Malayalam
+    if (/[\u0C80-\u0CFF]/.test(trimmed)) return 'kn'; // Kannada
+    if (/[\u0980-\u09FF]/.test(trimmed)) return 'bn'; // Bengali
+    if (/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/.test(trimmed)) return 'ar'; // Arabic
+    if (/[\u3040-\u309F\u30A0-\u30FF]/.test(trimmed)) return 'ja'; // Japanese (Hiragana/Katakana checked before Chinese Kanji)
+    if (/[\u4E00-\u9FFF]/.test(trimmed)) return 'zh'; // Chinese (Hanzi)
+    if (/[\uAC00-\uD7AF\u1100-\u11FF]/.test(trimmed)) return 'ko'; // Korean
+    if (/[\u0400-\u04FF]/.test(trimmed)) return 'ru'; // Russian
+    if (/[\u0102\u0103\u0110\u0111\u01A0\u01A1\u01AF\u01B0\u1EA0-\u1EF9]/.test(trimmed)) return 'vi'; // Vietnamese
+    if (/[\u0900-\u097F]/.test(trimmed)) {
+      // Devanagari: differentiate Marathi vs Hindi
+      if (/(?:आहे|नाही|काय|कसे|माझे|तुमचे|धन्यवाद|नमस्कार)/.test(trimmed)) return 'mr';
+      return 'hi';
+    }
+
     const lower = trimmed.toLowerCase();
+
+    // Latin-script patterns
+    if (/\b(bonjour|merci|comment|aide|commande|compte|salut|s'il vous plait)\b/.test(lower)) return 'fr';
+    if (/\b(hola|gracias|por favor|como|buenos|dias|ayuda|pedido)\b/.test(lower)) return 'es';
+    if (/\b(hallo|guten|danke|bitte|wie|hilfe|bestellung)\b/.test(lower)) return 'de';
+    if (/\b(ciao|buongiorno|grazie|prego|aiuto|ordine)\b/.test(lower)) return 'it';
+    if (/\b(ol[aá]|obrigad[oa]|por favor|ajuda|pedido|conta|voc[eê]|pre[cç]os?|quais)\b/i.test(lower) || /[\u00E3\u00F5\u00E7]/.test(lower)) return 'pt';
+    if (/\b(merhaba|tesekkur|lutfen|nasil|yardim)\b/.test(lower)) return 'tr';
+    if (/\b(halo|terima kasih|tolong|bagaimana|bantuan)\b/.test(lower)) return 'id';
+    if (/\b(xin ch[aà]o|c[aá]m [oơ]n|l[aà]m [oơ]n|th[eế] n[aà]o|gi[uú]p [dđ][oõỡ]|b[aạ]n)\b/i.test(lower)) return 'vi';
+
+    // Transliterated Indian language patterns
     if (/\b(vanakkam|ennudaiya|thaniya|solunga|nandri|eppadi|ungalukku|thirumba)\b/.test(lower)) return 'ta';
     if (/\b(namaste|dhanyavad|kaise|kripya|apka|madad|bataiye|samajh)\b/.test(lower)) return 'hi';
     if (/\b(namaskaramu|ela|unnaru|dhanyavadalu|meeru|sahayam)\b/.test(lower)) return 'te';
     if (/\b(namaskara|hegidira|dhanyavada|enu|nimma|sahaya)\b/.test(lower)) return 'kn';
     if (/\b(namaskaram|enthoke|vishesham|nandi|sahayikkan|ningalude)\b/.test(lower)) return 'ml';
+    if (/\b(nomoshkar|dhonnobad|kemon|achen|amake|sahajjo)\b/.test(lower)) return 'bn';
+
     return null;
   }
 
@@ -57,41 +99,16 @@ export class VoiceService {
         this.recognition.interimResults = true;
         this.recognition.lang = 'en-US';
       }
-
-      if ('speechSynthesis' in window) {
-        this.synth = window.speechSynthesis;
-      }
-
-      // Unlock mobile audio on first user touch / click
-      const unlock = () => {
-        this.unlockAudio();
-        window.removeEventListener('click', unlock);
-        window.removeEventListener('touchstart', unlock);
-      };
-      window.addEventListener('click', unlock, { once: true });
-      window.addEventListener('touchstart', unlock, { once: true });
     }
   }
 
-  // Pre-unlock audio element for mobile devices (iOS / Android)
   public unlockAudio() {
-    if (this.audioUnlocked) return;
-    try {
-      const silentAudio = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA');
-      silentAudio.volume = 0.01;
-      silentAudio.play().then(() => {
-        this.audioUnlocked = true;
-        console.log('[VoiceService] Mobile audio pipeline unlocked successfully.');
-      }).catch(() => { });
-    } catch {
-      // Ignore initial silent play
-    }
+    voiceOutputController.unlockAudio();
   }
 
-  // Set active language for Speech Recognition and Synthesis
   public setLanguage(langCode: string) {
     const raw = (langCode || 'en').toLowerCase().slice(0, 2);
-    const bcp47 = LANGUAGE_BCP47[raw] || LANGUAGE_BCP47.en;
+    const bcp47 = LANGUAGE_BCP47[raw] || `${raw}-${raw.toUpperCase()}`;
     this.currentLang = bcp47;
 
     if (this.recognition) {
@@ -109,24 +126,15 @@ export class VoiceService {
   }
 
   public setVolume(volume: number) {
-    this.currentVolume = Math.max(0, Math.min(1, volume));
-    if (this.currentAudio) {
-      this.currentAudio.volume = this.currentVolume;
-    }
+    voiceOutputController.setVolume(volume);
   }
 
-  // Check if AI is currently playing voice audio
+  // Check if AI voice is currently playing
   public isSpeaking(): boolean {
-    if (this.currentAudio && !this.currentAudio.paused && !this.currentAudio.ended) {
-      return true;
-    }
-    if (this.synth && this.synth.speaking) {
-      return true;
-    }
-    return false;
+    return voiceOutputController.isSpeaking();
   }
 
-  // Start speech recognition with fast VAD and automatic customer interruption support
+  // Start speech recognition with deduplicated VAD and automatic interruption support
   public startListening(
     onResult: (text: string, isFinal: boolean) => void,
     onError?: (err: any) => void
@@ -141,7 +149,7 @@ export class VoiceService {
     this.recognition.onresult = (event: any) => {
       // 1. BARGE-IN: If customer speaks while AI is speaking, cut off AI speech immediately!
       if (this.isSpeaking()) {
-        console.log('[VoiceService] Barge-in triggered: customer spoke while AI speaking.');
+        console.log('[VoiceService] Barge-in triggered: customer spoke while AI speaking. Halting voice.');
         this.cancelSpeech();
         if (this.onInterruption) {
           this.onInterruption();
@@ -176,34 +184,58 @@ export class VoiceService {
       }
 
       if (isFinalResult && finalTranscript) {
+        // Clear any active VAD timer to avoid double-emitting the final result
         if (this.vadTimer) {
           clearTimeout(this.vadTimer);
           this.vadTimer = null;
         }
         this.lastInterimTranscript = '';
+
+        // Check if recently finalized by VAD to prevent double invocation
+        const cleanFinal = finalTranscript.toLowerCase().trim();
+        const now = Date.now();
+        if (
+          this.lastFinalUtterance.text === cleanFinal &&
+          (now - this.lastFinalUtterance.timestamp) < 2500
+        ) {
+          // Already finalized by VAD timer; suppress duplicate native final event
+          return;
+        }
+
+        this.lastFinalUtterance = { text: cleanFinal, timestamp: now };
         onResult(finalTranscript, true);
       } else if (interim.trim()) {
         this.lastInterimTranscript = interim.trim();
         onResult(this.lastInterimTranscript, false);
 
         // Fast Voice Activity Detection (VAD) Debounce:
-        // If customer stops speaking for 250ms on a meaningful utterance, finalize without waiting for browser delay!
+        // Finalize after 320ms pause on a meaningful utterance
         if (this.vadTimer) clearTimeout(this.vadTimer);
         if (this.lastInterimTranscript.length >= 2) {
           this.vadTimer = setTimeout(() => {
             if (this.lastInterimTranscript && this.isListening) {
-              const textToEmit = this.lastInterimTranscript;
+              const textToEmit = this.lastInterimTranscript.trim();
               this.lastInterimTranscript = '';
-              console.log('[VoiceService] Fast VAD detected end of speech:', textToEmit);
+              const now = Date.now();
+              const cleanText = textToEmit.toLowerCase();
+
+              if (
+                this.lastFinalUtterance.text === cleanText &&
+                (now - this.lastFinalUtterance.timestamp) < 2500
+              ) {
+                return;
+              }
+
+              this.lastFinalUtterance = { text: cleanText, timestamp: now };
+              console.log('[VoiceService] Fast VAD detected end of speech (finalized):', textToEmit);
               onResult(textToEmit, true);
             }
-          }, 260);
+          }, 320);
         }
       }
     };
 
     this.recognition.onerror = (event: any) => {
-      // Avoid breaking continuous dialogue on no-speech or aborted events
       if (event.error === 'no-speech' || event.error === 'aborted') {
         return;
       }
@@ -212,7 +244,7 @@ export class VoiceService {
     };
 
     this.recognition.onend = () => {
-      // If still supposed to be listening, automatically restart to maintain continuous dialogue
+      // Automatically restart to maintain continuous dialogue
       if (this.isListening) {
         try {
           this.recognition.start();
@@ -246,149 +278,31 @@ export class VoiceService {
     }
   }
 
-  // Speak text using High-Fidelity Audio Stream with seamless fallback to SpeechSynthesis
+  /**
+   * Speak text via Centralized Single Voice Output Controller
+   * Guaranteed: ONLY ONE voice output, no duplicate audio, no double speech.
+   */
   public speak(
     text: string,
     onEnd?: () => void,
     langCode?: string,
-    onStartAudio?: () => void
+    onStartAudio?: () => void,
+    responseId?: string
   ): Promise<void> {
-    return new Promise((resolve) => {
-      const cleanText = (text || '').trim();
-      if (!cleanText) {
-        if (onEnd) onEnd();
-        resolve();
-        return;
-      }
-
-      // Customer interruption / cleanup previous speech
-      this.cancelSpeech();
-
-      const rawLang = (langCode || this.currentLang.slice(0, 2) || 'en').toLowerCase().slice(0, 2);
-      const targetLang = LANGUAGE_BCP47[rawLang] ? rawLang : 'en';
-
-      // 1. Primary: High-fidelity Server-generated Audio Stream (MP3)
-      const audioUrl = `/api/voice/tts?text=${encodeURIComponent(cleanText)}&lang=${targetLang}`;
-      const audio = new Audio(audioUrl);
-      this.currentAudio = audio;
-      audio.volume = this.currentVolume;
-
-      let hasStarted = false;
-      let hasResolved = false;
-
-      const finish = () => {
-        if (!hasResolved) {
-          hasResolved = true;
-          this.currentAudio = null;
-          if (onEnd) onEnd();
-          resolve();
-        }
-      };
-
-      audio.onplay = () => {
-        if (!hasStarted) {
-          hasStarted = true;
-          if (onStartAudio) onStartAudio();
-        }
-      };
-
-      audio.onended = () => {
-        finish();
-      };
-
-      audio.onerror = (err) => {
-        console.warn('[VoiceService] Server TTS error, falling back to Web SpeechSynthesis:', err);
-        this.currentAudio = null;
-        this.speakWithSpeechSynthesis(cleanText, onEnd, targetLang, onStartAudio).then(resolve);
-      };
-
-      audio.play().catch((playErr) => {
-        console.warn('[VoiceService] HTML5 Audio autoplay policy error, falling back to Web SpeechSynthesis:', playErr);
-        this.currentAudio = null;
-        this.speakWithSpeechSynthesis(cleanText, onEnd, targetLang, onStartAudio).then(resolve);
-      });
+    const rawLang = (langCode || this.currentLang.slice(0, 2) || 'en').toLowerCase().slice(0, 2);
+    return voiceOutputController.play(text, {
+      responseId,
+      langCode: rawLang,
+      onStart: onStartAudio,
+      onEnd
     });
   }
 
-  // Fallback: Web Speech API SpeechSynthesis
-  private speakWithSpeechSynthesis(
-    text: string,
-    onEnd?: () => void,
-    langCode?: string,
-    onStartAudio?: () => void
-  ): Promise<void> {
-    return new Promise((resolve) => {
-      if (!this.synth) {
-        if (onEnd) onEnd();
-        resolve();
-        return;
-      }
-
-      this.cancelSpeech();
-
-      const utterance = new SpeechSynthesisUtterance(text);
-      this.currentUtterance = utterance;
-
-      const rawLang = (langCode || this.currentLang.slice(0, 2) || 'en').toLowerCase().slice(0, 2);
-      const targetBcp47 = LANGUAGE_BCP47[rawLang] || 'en-US';
-      utterance.lang = targetBcp47;
-
-      const voices = this.synth.getVoices();
-      const langPrefix = targetBcp47.split('-')[0];
-
-      // Find natural, soft, and friendly customer support voice
-      const matchingVoice =
-        voices.find(v => v.lang.toLowerCase() === targetBcp47.toLowerCase() && (v.name.includes('Natural') || v.name.includes('Neural') || v.name.includes('Google') || v.name.includes('Female') || v.name.includes('Jenny') || v.name.includes('Samantha') || v.name.includes('Aria'))) ||
-        voices.find(v => v.lang.toLowerCase() === targetBcp47.toLowerCase()) ||
-        voices.find(v => v.lang.toLowerCase().startsWith(langPrefix)) ||
-        voices.find(v => (v.name.includes('Google') || v.name.includes('Natural')) && v.lang.startsWith('en')) ||
-        voices.find(v => v.lang.startsWith('en'));
-
-      if (matchingVoice) {
-        utterance.voice = matchingVoice;
-      }
-
-      utterance.rate = 0.98; // Soft, patient, clear pacing
-      utterance.pitch = 1.04; // Friendly, professional warmth
-      utterance.volume = this.currentVolume;
-
-      utterance.onstart = () => {
-        if (onStartAudio) onStartAudio();
-      };
-
-      utterance.onend = () => {
-        this.currentUtterance = null;
-        if (onEnd) onEnd();
-        resolve();
-      };
-
-      utterance.onerror = () => {
-        this.currentUtterance = null;
-        if (onEnd) onEnd();
-        resolve();
-      };
-
-      this.synth.speak(utterance);
-    });
-  }
-
-  // Cancel any currently playing speech immediately (Interruption support)
+  /**
+   * Cancel any currently playing speech immediately (Barge-in / Interruption)
+   */
   public cancelSpeech() {
-    if (this.currentAudio) {
-      try {
-        this.currentAudio.pause();
-        this.currentAudio.currentTime = 0;
-        this.currentAudio.src = '';
-      } catch { }
-      this.currentAudio = null;
-    }
-
-    if (this.synth) {
-      try {
-        this.synth.cancel();
-      } catch { }
-      this.currentUtterance = null;
-    }
+    voiceOutputController.stop();
   }
 
   public isSpeechSupported(): boolean {

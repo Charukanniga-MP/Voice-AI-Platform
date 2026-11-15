@@ -9,6 +9,17 @@ import { conversationAnalysisService } from './conversationAnalysis.service.js';
 // Multi-turn conversational context memory for active calls
 const activeCallContexts = new Map<string, Array<{ sender: 'customer' | 'ai'; text: string; timestamp: Date }>>();
 
+// Session-level query locks and deduplication shield for AI voice calls
+interface CallQueryLock {
+  lastQueryText: string;
+  lastQueryTime: number;
+  lastClientMessageId?: string;
+  inFlight: boolean;
+  lastAnswer?: string;
+  lastAnswerTime?: number;
+}
+const activeCallQueryLocks = new Map<string, CallQueryLock>();
+
 interface ConnectedUser {
   socketId: string;
   userId: string;
@@ -908,13 +919,16 @@ export function initSocketServer(io: SocketIOServer) {
           });
         }
 
-        // Initialize active call conversation context
+        // Initialize active call conversation context & reset locks
         activeCallContexts.set(data.callId, [
           { sender: 'ai', text: greeting, timestamp: new Date() }
         ]);
+        activeCallQueryLocks.delete(data.callId);
 
+        const responseId = `ready_${data.callId}_${Date.now()}`;
         socket.emit('call:ready', {
           callId: data.callId,
+          responseId,
           greeting,
           agentName: 'KAIRA AI Support Specialist',
           status: 'active',
@@ -971,7 +985,9 @@ export function initSocketServer(io: SocketIOServer) {
                   ? 'ನಾನು ನಿಮ್ಮನ್ನು ಮಾನವ ತಜ್ಞರೊಂದಿಗೆ ಸಂಪರ್ಕಿಸುತ್ತಿದ್ದೇನೆ, ದಯವಿಟ್ಟು ಕಾಯಿರಿ.'
                   : 'Connecting you to a human specialist, please hold the line.';
 
+        const escalateResponseId = `resp_esc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
         socket.emit('call:ai_response', {
+          responseId: escalateResponseId,
           answer: escalateNotice,
           isTransferring: true,
           language: respLang,
@@ -1037,22 +1053,57 @@ export function initSocketServer(io: SocketIOServer) {
       }
     });
 
-    // 8. Customer speaks a query to the AI assistant
+    // 8. Customer speaks a query to the AI assistant (with Deduplication & Concurrency Lock)
     socket.on('call:query', async (data: {
       callId: string;
       query: string;
       customerId: string;
       duration?: number;
       language?: string;
+      clientMessageId?: string;
+      clientSentAt?: number;
     }) => {
       try {
-        const queryText = data.query.trim();
+        const queryText = (data.query || '').trim();
         if (!queryText) return;
+
+        const now = Date.now();
+        const existingLock = activeCallQueryLocks.get(data.callId);
+
+        // Deduplication and duplicate utterance shield
+        if (existingLock) {
+          if (data.clientMessageId && existingLock.lastClientMessageId === data.clientMessageId) {
+            console.log(`[AICall Deduplication] Suppressed duplicate clientMessageId: ${data.clientMessageId} for call: ${data.callId}`);
+            return;
+          }
+          if (
+            existingLock.lastQueryText.toLowerCase() === queryText.toLowerCase() &&
+            (now - existingLock.lastQueryTime) < 2500
+          ) {
+            console.log(`[AICall Deduplication] Suppressed duplicate query within ${now - existingLock.lastQueryTime}ms for call ${data.callId}: "${queryText}"`);
+            return;
+          }
+          if (existingLock.inFlight && existingLock.lastQueryText.toLowerCase() === queryText.toLowerCase()) {
+            console.log(`[AICall Deduplication] Suppressed in-flight duplicate query for call ${data.callId}: "${queryText}"`);
+            return;
+          }
+        }
+
+        // Acquire lock
+        activeCallQueryLocks.set(data.callId, {
+          lastQueryText: queryText,
+          lastQueryTime: now,
+          lastClientMessageId: data.clientMessageId,
+          inFlight: true
+        });
 
         const call = await prisma.callRecord.findUnique({
           where: { callId: data.callId }
         });
-        if (!call) return;
+        if (!call) {
+          activeCallQueryLocks.delete(data.callId);
+          return;
+        }
 
         const callLang = data.language || call.language || 'en';
 
@@ -1196,7 +1247,10 @@ export function initSocketServer(io: SocketIOServer) {
             }
           });
 
+          const transferResponseId = `resp_tr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
           socket.emit('call:ai_response', {
+            responseId: transferResponseId,
+            clientMessageId: data.clientMessageId,
             answer: transferNotice,
             isTransferring: true,
             transferId: transferReq.id,
@@ -1335,7 +1389,10 @@ export function initSocketServer(io: SocketIOServer) {
           callContext.push({ sender: 'ai', text: aiText, timestamp: new Date() });
           activeCallContexts.set(data.callId, callContext);
 
+          const aiResponseId = `resp_ai_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
           socket.emit('call:ai_response', {
+            responseId: aiResponseId,
+            clientMessageId: data.clientMessageId,
             answer: aiText,
             isTransferring: false,
             agentName: 'KAIRA AI Support Specialist',
@@ -1370,12 +1427,21 @@ export function initSocketServer(io: SocketIOServer) {
         }
       } catch (err) {
         console.error('[AICall] Error in call:query:', err);
+      } finally {
+        const lock = activeCallQueryLocks.get(data.callId);
+        if (lock) {
+          lock.inFlight = false;
+        }
       }
     });
 
     // 8B. Customer interrupts AI speaking (Barge-in / Voice Activity Detection cancellation)
     socket.on('call:interrupt', (data: { callId: string }) => {
       console.log(`[AICall] Barge-in: Customer interrupted AI on call: ${data.callId}`);
+      const lock = activeCallQueryLocks.get(data.callId);
+      if (lock) {
+        lock.inFlight = false;
+      }
       io.to(`call:${data.callId}`).emit('call:interrupted', { callId: data.callId });
     });
 
@@ -2120,8 +2186,9 @@ export function initSocketServer(io: SocketIOServer) {
             }
           });
 
-          // Clean up in-memory conversation context
+          // Clean up in-memory conversation context and query deduplication locks
           activeCallContexts.delete(data.callId);
+          activeCallQueryLocks.delete(data.callId);
 
           // Asynchronously trigger post-call AI intelligence analysis and conversation summary
           setTimeout(() => {
