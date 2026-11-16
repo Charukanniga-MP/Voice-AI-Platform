@@ -6,7 +6,8 @@ import { prisma } from '../db.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { validate, callRatingSchema, callNotesSchema } from '../middleware/validation.js';
 import { callIntelligenceService } from '../services/callIntelligence.js';
-import { callSessions } from '../services/socket.js';
+import { callSessions, emitCallQualityAlert } from '../services/socket.js';
+import { evaluateCallQualityAlert, getCallQualityAlertSettings, QualityAlertEventType } from '../services/callQualityAlerts.js';
 import { realtimeIntelligenceService } from '../services/realtimeIntelligence.service.js';
 
 const router = Router();
@@ -295,6 +296,58 @@ router.get('/quality/stats', authenticate, requireRole(['admin']), async (req: R
   } catch (err: any) {
     console.error('[Calls] Quality stats error:', err);
     res.status(500).json({ error: 'Failed to retrieve call quality statistics.' });
+  }
+});
+
+router.get('/quality/alerts/settings', authenticate, requireRole(['admin']), async (_req: Request, res: Response) => {
+  try {
+    res.json(await getCallQualityAlertSettings());
+  } catch (err) {
+    console.error('[Calls] Quality alert settings error:', err);
+    res.status(500).json({ error: 'Failed to load call quality alert settings.' });
+  }
+});
+
+router.put('/quality/alerts/settings', authenticate, requireRole(['admin']), async (req: Request, res: Response) => {
+  try {
+    const fields = [
+      'speechRecognitionThreshold',
+      'droppedCallThreshold',
+      'recordingUploadThreshold',
+      'windowMinutes'
+    ] as const;
+    const limits: Record<typeof fields[number], { min: number; max: number }> = {
+      speechRecognitionThreshold: { min: 1, max: 1000 },
+      droppedCallThreshold: { min: 1, max: 1000 },
+      recordingUploadThreshold: { min: 1, max: 1000 },
+      windowMinutes: { min: 5, max: 1440 }
+    };
+    for (const field of fields) {
+      const value = req.body[field];
+      if (!Number.isInteger(value) || value < limits[field].min || value > limits[field].max) {
+        res.status(400).json({ error: `${field} must be an integer between ${limits[field].min} and ${limits[field].max}.` });
+        return;
+      }
+    }
+    await prisma.$executeRaw`
+      INSERT INTO CallQualityAlertSettings
+        (id, speechRecognitionThreshold, droppedCallThreshold, recordingUploadThreshold, windowMinutes, updatedAt)
+      VALUES (
+        'default', ${req.body.speechRecognitionThreshold}, ${req.body.droppedCallThreshold},
+        ${req.body.recordingUploadThreshold}, ${req.body.windowMinutes}, ${new Date()}
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        speechRecognitionThreshold = excluded.speechRecognitionThreshold,
+        droppedCallThreshold = excluded.droppedCallThreshold,
+        recordingUploadThreshold = excluded.recordingUploadThreshold,
+        windowMinutes = excluded.windowMinutes,
+        updatedAt = excluded.updatedAt
+    `;
+    const settings = await getCallQualityAlertSettings();
+    res.json(settings);
+  } catch (err) {
+    console.error('[Calls] Save quality alert settings error:', err);
+    res.status(500).json({ error: 'Failed to save call quality alert settings.' });
   }
 });
 
@@ -967,6 +1020,8 @@ router.post('/:id/quality-events', authenticate, async (req: Request, res: Respo
         details: typeof req.body.details === 'string' ? req.body.details.slice(0, 500) : null
       }
     });
+    const alert = await evaluateCallQualityAlert(eventType as QualityAlertEventType);
+    if (alert) emitCallQualityAlert(alert);
     res.status(201).json({ success: true, eventId: event.id });
   } catch (err: any) {
     console.error('[Calls] Quality event error:', err);

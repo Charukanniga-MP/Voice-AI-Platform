@@ -119,6 +119,20 @@ model CallQualityEvent {
   @@index([eventType, createdAt])
 }
 
+model CallQualityAlertSettings {
+  id                             String   @id @default("default")
+  speechRecognitionThreshold    Int      @default(5)
+  droppedCallThreshold          Int      @default(5)
+  recordingUploadThreshold      Int      @default(3)
+  windowMinutes                 Int      @default(60)
+  updatedAt                     DateTime @updatedAt
+}
+
+model CallQualityAlertState {
+  eventType     String   @id
+  lastAlertedAt DateTime?
+}
+
 model CallTranscript {
   id           String     @id @default(cuid())
   callRecordId String

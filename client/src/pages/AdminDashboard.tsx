@@ -8,7 +8,7 @@ import { ringtoneService } from '../services/ringtone.js';
 import { SupportTickets } from './SupportTickets.js';
 import {
   User, CallRecord, CallTranscript, CallTransferRequest,
-  KnowledgeEntry, KnowledgeDocument, CallStats, CallQualityStats, LanguageCode, SUPPORTED_LANGUAGES,
+  KnowledgeEntry, KnowledgeDocument, CallStats, CallQualityStats, CallQualityAlertSettings, LanguageCode, SUPPORTED_LANGUAGES,
   CallIntelligenceStats, KnowledgeGap, FollowUpTask
 } from '../types.js';
 import { CustomerProfileModal } from '../components/CustomerProfileModal.js';
@@ -234,6 +234,14 @@ export const AdminDashboard: React.FC = () => {
   // Section G: Call Quality Monitoring State
   const [qualityStats, setQualityStats] = useState<CallQualityStats | null>(null);
   const [loadingQuality, setLoadingQuality] = useState(false);
+  const [qualityAlertSettings, setQualityAlertSettings] = useState<CallQualityAlertSettings>({
+    speechRecognitionThreshold: 5,
+    droppedCallThreshold: 5,
+    recordingUploadThreshold: 3,
+    windowMinutes: 60
+  });
+  const [savingQualityAlertSettings, setSavingQualityAlertSettings] = useState(false);
+  const [qualityAlertSettingsSaved, setQualityAlertSettingsSaved] = useState(false);
   const [qualityFilter, setQualityFilter] = useState<'all' | 'excellent' | 'good' | 'poor' | 'reconnected' | 'disconnected' | 'failed'>('all');
   const [qualitySearch, setQualitySearch] = useState('');
   const [selectedQualityCall, setSelectedQualityCall] = useState<CallRecord | null>(null);
@@ -545,17 +553,41 @@ export const AdminDashboard: React.FC = () => {
     if (!token) return;
     setLoadingQuality(true);
     try {
-      const res = await fetch('/api/calls/quality/stats', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const headers = { Authorization: `Bearer ${token}` };
+      const [res, settingsRes] = await Promise.all([
+        fetch('/api/calls/quality/stats', { headers }),
+        fetch('/api/calls/quality/alerts/settings', { headers })
+      ]);
       const data = await res.json();
-      if (res.ok) {
-        setQualityStats(data);
+      if (res.ok) setQualityStats(data);
+      if (settingsRes.ok) {
+        setQualityAlertSettings(await settingsRes.json());
       }
     } catch (err) {
       console.error('Failed to load call quality stats:', err);
     } finally {
       setLoadingQuality(false);
+    }
+  };
+
+  const saveQualityAlertSettings = async () => {
+    if (!token) return;
+    setSavingQualityAlertSettings(true);
+    setQualityAlertSettingsSaved(false);
+    try {
+      const res = await fetch('/api/calls/quality/alerts/settings', {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(qualityAlertSettings)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not save alert thresholds.');
+      setQualityAlertSettings(data);
+      setQualityAlertSettingsSaved(true);
+    } catch (err: any) {
+      window.alert(err.message || 'Could not save alert thresholds.');
+    } finally {
+      setSavingQualityAlertSettings(false);
     }
   };
 
@@ -3239,7 +3271,7 @@ export const AdminDashboard: React.FC = () => {
 
             <div className="space-y-3">
               <h2 className="text-sm font-bold text-slate-800">Voice Response & Failure Metrics</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
                 <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
                   <div className="flex items-center gap-2 text-slate-500 text-[11px] font-bold uppercase">
                     <Clock className="w-4 h-4 text-blue-600" /> Avg. First Response
@@ -3279,6 +3311,48 @@ export const AdminDashboard: React.FC = () => {
                     <span className="text-slate-500">Rejected</span><strong className="text-red-600">{qualityStats?.transferOutcomes?.rejected ?? 0}</strong>
                     <span className="text-slate-500">Missed</span><strong className="text-amber-600">{qualityStats?.transferOutcomes?.missed ?? 0}</strong>
                     <span className="text-slate-500">Open</span><strong className="text-indigo-600">{(qualityStats?.transferOutcomes?.pending ?? 0) + (qualityStats?.transferOutcomes?.ringing ?? 0) + (qualityStats?.transferOutcomes?.accepted ?? 0)}</strong>
+                  </div>
+                </div>
+              </div>
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-800">Quality Alert Thresholds</h3>
+                    <p className="text-xs text-slate-500 mt-1">Notify admins when failures reach a threshold within the selected time window.</p>
+                  </div>
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 flex-1 sm:max-w-3xl">
+                    {([
+                      ['speechRecognitionThreshold', 'Recognition failures'],
+                      ['droppedCallThreshold', 'Dropped calls'],
+                      ['recordingUploadThreshold', 'Recording upload failures'],
+                      ['windowMinutes', 'Window (minutes)']
+                    ] as const).map(([field, label]) => (
+                      <label key={field} className="text-[11px] font-semibold text-slate-600">
+                        {label}
+                        <input
+                          type="number"
+                          min={field === 'windowMinutes' ? 5 : 1}
+                          max={field === 'windowMinutes' ? 1440 : 1000}
+                          value={qualityAlertSettings[field]}
+                          onChange={event => {
+                            setQualityAlertSettings(current => ({ ...current, [field]: Number(event.target.value) }));
+                            setQualityAlertSettingsSaved(false);
+                          }}
+                          className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-400"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {qualityAlertSettingsSaved && <span className="text-xs font-semibold text-emerald-700">Saved</span>}
+                    <button
+                      type="button"
+                      onClick={saveQualityAlertSettings}
+                      disabled={savingQualityAlertSettings}
+                      className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {savingQualityAlertSettings ? 'Saving…' : 'Save thresholds'}
+                    </button>
                   </div>
                 </div>
               </div>

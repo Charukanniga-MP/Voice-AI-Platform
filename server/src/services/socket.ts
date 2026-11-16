@@ -6,6 +6,7 @@ import { sentimentService } from './sentiment.js';
 import { callIntelligenceService } from './callIntelligence.js';
 import { conversationAnalysisService } from './conversationAnalysis.service.js';
 import { realtimeIntelligenceService } from './realtimeIntelligence.service.js';
+import { CallQualityAlert } from './callQualityAlerts.js';
 
 // Multi-turn conversational context memory for active calls
 const activeCallContexts = new Map<string, Array<{ sender: 'customer' | 'ai'; text: string; timestamp: Date }>>();
@@ -67,6 +68,10 @@ let activeSocketServer: SocketIOServer | null = null;
 export function emitTicketNotification(rooms: string[], notification: { ticketId: string; kind: string; title: string; message: string }) {
   if (!activeSocketServer) return;
   for (const room of new Set(rooms)) activeSocketServer.to(room).emit('ticket:notification', notification);
+}
+
+export function emitCallQualityAlert(alert: CallQualityAlert) {
+  activeSocketServer?.to('role:admin').emit('call-quality:alert', alert);
 }
 
 export interface AdminSession {
@@ -2463,6 +2468,9 @@ export function initSocketServer(io: SocketIOServer) {
                 details: data.reason || 'Network reconnection failed.'
               }
             });
+            const { evaluateCallQualityAlert } = await import('./callQualityAlerts.js');
+            const alert = await evaluateCallQualityAlert('dropped_call');
+            if (alert) emitCallQualityAlert(alert);
           }
         }
       } catch (e) {

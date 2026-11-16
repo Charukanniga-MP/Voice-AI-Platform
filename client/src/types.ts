@@ -248,6 +248,13 @@ export interface CallQualityStats {
   history: CallRecord[];
 }
 
+export interface CallQualityAlertSettings {
+  speechRecognitionThreshold: number;
+  droppedCallThreshold: number;
+  recordingUploadThreshold: number;
+  windowMinutes: number;
+}
+
 export interface CallIntelligence {
   id: string;
   callRecordId: string;

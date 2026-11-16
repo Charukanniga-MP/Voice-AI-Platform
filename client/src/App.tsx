@@ -12,6 +12,13 @@ interface TicketAlert {
   message: string;
 }
 
+interface QualityAlert {
+  eventType: 'speech_recognition_failure' | 'dropped_call' | 'recording_upload_failure';
+  count: number;
+  threshold: number;
+  windowMinutes: number;
+}
+
 const TicketNotificationToast: React.FC = () => {
   const { user } = useAuth();
   const [alert, setAlert] = useState<TicketAlert | null>(null);
@@ -33,6 +40,42 @@ const TicketNotificationToast: React.FC = () => {
       <div className="flex items-start justify-between gap-3">
         <div><strong className="text-slate-900">{alert.title}</strong><p className="mt-1 text-slate-600">{alert.message}</p></div>
         <button type="button" onClick={() => setAlert(null)} aria-label="Dismiss notification" className="rounded px-2 py-1 text-slate-500 hover:bg-slate-100">×</button>
+      </div>
+    </div>
+  );
+};
+
+const CallQualityAlertToast: React.FC = () => {
+  const { user } = useAuth();
+  const [alert, setAlert] = useState<QualityAlert | null>(null);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    const socket = getSocket();
+    const onQualityAlert = (notification: QualityAlert) => {
+      setAlert(notification);
+      window.setTimeout(() => setAlert(current => current === notification ? null : current), 10000);
+    };
+    socket.on('call-quality:alert', onQualityAlert);
+    return () => { socket.off('call-quality:alert', onQualityAlert); };
+  }, [user?.id, user?.role]);
+
+  if (!alert) return null;
+  const labels: Record<QualityAlert['eventType'], string> = {
+    speech_recognition_failure: 'Speech recognition failures',
+    dropped_call: 'Dropped calls',
+    recording_upload_failure: 'Recording upload failures'
+  };
+  return (
+    <div role="alert" className="fixed right-4 top-36 z-[100] w-[min(25rem,calc(100vw-2rem))] rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm shadow-xl">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <strong className="text-amber-950">Call quality threshold reached</strong>
+          <p className="mt-1 text-amber-900">
+            {labels[alert.eventType]}: {alert.count} in {alert.windowMinutes} minutes (threshold {alert.threshold}).
+          </p>
+        </div>
+        <button type="button" onClick={() => setAlert(null)} aria-label="Dismiss call quality alert" className="rounded px-2 py-1 text-amber-800 hover:bg-amber-100">×</button>
       </div>
     </div>
   );
@@ -127,6 +170,7 @@ const MainApp: React.FC = () => {
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
       <Navbar />
       <TicketNotificationToast />
+      <CallQualityAlertToast />
 
       <div className="flex-1">
         <Suspense fallback={<RoleLoader roleName={role} />}>
