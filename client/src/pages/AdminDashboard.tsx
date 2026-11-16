@@ -3588,14 +3588,14 @@ export const AdminDashboard: React.FC = () => {
                 <p className="text-[10px] text-amber-600 font-semibold">Requires attention</p>
               </div>
 
-              {/* 5. Escalated Calls */}
+              {/* 5. Human Escalations */}
               <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-1">
                 <div className="flex items-center justify-between text-slate-400">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Escalated</span>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Human Escalations</span>
                   <PhoneForwarded className="w-4 h-4 text-fuchsia-500" />
                 </div>
-                <div className="text-xl font-black text-slate-900">{intelligenceStats?.escalatedCalls ?? 0}</div>
-                <p className="text-[10px] text-fuchsia-600 font-semibold">Admin transfers</p>
+                <div className="text-xl font-black text-slate-900">{intelligenceStats?.humanEscalationCount ?? intelligenceStats?.escalatedCalls ?? 0}</div>
+                <p className="text-[10px] text-fuchsia-600 font-semibold">Staff takeovers & transfers</p>
               </div>
 
               {/* 6. Pending Follow-Ups */}
@@ -3842,6 +3842,118 @@ export const AdminDashboard: React.FC = () => {
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* Common Customer Issues & Trends Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Common Customer Issues */}
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-base font-extrabold text-slate-900">Common Customer Issues & Intents</h3>
+                    <p className="text-xs text-slate-500">Categorized automatically across all voice calls</p>
+                  </div>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                    {intelligenceStats?.commonCustomerIssues?.length ?? 0} Categories
+                  </span>
+                </div>
+
+                {(!intelligenceStats?.commonCustomerIssues || intelligenceStats.commonCustomerIssues.length === 0) ? (
+                  <p className="text-xs text-slate-400 py-4">No issue categories detected yet.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {intelligenceStats.commonCustomerIssues.map((issue) => (
+                      <div key={issue.category} className="space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-bold text-slate-800">{issue.category}</span>
+                          <span className="font-mono text-slate-500 text-[11px]">
+                            {issue.count} call{issue.count === 1 ? '' : 's'} ({issue.percentage}%)
+                          </span>
+                        </div>
+                        <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                          <div
+                            style={{ width: `${Math.max(4, issue.percentage)}%` }}
+                            className="bg-gradient-to-r from-purple-500 to-indigo-600 h-full rounded-full transition-all"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Customer Issue Trends (7-Day Visual Chart) */}
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-base font-extrabold text-slate-900">Customer Issue & Resolution Trends</h3>
+                    <p className="text-xs text-slate-500">Daily resolution performance over the last 7 days</p>
+                  </div>
+                  <div className="flex items-center gap-3 text-[11px] font-semibold text-slate-600">
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" /> Resolved
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-amber-500" /> Unresolved
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-purple-500" /> Escalated
+                    </span>
+                  </div>
+                </div>
+
+                {(!intelligenceStats?.customerIssueTrends || intelligenceStats.customerIssueTrends.length === 0) ? (
+                  <p className="text-xs text-slate-400 py-4">No trend records available yet.</p>
+                ) : (
+                  <div className="space-y-3 pt-2">
+                    <div className="grid grid-cols-7 gap-2 items-end h-40 pb-2 border-b border-slate-100">
+                      {intelligenceStats.customerIssueTrends.map((trend) => {
+                        const maxCount = Math.max(1, ...(intelligenceStats?.customerIssueTrends?.map(t => t.total) || [1]));
+                        const resHeight = (trend.resolved / maxCount) * 100;
+                        const unresHeight = (trend.unresolved / maxCount) * 100;
+                        const escHeight = (trend.escalated / maxCount) * 100;
+
+                        return (
+                          <div key={trend.date} className="flex flex-col items-center h-full justify-end group">
+                            <div className="w-full max-w-[28px] flex flex-col justify-end h-full gap-0.5">
+                              {trend.escalated > 0 && (
+                                <div
+                                  style={{ height: `${Math.max(6, escHeight)}%` }}
+                                  className="w-full bg-purple-500 rounded-t-sm transition-all"
+                                  title={`Escalated: ${trend.escalated}`}
+                                />
+                              )}
+                              {trend.unresolved > 0 && (
+                                <div
+                                  style={{ height: `${Math.max(6, unresHeight)}%` }}
+                                  className="w-full bg-amber-500 transition-all"
+                                  title={`Unresolved: ${trend.unresolved}`}
+                                />
+                              )}
+                              {trend.resolved > 0 && (
+                                <div
+                                  style={{ height: `${Math.max(6, resHeight)}%` }}
+                                  className="w-full bg-emerald-500 rounded-b-sm transition-all"
+                                  title={`Resolved: ${trend.resolved}`}
+                                />
+                              )}
+                              {trend.total === 0 && (
+                                <div className="w-full h-1 bg-slate-200 rounded-full" />
+                              )}
+                            </div>
+                            <span className="text-[10px] text-slate-400 font-mono mt-2 truncate w-full text-center">
+                              {trend.date.slice(5)}
+                            </span>
+                            <span className="text-[9px] font-bold text-slate-700">
+                              {trend.total}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Frequently Asked Questions (FAQ) Aggregation */}

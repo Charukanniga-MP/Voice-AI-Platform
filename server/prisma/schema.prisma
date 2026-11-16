@@ -215,9 +215,13 @@ model CallIntelligence {
   kbSourcesUsed         String?     // JSON array of sources
   resolutionStatus      String      // "resolved" | "partially_resolved" | "unresolved" | "escalated_admin"
   resolutionExplanation String      // Supporting explanation for classification
+  discussionPoints      String?     // JSON array of important discussion points
+  requiresHumanSupport  Boolean     @default(false)
+  recommendedNextAction String?     // Recommended next action
   unresolvedQuestions   String?     // JSON array of strings
   actionItems           String?     // JSON array of required follow-up actions
   overallSummary        String      // English structured summary
+  localizedSummary      String?     // Summary translated into the conversation's language (Tamil, Hindi, Telugu, Malayalam, Kannada)
   sentiment             String?     @default("neutral") // "positive" | "neutral" | "negative"
   processingStatus      String      @default("completed") // "pending" | "processing" | "completed" | "failed"
   errorMessage          String?

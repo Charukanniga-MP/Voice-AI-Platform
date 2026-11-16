@@ -30,6 +30,7 @@ export const CallIntelligenceModal: React.FC<CallIntelligenceModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showLocalized, setShowLocalized] = useState(false);
 
   const fetchIntelligence = async () => {
     if (!callId || !token) return;
@@ -91,6 +92,7 @@ export const CallIntelligenceModal: React.FC<CallIntelligenceModalProps> = ({
   let kbSources: string[] = [];
   let unresolved: string[] = [];
   let actions: string[] = [];
+  let discussionPoints: string[] = [];
 
   try {
     if (intel?.customerQuestions) questions = JSON.parse(intel.customerQuestions);
@@ -98,7 +100,12 @@ export const CallIntelligenceModal: React.FC<CallIntelligenceModalProps> = ({
     if (intel?.kbSourcesUsed) kbSources = JSON.parse(intel.kbSourcesUsed);
     if (intel?.unresolvedQuestions) unresolved = JSON.parse(intel.unresolvedQuestions);
     if (intel?.actionItems) actions = JSON.parse(intel.actionItems);
-  } catch (e) {}
+    if (intel?.discussionPoints) {
+      discussionPoints = typeof intel.discussionPoints === 'string'
+        ? (intel.discussionPoints.startsWith('[') ? JSON.parse(intel.discussionPoints) : intel.discussionPoints.split('\n').filter(Boolean))
+        : (Array.isArray(intel.discussionPoints) ? intel.discussionPoints : []);
+    }
+  } catch (e) { }
 
   const getResolutionBadge = (status?: string) => {
     switch (status) {
@@ -189,29 +196,91 @@ export const CallIntelligenceModal: React.FC<CallIntelligenceModalProps> = ({
 
           {!loading && !error && intel && (
             <>
-              {/* Executive Summary Card */}
-              <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-50 to-purple-50/30 border border-purple-100 space-y-3">
-                <div className="flex items-center justify-between">
+              {/* Executive Summary Card (8 Structured Core Items) */}
+              <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-50 to-purple-50/30 border border-purple-100 space-y-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs font-extrabold uppercase tracking-wider text-purple-900 flex items-center gap-1.5">
                     <Sparkles className="w-4 h-4 text-purple-600" />
-                    Structured Call Summary
+                    Structured Call Intelligence & Summary
                   </span>
-                  <span className="text-[11px] font-mono text-slate-500">
-                    Language: {(intel.language || 'en').toUpperCase()} • Sentiment: {(intel.sentiment || 'neutral').toUpperCase()}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {intel.requiresHumanSupport ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                        <AlertTriangle className="w-3 h-3 text-rose-600" />
+                        Human Support Required
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        <Check className="w-3 h-3 text-emerald-600" />
+                        Autonomous AI Handled
+                      </span>
+                    )}
+                    <span className="text-[11px] font-mono text-slate-500">
+                      Language: {(intel.language || 'en').toUpperCase()}
+                    </span>
+                  </div>
                 </div>
-                <div className="text-xs font-semibold text-slate-800">
-                  <span className="text-slate-400">Main Call Reason:</span> {intel.callReason}
+
+                {/* 1. Main Problem */}
+                <div className="p-3 bg-white rounded-xl border border-purple-100 flex items-start gap-2 text-xs">
+                  <span className="font-bold text-slate-900 shrink-0">Customer's Main Problem:</span>
+                  <span className="text-slate-700 font-medium">{intel.callReason || 'General inquiry'}</span>
                 </div>
-                <p className="text-xs text-slate-700 leading-relaxed bg-white/80 p-3.5 rounded-xl border border-purple-100/80">
-                  {intel.overallSummary}
-                </p>
+
+                {/* 2 & 3. Summary Content with Localized Toggle */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                      {showLocalized && intel.localizedSummary ? `Summary (${(intel.language || 'en').toUpperCase()})` : 'Comprehensive Summary'}
+                    </span>
+                    {intel.localizedSummary && intel.localizedSummary !== intel.overallSummary && (
+                      <button
+                        onClick={() => setShowLocalized(!showLocalized)}
+                        className="text-[11px] font-bold text-purple-700 hover:text-purple-900 underline cursor-pointer"
+                      >
+                        {showLocalized ? 'View in English' : `View in Regional (${(intel.language || 'en').toUpperCase()})`}
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-700 leading-relaxed bg-white/90 p-3.5 rounded-xl border border-purple-100/80">
+                    {showLocalized && intel.localizedSummary ? intel.localizedSummary : intel.overallSummary}
+                  </p>
+                </div>
+
+                {/* 4. Resolution Provided */}
                 {intel.resolutionExplanation && (
-                  <div className="text-[11px] text-purple-950 font-medium bg-purple-100/50 p-2.5 rounded-xl">
-                    <span className="font-bold text-purple-900">Resolution Explanation:</span> {intel.resolutionExplanation}
+                  <div className="text-[11px] text-purple-950 font-medium bg-purple-100/60 p-3 rounded-xl border border-purple-200/50">
+                    <span className="font-bold text-purple-900">Resolution Provided:</span> {intel.resolutionExplanation}
                   </div>
                 )}
+
+                {/* 5. Recommended Next Action */}
+                <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-950 flex items-start gap-2">
+                  <ArrowRight className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold text-amber-900">Recommended Next Action: </span>
+                    <span className="font-semibold">{intel.recommendedNextAction || 'No further action required.'}</span>
+                  </div>
+                </div>
               </div>
+
+              {/* Discussion Points Section */}
+              {discussionPoints.length > 0 && (
+                <div className="p-4 rounded-2xl border border-slate-200 bg-white space-y-2">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <MessageSquare className="w-4 h-4 text-indigo-500" />
+                    Important Discussion Points ({discussionPoints.length})
+                  </span>
+                  <ul className="space-y-1.5 text-xs text-slate-700">
+                    {discussionPoints.map((point, idx) => (
+                      <li key={idx} className="p-2.5 rounded-xl bg-slate-50 border border-slate-100 flex items-start gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 mt-1.5 shrink-0" />
+                        <span>{point.replace(/^[•\s-]+/, '')}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {/* Questions & Solutions Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

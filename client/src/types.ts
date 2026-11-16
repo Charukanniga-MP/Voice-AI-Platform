@@ -253,17 +253,42 @@ export interface CallIntelligence {
   callReason: string;
   customerQuestions: string; // JSON string or array
   solutionsProvided: string; // JSON string or array
+  discussionPoints?: string | null; // JSON string or array
   kbSourcesUsed?: string | null;
   resolutionStatus: 'resolved' | 'partially_resolved' | 'unresolved' | 'escalated_admin';
   resolutionExplanation: string;
+  requiresHumanSupport?: boolean;
+  recommendedNextAction?: string | null;
   unresolvedQuestions?: string | null;
   actionItems?: string | null;
   overallSummary: string;
+  localizedSummary?: string | null;
   sentiment?: 'positive' | 'neutral' | 'negative' | null;
   processingStatus: 'pending' | 'processing' | 'completed' | 'failed';
   errorMessage?: string | null;
   retryCount: number;
   createdAt: string;
+}
+
+export interface LiveCustomerInsight {
+  callId: string;
+  timestamp: string;
+  sender: 'customer' | 'agent' | 'ai';
+  latestUtterance: string;
+  primaryIntent: string;
+  isRepeatedQuestion: boolean;
+  repeatedQuestionText?: string;
+  repeatCount: number;
+  unresolvedConcerns: string[];
+  requestsHumanAssistance: boolean;
+  importantInfoForAgent: {
+    orderIds?: string[];
+    phoneNumbers?: string[];
+    ticketIds?: string[];
+    urgencyLevel: 'normal' | 'high' | 'urgent';
+    keyEntities: string[];
+  };
+  recommendedLiveGuidance?: string;
 }
 
 export interface FollowUpTask {
@@ -321,9 +346,12 @@ export interface CallIntelligenceStats {
   partiallyResolvedCalls: number;
   unresolvedCalls: number;
   escalatedCalls: number;
+  humanEscalationCount?: number;
   pendingFollowUpTasks: number;
   completedFollowUpTasks: number;
   frequentlyAskedQuestions: Array<{ question: string; count: number; category: string }>;
+  commonCustomerIssues?: Array<{ category: string; count: number; percentage: number }>;
+  customerIssueTrends?: Array<{ date: string; resolved: number; unresolved: number; escalated: number; total: number }>;
   kbGaps: KnowledgeGap[];
   agentResolutionStats: Array<{
     agentId: string;
@@ -339,6 +367,9 @@ export interface CallIntelligenceStats {
     customerName: string;
     agentName?: string | null;
     resolutionStatus: string;
+    callReason?: string;
+    recommendedNextAction?: string | null;
+    requiresHumanSupport?: boolean;
     customerQuestions: string;
     sentiment?: string | null;
     createdAt: string;

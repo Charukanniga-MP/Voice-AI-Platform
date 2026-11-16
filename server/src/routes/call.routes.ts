@@ -7,6 +7,7 @@ import { authenticate, requireRole } from '../middleware/auth.js';
 import { validate, callRatingSchema, callNotesSchema } from '../middleware/validation.js';
 import { callIntelligenceService } from '../services/callIntelligence.js';
 import { callSessions } from '../services/socket.js';
+import { realtimeIntelligenceService } from '../services/realtimeIntelligence.service.js';
 
 const router = Router();
 
@@ -246,6 +247,7 @@ router.get('/intelligence/stats', authenticate, requireRole(['admin', 'agent']),
       partiallyResolvedCalls,
       unresolvedCalls,
       escalatedCalls,
+      humanEscalationCount,
       pendingFollowUpTasks,
       completedFollowUpTasks,
       allIntelligence,
@@ -257,6 +259,14 @@ router.get('/intelligence/stats', authenticate, requireRole(['admin', 'agent']),
       prisma.callIntelligence.count({ where: { resolutionStatus: 'partially_resolved' } }),
       prisma.callIntelligence.count({ where: { resolutionStatus: 'unresolved' } }),
       prisma.callIntelligence.count({ where: { resolutionStatus: 'escalated_admin' } }),
+      prisma.callIntelligence.count({
+        where: {
+          OR: [
+            { resolutionStatus: 'escalated_admin' },
+            { requiresHumanSupport: true }
+          ]
+        }
+      }),
       prisma.followUpTask.count({ where: { status: 'pending' } }),
       prisma.followUpTask.count({ where: { status: 'completed' } }),
       prisma.callIntelligence.findMany({
@@ -266,13 +276,23 @@ router.get('/intelligence/stats', authenticate, requireRole(['admin', 'agent']),
           customerName: true,
           agentId: true,
           agentName: true,
+          callReason: true,
           resolutionStatus: true,
+          resolutionExplanation: true,
+          requiresHumanSupport: true,
+          recommendedNextAction: true,
+          discussionPoints: true,
           customerQuestions: true,
+          solutionsProvided: true,
+          overallSummary: true,
+          localizedSummary: true,
           sentiment: true,
+          duration: true,
+          language: true,
           createdAt: true
         },
         orderBy: { createdAt: 'desc' },
-        take: 100
+        take: 200
       }),
       prisma.knowledgeGap.findMany({
         orderBy: [{ frequency: 'desc' }, { lastAskedAt: 'desc' }],
@@ -304,6 +324,64 @@ router.get('/intelligence/stats', authenticate, requireRole(['admin', 'agent']),
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
 
+    // Compute Common Customer Issues categories
+    const categoryCounts: Record<string, number> = {
+      'Pricing & Plans': 0,
+      'Order & Delivery': 0,
+      'Billing & Payments': 0,
+      'Technical Support': 0,
+      'Account & Access': 0,
+      'Human Support Request': 0,
+      'General Inquiries': 0
+    };
+
+    for (const item of allIntelligence) {
+      const text = ((item.callReason || '') + ' ' + (item.recommendedNextAction || '')).toLowerCase();
+      if (text.includes('price') || text.includes('cost') || text.includes('plan') || text.includes('rate') || text.includes('விலை') || text.includes('எவ்வளவு') || text.includes('ఎంత')) {
+        categoryCounts['Pricing & Plans']++;
+      } else if (text.includes('order') || text.includes('delivery') || text.includes('shipping') || text.includes('track')) {
+        categoryCounts['Order & Delivery']++;
+      } else if (text.includes('bill') || text.includes('refund') || text.includes('payment') || text.includes('charge')) {
+        categoryCounts['Billing & Payments']++;
+      } else if (text.includes('error') || text.includes('fail') || text.includes('broken') || text.includes('bug') || text.includes('technical')) {
+        categoryCounts['Technical Support']++;
+      } else if (text.includes('account') || text.includes('login') || text.includes('password') || text.includes('reset')) {
+        categoryCounts['Account & Access']++;
+      } else if (item.requiresHumanSupport || text.includes('agent') || text.includes('human') || text.includes('transfer')) {
+        categoryCounts['Human Support Request']++;
+      } else {
+        categoryCounts['General Inquiries']++;
+      }
+    }
+
+    const totalIssues = allIntelligence.length || 1;
+    const commonCustomerIssues = Object.entries(categoryCounts).map(([category, count]) => ({
+      category,
+      count,
+      percentage: Math.round((count / totalIssues) * 100)
+    })).sort((a, b) => b.count - a.count);
+
+    // Compute Customer Issue Trends (Daily distribution over last 7 days)
+    const trendsMap: Record<string, { date: string; resolved: number; unresolved: number; escalated: number; total: number }> = {};
+    const now = new Date();
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().split('T')[0];
+      trendsMap[key] = { date: key, resolved: 0, unresolved: 0, escalated: 0, total: 0 };
+    }
+
+    for (const item of allIntelligence) {
+      const dateKey = new Date(item.createdAt).toISOString().split('T')[0];
+      if (trendsMap[dateKey]) {
+        trendsMap[dateKey].total++;
+        if (item.resolutionStatus === 'resolved') trendsMap[dateKey].resolved++;
+        else if (item.resolutionStatus === 'escalated_admin') trendsMap[dateKey].escalated++;
+        else trendsMap[dateKey].unresolved++;
+      }
+    }
+    const customerIssueTrends = Object.values(trendsMap);
+
     // Compute Agent Resolution Statistics
     const agentResolutionStats = await Promise.all(
       agents.map(async (agent) => {
@@ -329,9 +407,12 @@ router.get('/intelligence/stats', authenticate, requireRole(['admin', 'agent']),
       partiallyResolvedCalls,
       unresolvedCalls,
       escalatedCalls,
+      humanEscalationCount,
       pendingFollowUpTasks,
       completedFollowUpTasks,
       frequentlyAskedQuestions,
+      commonCustomerIssues,
+      customerIssueTrends,
       kbGaps: allGaps,
       agentResolutionStats,
       recentIntelligence: allIntelligence
@@ -339,6 +420,93 @@ router.get('/intelligence/stats', authenticate, requireRole(['admin', 'agent']),
   } catch (err: any) {
     console.error('[Calls] Intelligence stats error:', err);
     res.status(500).json({ error: 'Failed to retrieve call intelligence statistics.' });
+  }
+});
+
+// 1d. Conversation Insights (Agent & Admin)
+router.get('/conversation-insights', authenticate, requireRole(['admin', 'agent']), async (req: Request, res: Response) => {
+  try {
+    const isAgent = req.user?.role === 'agent';
+    const agentId = req.user?.id;
+
+    const whereClause: any = {};
+    if (isAgent) {
+      whereClause.OR = [
+        { agentId },
+        { callRecord: { agentId } },
+        { callRecord: { agentId: null } }
+      ];
+    }
+
+    const items = await prisma.callIntelligence.findMany({
+      where: whereClause,
+      include: {
+        callRecord: {
+          select: {
+            id: true,
+            callId: true,
+            customerName: true,
+            customerPhone: true,
+            status: true,
+            duration: true,
+            language: true,
+            startTime: true,
+            direction: true,
+            followUpTasks: {
+              select: {
+                id: true,
+                status: true,
+                title: true,
+                actionRequired: true,
+                priority: true
+              }
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 60
+    });
+
+    const insights = items.map(item => {
+      let questions: string[] = [];
+      let solutions: string[] = [];
+      let discussionPoints: string[] = [];
+      let actionItems: string[] = [];
+      try { questions = JSON.parse(item.customerQuestions || '[]'); } catch (e) { }
+      try { solutions = JSON.parse(item.solutionsProvided || '[]'); } catch (e) { }
+      try { discussionPoints = JSON.parse(item.discussionPoints || '[]'); } catch (e) { }
+      try { actionItems = JSON.parse(item.actionItems || '[]'); } catch (e) { }
+
+      return {
+        id: item.id,
+        callRecordId: item.callRecordId,
+        callId: item.callRecord?.callId || item.callRecordId,
+        customerName: item.customerName,
+        customerPhone: item.callRecord?.customerPhone || null,
+        duration: item.duration || item.callRecord?.duration || 0,
+        language: item.language || item.callRecord?.language || 'en',
+        callReason: item.callReason,
+        customerQuestions: questions,
+        solutionsProvided: solutions,
+        discussionPoints,
+        resolutionStatus: item.resolutionStatus,
+        resolutionExplanation: item.resolutionExplanation,
+        requiresHumanSupport: item.requiresHumanSupport,
+        recommendedNextAction: item.recommendedNextAction,
+        actionItems,
+        overallSummary: item.overallSummary,
+        localizedSummary: item.localizedSummary,
+        sentiment: item.sentiment,
+        createdAt: item.createdAt,
+        followUpTasks: item.callRecord?.followUpTasks || []
+      };
+    });
+
+    res.json({ insights });
+  } catch (err: any) {
+    console.error('[Calls] Conversation insights error:', err);
+    res.status(500).json({ error: 'Failed to retrieve conversation insights.' });
   }
 });
 
@@ -430,6 +598,7 @@ router.get('/my-history', authenticate, async (req: Request, res: Response) => {
         customer: { select: { id: true, name: true, email: true, phone: true } },
         sentimentRecords: { where: { isFinal: true } },
         intelligence: true,
+        followUpTasks: true,
         recording: true,
         conversationAnalysis: true
       },
@@ -732,10 +901,12 @@ router.get('/:id/intelligence', authenticate, async (req: Request, res: Response
     }
 
     let intelligence = call.intelligence;
+    let followUpTasks = call.followUpTasks;
     // On-demand generation if call is completed and intelligence hasn't run yet
     if (!intelligence && call.status !== 'active' && call.status !== 'ringing' && call.status !== 'queued') {
       try {
         intelligence = await callIntelligenceService.processCall(call.id);
+        followUpTasks = await prisma.followUpTask.findMany({ where: { callRecordId: call.id } });
       } catch (genErr) {
         console.warn('[CallRoutes] On-demand intelligence generation deferred:', genErr);
       }
@@ -744,11 +915,49 @@ router.get('/:id/intelligence', authenticate, async (req: Request, res: Response
     res.json({
       intelligence,
       call,
-      followUpTasks: call.followUpTasks
+      followUpTasks
     });
   } catch (err: any) {
     console.error('[Calls] Get call intelligence error:', err);
     res.status(500).json({ error: 'Failed to retrieve call intelligence.' });
+  }
+});
+
+// 7e. Get live conversation insights (active or recent)
+router.get('/:id/live-insights', authenticate, async (req: Request, res: Response) => {
+  try {
+    const callIdentifier = req.params.id;
+    const insights = realtimeIntelligenceService.getLiveInsights(callIdentifier);
+    if (!insights) {
+      const call = await prisma.callRecord.findFirst({
+        where: {
+          OR: [
+            { id: callIdentifier },
+            { callId: callIdentifier }
+          ]
+        },
+        include: { intelligence: true }
+      });
+      if (!call) {
+        res.status(404).json({ error: 'Call not found.' });
+        return;
+      }
+      res.json({
+        callId: call.callId,
+        primaryIntent: call.intelligence?.callReason || 'General Inquiries',
+        hasUnresolvedFrustration: call.intelligence?.sentiment === 'negative',
+        isRepeatedQuestion: false,
+        requiresHumanAssistance: call.intelligence?.requiresHumanSupport || false,
+        humanAssistanceReason: call.intelligence?.recommendedNextAction || null,
+        recommendedNextAction: call.intelligence?.recommendedNextAction || null,
+        overallSummary: call.intelligence?.overallSummary || null
+      });
+      return;
+    }
+    res.json(insights);
+  } catch (err: any) {
+    console.error('[Calls] Live insights error:', err);
+    res.status(500).json({ error: 'Failed to retrieve live insights.' });
   }
 });
 

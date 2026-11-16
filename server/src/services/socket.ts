@@ -5,6 +5,7 @@ import { translationService, SUPPORTED_LANGUAGES } from './translation.js';
 import { sentimentService } from './sentiment.js';
 import { callIntelligenceService } from './callIntelligence.js';
 import { conversationAnalysisService } from './conversationAnalysis.service.js';
+import { realtimeIntelligenceService } from './realtimeIntelligence.service.js';
 
 // Multi-turn conversational context memory for active calls
 const activeCallContexts = new Map<string, Array<{ sender: 'customer' | 'ai'; text: string; timestamp: Date }>>();
@@ -892,6 +893,7 @@ export function initSocketServer(io: SocketIOServer) {
           console.log(`[AICall] Reconnected to existing session: ${data.callId}. Suppressing duplicate greeting.`);
           socket.emit('call:ready', {
             callId: data.callId,
+            responseId: `ready_recon_${data.callId}_${Date.now()}`,
             greeting: '',
             greetingPlayed: true,
             agentName: 'KAIRA AI Support Specialist',
@@ -1271,6 +1273,35 @@ export function initSocketServer(io: SocketIOServer) {
           io.to('role:agent').emit('sentiment:assistance_alert', alertPayload);
         }
 
+        // Real-Time Conversation Intelligence: non-blocking analysis of customer turn
+        realtimeIntelligenceService.analyzeTurn({
+          callId: data.callId,
+          text: queryText,
+          language: callLang,
+          customerId: call.customerId,
+          sender: 'customer'
+        }).then(liveInsights => {
+          if (liveInsights) {
+            io.to(`call:${data.callId}`).emit('call:live_intelligence', liveInsights);
+            io.to('role:agent').emit('call:live_insights', { customerName: call.customerName, ...liveInsights });
+            io.to('role:admin').emit('call:live_insights', { customerName: call.customerName, ...liveInsights });
+
+            if (liveInsights.requestsHumanAssistance || (liveInsights.unresolvedConcerns && liveInsights.unresolvedConcerns.length > 0)) {
+              const urgencyAlert = {
+                callId: data.callId,
+                customerName: call.customerName,
+                customerPhone: call.customerPhone || 'Not provided',
+                reason: liveInsights.recommendedLiveGuidance || 'Customer expressed unresolved concern/frustration',
+                intent: liveInsights.primaryIntent,
+                priority: liveInsights.importantInfoForAgent?.urgencyLevel || 'high',
+                timestamp: new Date()
+              };
+              io.to('role:admin').emit('intelligence:assistance_alert', urgencyAlert);
+              io.to('role:agent').emit('intelligence:assistance_alert', urgencyAlert);
+            }
+          }
+        }).catch(err => console.warn('[Socket] Realtime customer turn intelligence error:', err));
+
         // Signal thinking state to customer UI
         io.to(`call:${data.callId}`).emit('call:ai_thinking', { callId: data.callId, isThinking: true });
 
@@ -1513,6 +1544,15 @@ export function initSocketServer(io: SocketIOServer) {
             timestamp: new Date()
           });
 
+          // Record AI turn in Real-Time Conversation Intelligence
+          realtimeIntelligenceService.analyzeTurn({
+            callId: data.callId,
+            text: aiText,
+            language: respLang,
+            customerId: call.customerId,
+            sender: 'ai'
+          }).catch(err => console.warn('[Socket] Realtime AI turn error:', err));
+
           // Broadcast real-time AI conversation metrics to Agent and Admin dashboards for monitoring
           io.to('role:admin').to('role:agent').emit('ai_call:live_metrics', {
             callId: data.callId,
@@ -1664,6 +1704,21 @@ export function initSocketServer(io: SocketIOServer) {
             }
           }).catch(err => console.error('[Copilot] Live speech recommendation error:', err));
 
+          // Real-Time Conversation Intelligence for live speech stream
+          realtimeIntelligenceService.analyzeTurn({
+            callId: data.callId,
+            text,
+            language: data.language || callLang,
+            customerId: call?.customerId || null,
+            sender: data.sender || 'customer'
+          }).then(liveInsights => {
+            if (liveInsights) {
+              io.to(`call:${data.callId}`).emit('call:live_intelligence', liveInsights);
+              io.to('role:agent').emit('call:live_insights', { customerName: call?.customerName, ...liveInsights });
+              io.to('role:admin').emit('call:live_insights', { customerName: call?.customerName, ...liveInsights });
+            }
+          }).catch(err => console.warn('[Socket] Live speech intelligence error:', err));
+
         }
       } catch (err) {
         console.error('[Call] Live speech error:', err);
@@ -1713,6 +1768,17 @@ export function initSocketServer(io: SocketIOServer) {
         socket.emit('call:notes_saved', { callId: data.callId });
       } catch (err) {
         console.error('[Notes] Error saving call notes:', err);
+      }
+    });
+
+    // 12B. Live Conversation Intelligence query
+    socket.on('call:get_live_intelligence', (data: { callId: string }) => {
+      try {
+        if (!data || !data.callId) return;
+        const insights = realtimeIntelligenceService.getLiveInsights(data.callId);
+        socket.emit('call:live_intelligence', insights);
+      } catch (err) {
+        console.warn('[Socket] call:get_live_intelligence error:', err);
       }
     });
 
@@ -2350,13 +2416,21 @@ export function initSocketServer(io: SocketIOServer) {
           callSessions.delete(data.callId);
 
           // Asynchronously trigger post-call AI intelligence analysis and conversation summary
-          setTimeout(() => {
-            callIntelligenceService.processCall(call.id).catch(err => {
+          setTimeout(async () => {
+            try {
+              const intel = await callIntelligenceService.processCall(call.id);
+              if (intel) {
+                io.to(`call:${data.callId}`).emit('call:intelligence_ready', { callId: data.callId, intelligence: intel });
+                io.to('role:agent').emit('call:intelligence_ready', { callId: data.callId, intelligence: intel });
+                io.to('role:admin').emit('call:intelligence_ready', { callId: data.callId, intelligence: intel });
+              }
+            } catch (err) {
               console.error('[Socket] Asynchronous call intelligence error:', err);
-            });
+            }
             conversationAnalysisService.analyzeCallConversation(call.id).catch(err => {
               console.error('[Socket] Asynchronous conversation analysis error:', err);
             });
+            setTimeout(() => realtimeIntelligenceService.clearCall(data.callId), 15000);
           }, 300);
         }
 

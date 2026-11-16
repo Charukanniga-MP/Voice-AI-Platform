@@ -20,6 +20,7 @@ import { SentimentBadge } from '../components/SentimentBadge.js';
 import { LiveSentimentCard } from '../components/LiveSentimentCard.js';
 import { PostCallSentimentSummary } from '../components/PostCallSentimentSummary.js';
 import { SentimentType } from '../types.js';
+import { CallIntelligenceModal } from '../components/CallIntelligenceModal.js';
 
 const SUGGESTED_QUESTIONS = [
   'What are your pricing plans?',
@@ -89,6 +90,7 @@ export const CustomerDashboard: React.FC = () => {
   // Call history
   const [history, setHistory] = useState<CallRecord[]>([]);
   const [selectedHistoryCall, setSelectedHistoryCall] = useState<CallRecord | null>(null);
+  const [selectedIntelligenceCallId, setSelectedIntelligenceCallId] = useState<string | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(new Date());
   const [showAudioDeviceModal, setShowAudioDeviceModal] = useState(false);
@@ -1910,7 +1912,7 @@ export const CustomerDashboard: React.FC = () => {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <History className="w-5 h-5 text-indigo-600" />
-            <h2 className="text-lg font-bold text-slate-900">{t('history.title')}</h2>
+            <h2 className="text-lg font-bold text-slate-900">Call History & AI Summary</h2>
             {lastRefreshedAt && (
               <span className="hidden sm:inline-block text-[11px] text-slate-400 font-mono">
                 • Updated {lastRefreshedAt.toLocaleTimeString()}
@@ -1949,7 +1951,8 @@ export const CustomerDashboard: React.FC = () => {
                     <th className="py-3 px-4">AI Agent Name</th>
                     <th className="py-3 px-4">Call Summary</th>
                     <th className="py-3 px-4">Resolution</th>
-                    <th className="py-3 px-4 text-right">Recording & Actions</th>
+                    <th className="py-3 px-4">Follow-Up</th>
+                    <th className="py-3 px-4 text-right">Actions & Summary</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -1984,10 +1987,10 @@ export const CustomerDashboard: React.FC = () => {
                         <td className="py-3.5 px-4">
                           <span
                             className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${call.status === 'completed'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : call.status === 'active'
-                                  ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                  : 'bg-slate-100 text-slate-700 border border-slate-200'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : call.status === 'active'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : 'bg-slate-100 text-slate-700 border border-slate-200'
                               }`}
                           >
                             {call.status}
@@ -2012,27 +2015,53 @@ export const CustomerDashboard: React.FC = () => {
                         <td className="py-3.5 px-4">
                           <span
                             className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${resolution === 'resolved'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : resolution === 'partially_resolved'
-                                  ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                  : resolution === 'escalated_admin'
-                                    ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                                    : 'bg-amber-50 text-amber-700 border border-amber-200'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : resolution === 'partially_resolved'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : resolution === 'escalated_admin'
+                                  ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                                  : 'bg-amber-50 text-amber-700 border border-amber-200'
                               }`}
                           >
                             {resolution.replace('_', ' ')}
                           </span>
                         </td>
 
+                        <td className="py-3.5 px-4">
+                          {call.followUpTasks && call.followUpTasks.length > 0 ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                              Follow-Up Pending
+                            </span>
+                          ) : call.intelligence?.requiresHumanSupport ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                              Support Review
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              Complete
+                            </span>
+                          )}
+                        </td>
+
                         <td className="py-3.5 px-4 text-right">
                           <div className="flex items-center justify-end gap-2">
+                            {/* View AI Intelligence & Summary */}
+                            <button
+                              onClick={() => setSelectedIntelligenceCallId(call.callId || call.id)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
+                              title="View full AI Summary & Resolution Report"
+                            >
+                              <Sparkles className="w-3.5 h-3.5" />
+                              <span className="hidden lg:inline">AI Summary</span>
+                            </button>
+
                             {/* Audio Playback button */}
                             {(call.recordingUrl || call.recording || call.recordingStatus === 'completed' || call.duration > 2) ? (
                               <button
                                 onClick={() => handlePlayRecording(recUrl, call.id)}
                                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${playingRecordingId === call.id
-                                    ? 'bg-red-600 text-white animate-pulse ring-2 ring-red-400'
-                                    : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
+                                  ? 'bg-red-600 text-white animate-pulse ring-2 ring-red-400'
+                                  : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
                                   }`}
                                 title={playingRecordingId === call.id ? 'Pause Recording' : 'Listen to Call Recording'}
                               >
@@ -2047,7 +2076,7 @@ export const CustomerDashboard: React.FC = () => {
                             <button
                               onClick={() => setSelectedHistoryCall(call)}
                               className="p-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-lg border border-slate-200 cursor-pointer shadow-2xs"
-                              title="View Transcript & Intelligence"
+                              title="View Transcript"
                             >
                               <FileText className="w-3.5 h-3.5" />
                             </button>
@@ -2087,10 +2116,10 @@ export const CustomerDashboard: React.FC = () => {
                       <div className="flex flex-col items-end gap-1">
                         <span
                           className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${call.status === 'completed'
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : call.status === 'active'
-                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                : 'bg-slate-100 text-slate-700 border border-slate-200'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : call.status === 'active'
+                              ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                              : 'bg-slate-100 text-slate-700 border border-slate-200'
                             }`}
                         >
                           {call.status}
@@ -2110,20 +2139,28 @@ export const CustomerDashboard: React.FC = () => {
                     <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">
                       <span
                         className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${resolution === 'resolved'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : 'bg-amber-50 text-amber-700 border border-amber-200'
+                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          : 'bg-amber-50 text-amber-700 border border-amber-200'
                           }`}
                       >
                         {resolution.replace('_', ' ')}
                       </span>
 
                       <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setSelectedIntelligenceCallId(call.callId || call.id)}
+                          className="min-h-[36px] px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+                          title="View AI Summary"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>AI Summary</span>
+                        </button>
                         {(call.recordingUrl || call.recording || call.recordingStatus === 'completed' || call.duration > 2) && (
                           <button
                             onClick={() => handlePlayRecording(recUrl, call.id)}
                             className={`min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${playingRecordingId === call.id
-                                ? 'bg-red-600 text-white animate-pulse'
-                                : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
+                              ? 'bg-red-600 text-white animate-pulse'
+                              : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
                               }`}
                           >
                             {playingRecordingId === call.id ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
@@ -2349,6 +2386,14 @@ export const CustomerDashboard: React.FC = () => {
       <AudioDeviceModal
         isOpen={showAudioDeviceModal}
         onClose={() => setShowAudioDeviceModal(false)}
+      />
+
+      {/* AI Call Intelligence & Automatic Summary Modal */}
+      <CallIntelligenceModal
+        callId={selectedIntelligenceCallId}
+        isOpen={!!selectedIntelligenceCallId}
+        onClose={() => setSelectedIntelligenceCallId(null)}
+        token={token}
       />
     </div>
   );

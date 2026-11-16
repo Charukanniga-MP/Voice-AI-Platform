@@ -1,5 +1,6 @@
 import { prisma } from '../db.js';
 import OpenAI from 'openai';
+import { translationService } from './translation.js';
 
 export interface ExtractedIntelligence {
   callReason: string;
@@ -8,9 +9,13 @@ export interface ExtractedIntelligence {
   kbSourcesUsed: string[];
   resolutionStatus: 'resolved' | 'partially_resolved' | 'unresolved' | 'escalated_admin';
   resolutionExplanation: string;
+  discussionPoints?: string[];
+  requiresHumanSupport?: boolean;
+  recommendedNextAction?: string;
   unresolvedQuestions: string[];
   actionItems: string[];
   overallSummary: string;
+  localizedSummary?: string;
   sentiment: 'positive' | 'neutral' | 'negative';
   priority?: 'low' | 'medium' | 'high' | 'urgent';
 }
@@ -95,6 +100,18 @@ class CallIntelligenceService {
         }
       }
 
+      // Multilingual: Generate localized summary if conversation language is regional
+      let localizedSummary = intelligenceData.overallSummary;
+      const callLang = (call.language || 'en').toLowerCase().slice(0, 2);
+      if (callLang !== 'en' && intelligenceData.overallSummary) {
+        try {
+          localizedSummary = await translationService.translateText(intelligenceData.overallSummary, callLang, 'en');
+        } catch (e) {
+          console.warn('[CallIntelligence] Translation of summary failed, falling back to English:', e);
+        }
+      }
+      intelligenceData.localizedSummary = localizedSummary;
+
       // 4. Save or Update CallIntelligence record in DB
       const savedIntelligence = await prisma.callIntelligence.upsert({
         where: { callRecordId: call.id },
@@ -109,12 +126,16 @@ class CallIntelligenceService {
           callReason: intelligenceData.callReason,
           customerQuestions: JSON.stringify(intelligenceData.customerQuestions || []),
           solutionsProvided: JSON.stringify(intelligenceData.solutionsProvided || []),
+          discussionPoints: JSON.stringify(intelligenceData.discussionPoints || []),
           kbSourcesUsed: JSON.stringify(intelligenceData.kbSourcesUsed || []),
           resolutionStatus: intelligenceData.resolutionStatus,
           resolutionExplanation: intelligenceData.resolutionExplanation,
+          requiresHumanSupport: !!intelligenceData.requiresHumanSupport,
+          recommendedNextAction: intelligenceData.recommendedNextAction || (intelligenceData.actionItems?.[0] || 'No further action required.'),
           unresolvedQuestions: JSON.stringify(intelligenceData.unresolvedQuestions || []),
           actionItems: JSON.stringify(intelligenceData.actionItems || []),
           overallSummary: intelligenceData.overallSummary,
+          localizedSummary: intelligenceData.localizedSummary || intelligenceData.overallSummary,
           sentiment: intelligenceData.sentiment || 'neutral',
           processingStatus: 'completed',
           errorMessage: null,
@@ -128,18 +149,31 @@ class CallIntelligenceService {
           callReason: intelligenceData.callReason,
           customerQuestions: JSON.stringify(intelligenceData.customerQuestions || []),
           solutionsProvided: JSON.stringify(intelligenceData.solutionsProvided || []),
+          discussionPoints: JSON.stringify(intelligenceData.discussionPoints || []),
           kbSourcesUsed: JSON.stringify(intelligenceData.kbSourcesUsed || []),
           resolutionStatus: intelligenceData.resolutionStatus,
           resolutionExplanation: intelligenceData.resolutionExplanation,
+          requiresHumanSupport: !!intelligenceData.requiresHumanSupport,
+          recommendedNextAction: intelligenceData.recommendedNextAction || (intelligenceData.actionItems?.[0] || 'No further action required.'),
           unresolvedQuestions: JSON.stringify(intelligenceData.unresolvedQuestions || []),
           actionItems: JSON.stringify(intelligenceData.actionItems || []),
           overallSummary: intelligenceData.overallSummary,
+          localizedSummary: intelligenceData.localizedSummary || intelligenceData.overallSummary,
           sentiment: intelligenceData.sentiment || 'neutral',
           processingStatus: 'completed',
           errorMessage: null,
           retryCount: call.intelligence ? call.intelligence.retryCount + 1 : 0
         }
       });
+
+      // Keep CallRecord in sync with assistance requirement
+      await prisma.callRecord.update({
+        where: { id: call.id },
+        data: {
+          requiresAssistance: !!intelligenceData.requiresHumanSupport,
+          assistanceReason: intelligenceData.requiresHumanSupport ? (intelligenceData.recommendedNextAction || 'Follow-up required') : null
+        }
+      }).catch(err => console.warn('[CallIntelligence] Error updating CallRecord assistance flags:', err));
 
       // 5. Automatic Follow-Up Task Creation (if unresolved or escalated)
       if (
@@ -220,11 +254,14 @@ class CallIntelligenceService {
       callReason: snippet.slice(0, 100) || 'Brief connection / dropped call',
       customerQuestions: [],
       solutionsProvided: [],
+      discussionPoints: snippet ? [`Call attempt initiated: ${snippet.slice(0, 80)}`] : ['Call session ended before conversation occurred.'],
       kbSourcesUsed: [],
       resolutionStatus: status,
       resolutionExplanation: explanation,
+      requiresHumanSupport: hadSystemError || isTransferred,
+      recommendedNextAction: hadSystemError ? 'Customer needs a callback.' : (isTransferred ? 'Customer requires human support specialist review.' : 'No follow-up needed.'),
       unresolvedQuestions: hadSystemError ? ['Customer call disconnected prematurely'] : [],
-      actionItems: hadSystemError || call.customerPhone ? ['Verify customer connection and attempt follow-up callback'] : [],
+      actionItems: hadSystemError || call.customerPhone ? ['Customer needs a callback.'] : [],
       overallSummary: `Information unavailable: The call lasted ${call.duration}s with insufficient spoken dialogue recorded in the transcript. ${explanation}`,
       sentiment: hadSystemError ? 'negative' : 'neutral',
       priority: hadSystemError ? 'high' : 'low'
@@ -261,17 +298,20 @@ RULES FOR ANALYSIS:
    Note: ${isTransferred ? 'This call was flagged in the system as transferred to an Admin.' : ''}
    Never mark a call "resolved" simply because it ended. Look for explicit confirmation (e.g., "thank you, that helped", "all set", "problem solved").
 3. Language Support:
-   The customer may speak in Tamil, English, Telugu, Malayalam, or Hindi.
+   The customer may speak in Tamil, English, Telugu, Kannada, Malayalam, or Hindi.
    Preserve technical names, company names ("KAIRA VoiceCore", "KAIRA LiveEscalate", "KAIRA Omnichannel Hub"), numbers, and prices exactly.
    Provide the overallSummary in clear, professional English.
 4. Output JSON strictly with these keys:
    {
-     "callReason": "Brief phrase describing why the customer called",
+     "callReason": "Brief phrase describing why the customer called (Customer's main problem)",
      "customerQuestions": ["Array of distinct questions or inquiries asked by the customer"],
      "solutionsProvided": ["Array of solutions, answers, or guidance provided by the agent or AI"],
+     "discussionPoints": ["Array of 2-4 key discussion points summarizing what was discussed"],
      "kbSourcesUsed": ["Array of Knowledge Base topics or verified facts cited in the answer"],
      "resolutionStatus": "resolved" | "partially_resolved" | "unresolved" | "escalated_admin",
-     "resolutionExplanation": "Detailed 1-2 sentence rationale explaining why this status was classified based on conversation evidence",
+     "resolutionExplanation": "Detailed 1-2 sentence rationale explaining resolution provided",
+     "requiresHumanSupport": true or false,
+     "recommendedNextAction": "Concrete next action (e.g. 'Customer needs a callback', 'Customer requires technical assistance', 'Customer\\'s issue needs further investigation', 'Customer requires a follow-up response', 'No further action required')",
      "unresolvedQuestions": ["Array of any questions that remained unanswered or need verification"],
      "actionItems": ["Array of concrete follow-up tasks required by the team"],
      "overallSummary": "Comprehensive 3-5 sentence structured English summary of the entire call",
@@ -303,11 +343,16 @@ ${transcriptText}`
       callReason: parsed.callReason || 'Customer inquiry',
       customerQuestions: Array.isArray(parsed.customerQuestions) ? parsed.customerQuestions : [],
       solutionsProvided: Array.isArray(parsed.solutionsProvided) ? parsed.solutionsProvided : [],
+      discussionPoints: Array.isArray(parsed.discussionPoints) ? parsed.discussionPoints : [],
       kbSourcesUsed: Array.isArray(parsed.kbSourcesUsed) ? parsed.kbSourcesUsed : [],
       resolutionStatus: ['resolved', 'partially_resolved', 'unresolved', 'escalated_admin'].includes(parsed.resolutionStatus)
         ? parsed.resolutionStatus
         : (isTransferred ? 'escalated_admin' : 'unresolved'),
       resolutionExplanation: parsed.resolutionExplanation || 'Evaluation based on dialog analysis.',
+      requiresHumanSupport: typeof parsed.requiresHumanSupport === 'boolean'
+        ? parsed.requiresHumanSupport
+        : (isTransferred || parsed.resolutionStatus === 'unresolved' || parsed.resolutionStatus === 'escalated_admin'),
+      recommendedNextAction: parsed.recommendedNextAction || (parsed.actionItems?.[0] || 'No further action required.'),
       unresolvedQuestions: Array.isArray(parsed.unresolvedQuestions) ? parsed.unresolvedQuestions : [],
       actionItems: Array.isArray(parsed.actionItems) ? parsed.actionItems : [],
       overallSummary: parsed.overallSummary || 'Call session completed.',
@@ -407,6 +452,8 @@ ${transcriptText}`
 
     let resolutionStatus: 'resolved' | 'partially_resolved' | 'unresolved' | 'escalated_admin' = 'unresolved';
     let resolutionExplanation = '';
+    let requiresHumanSupport = false;
+    let recommendedNextAction = 'No further action required; issue successfully resolved.';
     const unresolvedQuestions: string[] = [];
     const actionItems: string[] = [];
 
@@ -414,24 +461,32 @@ ${transcriptText}`
       resolutionStatus = 'escalated_admin';
       resolutionExplanation = 'Call was transferred to an Administrator during conversation for specialized handling.';
       if (call.customerQuestion) unresolvedQuestions.push(call.customerQuestion);
-      actionItems.push('Review administrator transfer notes and verify if customer issue was fully concluded.');
+      actionItems.push('Customer requires technical assistance from an administrator.');
+      requiresHumanSupport = true;
+      recommendedNextAction = 'Customer requires technical assistance from an administrator.';
     } else if (hasExplicitThanks && solutions.length > 0 && !hasUnresolvedIndicators) {
       resolutionStatus = 'resolved';
       resolutionExplanation = 'Customer acknowledged satisfaction and explicit resolution after solutions were provided.';
+      requiresHumanSupport = false;
+      recommendedNextAction = 'No further action required; issue successfully resolved.';
     } else if (solutions.length > 0 && (hasUnresolvedIndicators || questions.length > solutions.length)) {
       resolutionStatus = 'partially_resolved';
       resolutionExplanation = 'Initial answers were provided but customer had additional unresolved inquiries or requested follow-up.';
       if (questions.length > 1) {
         unresolvedQuestions.push(questions[questions.length - 1]);
       }
-      actionItems.push('Agent to follow up on remaining questions with customer.');
+      actionItems.push('Customer requires a follow-up response regarding pending inquiries.');
+      requiresHumanSupport = true;
+      recommendedNextAction = 'Customer requires a follow-up response regarding pending inquiries.';
     } else {
       resolutionStatus = 'unresolved';
       resolutionExplanation = 'No verified resolution or customer confirmation was established during the conversation.';
       if (questions.length > 0) {
         unresolvedQuestions.push(...questions);
       }
-      actionItems.push('Assign support agent to contact customer and provide resolution.');
+      actionItems.push('Customer needs a callback to complete issue investigation and resolution.');
+      requiresHumanSupport = true;
+      recommendedNextAction = 'Customer needs a callback to complete issue investigation and resolution.';
     }
 
     // Sentiment check
@@ -452,9 +507,22 @@ ${transcriptText}`
 
     const mainReason = questions[0] || (customerTexts[0] ? customerTexts[0].slice(0, 80) : 'General customer support inquiry');
 
-    const overallSummary = `Customer ${call.customerName} contacted support regarding "${mainReason}". Duration: ${call.duration}s. Language: ${(call.language || 'en').toUpperCase()}. ${
-      solutions.length > 0 ? `Support provided ${solutions.length} answers/recommendations.` : 'No complete solution was recorded.'
-    } Classification: ${resolutionStatus.replace('_', ' ').toUpperCase()} (${resolutionExplanation}).`;
+    const discussionPointsList: string[] = [];
+    if (questions.length > 0) {
+      discussionPointsList.push(`• Customer inquiries: ${questions.slice(0, 3).join('; ')}`);
+    }
+    if (solutions.length > 0) {
+      discussionPointsList.push(`• Responses provided: ${solutions.slice(0, 2).map(s => s.slice(0, 100)).join('; ')}`);
+    }
+    if (kbSources.length > 0) {
+      discussionPointsList.push(`• Knowledge Base topics referenced: ${kbSources.join(', ')}`);
+    }
+    if (discussionPointsList.length === 0) {
+      discussionPointsList.push(`• General support discussion regarding ${mainReason}`);
+    }
+
+    const overallSummary = `Customer ${call.customerName} contacted support regarding "${mainReason}". Duration: ${call.duration}s. Language: ${(call.language || 'en').toUpperCase()}. ${solutions.length > 0 ? `Support provided ${solutions.length} answers/recommendations.` : 'No complete solution was recorded.'
+      } Classification: ${resolutionStatus.replace('_', ' ').toUpperCase()} (${resolutionExplanation}).`;
 
     return {
       callReason: mainReason,
@@ -467,7 +535,10 @@ ${transcriptText}`
       actionItems,
       overallSummary,
       sentiment,
-      priority
+      priority,
+      discussionPoints: discussionPointsList,
+      requiresHumanSupport,
+      recommendedNextAction
     };
   }
 
@@ -499,10 +570,12 @@ ${transcriptText}`
           continue;
         }
 
-        const taskTitle = `Follow-Up: ${call.customerName} - ${cleanQuestion.slice(0, 50)}${cleanQuestion.length > 50 ? '...' : ''}`;
-        const actionReq = intelligence.actionItems && intelligence.actionItems.length > 0
+        const taskTitle = intelligence.recommendedNextAction
+          ? `Follow-Up: ${call.customerName} - ${intelligence.recommendedNextAction}`
+          : `Follow-Up: ${call.customerName} - ${cleanQuestion.slice(0, 50)}${cleanQuestion.length > 50 ? '...' : ''}`;
+        const actionReq = intelligence.recommendedNextAction || (intelligence.actionItems && intelligence.actionItems.length > 0
           ? intelligence.actionItems.join('; ')
-          : 'Reach out to customer to provide verified solution.';
+          : 'Reach out to customer to provide verified solution.');
 
         // Assign to agent who handled the call, or null
         const assignedAgentId = call.agentId || null;

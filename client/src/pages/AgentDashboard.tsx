@@ -18,7 +18,7 @@ import {
   Volume2, VolumeX, Clock, Search, BookOpen,
   Smartphone, AlertCircle, CheckCircle2, Radio, Info,
   Globe, Sparkles, MessageSquare, Pause, Play, Send, Copy, Users, Settings, ListTodo,
-  HeartPulse, Flame, Mail, Phone, ShieldAlert, RefreshCw
+  HeartPulse, Flame, Mail, Phone, ShieldAlert, RefreshCw, ArrowRight, Lightbulb, AlertTriangle
 } from 'lucide-react';
 import { SentimentBadge } from '../components/SentimentBadge.js';
 import { LiveSentimentCard } from '../components/LiveSentimentCard.js';
@@ -52,8 +52,14 @@ export const AgentDashboard: React.FC = () => {
 
 
 
-  // Navigation tab: 'ai_monitor' | 'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets' | 'tasks'
-  const [activeTab, setActiveTab] = useState<'ai_monitor' | 'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets' | 'tasks'>('ai_monitor');
+  // Navigation tab: 'ai_monitor' | 'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets' | 'tasks' | 'insights'
+  const [activeTab, setActiveTab] = useState<'ai_monitor' | 'incoming' | 'outgoing' | 'console' | 'history' | 'knowledge' | 'tickets' | 'tasks' | 'insights'>('ai_monitor');
+
+  // Conversation Insights State
+  const [conversationInsights, setConversationInsights] = useState<any[]>([]);
+  const [loadingInsights, setLoadingInsights] = useState(false);
+  const [insightsFilter, setInsightsFilter] = useState<'all' | 'resolved' | 'unresolved' | 'action_required'>('all');
+  const [liveInsightsMap, setLiveInsightsMap] = useState<Record<string, any>>({});
 
   // Active AI Calls Real-Time Monitoring & Human Escalations (Module 10)
   const [activeAiCalls, setActiveAiCalls] = useState<Array<{
@@ -463,6 +469,22 @@ export const AgentDashboard: React.FC = () => {
       }
     };
 
+    const handleLiveInsights = (data: any) => {
+      if (data && data.callId) {
+        setLiveInsightsMap(prev => ({
+          ...prev,
+          [data.callId]: data
+        }));
+      }
+    };
+
+    const handleIntelligenceReady = () => {
+      fetchConversationInsights();
+      fetchHistory();
+    };
+
+    socket.on('call:live_insights', handleLiveInsights);
+    socket.on('call:intelligence_ready', handleIntelligenceReady);
     socket.on('transfer:incoming', handleIncomingEscalation);
     socket.on('ai_call:live_metrics', handleAiLiveMetrics);
     socket.on('ai_call:started', handleAiCallStarted);
@@ -473,6 +495,8 @@ export const AgentDashboard: React.FC = () => {
     socket.emit('active_ai_calls:get');
 
     return () => {
+      socket.off('call:live_insights', handleLiveInsights);
+      socket.off('call:intelligence_ready', handleIntelligenceReady);
       socket.off('agent:incoming_call');
       socket.off('agent:call_missed');
       socket.off('queue:status_updated');
@@ -783,9 +807,28 @@ export const AgentDashboard: React.FC = () => {
     fetchCustomers();
   }, [token, customerSearch]);
 
+  const fetchConversationInsights = async () => {
+    if (!token) return;
+    setLoadingInsights(true);
+    try {
+      const res = await fetch('/api/calls/conversation-insights', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setConversationInsights(data.insights || []);
+      }
+    } catch (err) {
+      console.error('Failed to load conversation insights:', err);
+    } finally {
+      setLoadingInsights(false);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'history') fetchHistory();
     if (activeTab === 'knowledge') fetchKnowledge();
+    if (activeTab === 'insights') fetchConversationInsights();
   }, [activeTab, kbSearch]);
 
   const addLog = (sender: 'system' | 'agent' | 'customer', text: string) => {
@@ -1355,6 +1398,14 @@ export const AgentDashboard: React.FC = () => {
             >
               <ListTodo className="w-3.5 h-3.5 text-amber-600" />
               Follow-Up Tasks
+            </button>
+            <button
+              onClick={() => setActiveTab('insights')}
+              className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === 'insights' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+              Conversation Insights
             </button>
           </div>
         </div>
@@ -2193,6 +2244,220 @@ export const AgentDashboard: React.FC = () => {
       {activeTab === 'tasks' && (
         <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 space-y-6 shadow-xs">
           <FollowUpTasksManager token={token} currentUserId={user?.id} isAgent={true} />
+        </div>
+      )}
+
+      {/* 7. CONVERSATION INSIGHTS TAB */}
+      {activeTab === 'insights' && (
+        <div className="space-y-6">
+          {/* Header Card */}
+          <div className="bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-xl relative overflow-hidden">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-2">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-500/20 border border-purple-400/30 text-purple-200 text-xs font-bold">
+                  <Sparkles className="w-3.5 h-3.5 text-purple-300" />
+                  Real-Time & Post-Call Telemetry
+                </div>
+                <h1 className="text-2xl font-black tracking-tight">Conversation Insights & Automatic Summaries</h1>
+                <p className="text-sm text-purple-200/80 max-w-2xl">
+                  AI-driven intent extraction, repeated inquiry warnings, unresolved customer concern highlights, and automated action items.
+                </p>
+              </div>
+              <button
+                onClick={fetchConversationInsights}
+                disabled={loadingInsights}
+                className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-2xl border border-white/20 text-xs font-bold flex items-center gap-2 backdrop-blur-xs transition-all cursor-pointer self-start sm:self-auto"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingInsights ? 'animate-spin' : ''}`} />
+                <span>{loadingInsights ? 'Refreshing...' : 'Refresh Insights'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Active Call Live Intelligence Stream (if any) */}
+          {Object.keys(liveInsightsMap).length > 0 && (
+            <div className="bg-white rounded-3xl border border-purple-200 p-6 space-y-4 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">Live Call Intelligence Stream</h3>
+                </div>
+                <span className="text-xs text-purple-700 font-bold bg-purple-50 px-2.5 py-1 rounded-full border border-purple-200">
+                  {Object.keys(liveInsightsMap).length} Active Stream{Object.keys(liveInsightsMap).length > 1 ? 's' : ''}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {Object.entries(liveInsightsMap).map(([cId, insight]) => (
+                  <div key={cId} className="p-4 rounded-2xl border border-purple-100 bg-gradient-to-br from-purple-50/40 via-white to-slate-50 space-y-3">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <div className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                          <span>{insight.customerName || 'Active Caller'}</span>
+                          <span className="text-[10px] text-slate-400 font-mono">({cId.slice(-6)})</span>
+                        </div>
+                        <div className="text-[11px] font-bold text-purple-700 mt-0.5">
+                          Intent: {insight.primaryIntent || 'Detecting...'}
+                        </div>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        insight.importantInfoForAgent?.urgencyLevel === 'urgent'
+                          ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                          : insight.importantInfoForAgent?.urgencyLevel === 'high'
+                            ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                            : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                      }`}>
+                        {(insight.importantInfoForAgent?.urgencyLevel || 'normal').toUpperCase()}
+                      </span>
+                    </div>
+
+                    {insight.isRepeatedQuestion && (
+                      <div className="p-2 bg-amber-50 rounded-xl border border-amber-200 text-[11px] text-amber-900 font-semibold flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <span>Repeated question detected ({insight.repeatCount}x)</span>
+                      </div>
+                    )}
+
+                    {insight.unresolvedConcerns && insight.unresolvedConcerns.length > 0 && (
+                      <div className="text-[11px] text-rose-800 bg-rose-50/60 p-2 rounded-xl border border-rose-200">
+                        <strong className="block text-rose-900">Unresolved Concerns:</strong>
+                        {insight.unresolvedConcerns.join(', ')}
+                      </div>
+                    )}
+
+                    {insight.recommendedLiveGuidance && (
+                      <div className="text-[11px] text-slate-700 bg-white p-2.5 rounded-xl border border-slate-200 flex items-start gap-1.5">
+                        <Lightbulb className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                        <span>{insight.recommendedLiveGuidance}</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Filter Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-500">Filter By Status:</span>
+              <div className="flex flex-wrap gap-1">
+                {(['all', 'resolved', 'unresolved', 'action_required'] as const).map(flt => (
+                  <button
+                    key={flt}
+                    onClick={() => setInsightsFilter(flt)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      insightsFilter === flt
+                        ? 'bg-purple-600 text-white shadow-2xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {flt === 'all' ? 'All Calls' : flt === 'resolved' ? 'Resolved' : flt === 'unresolved' ? 'Unresolved' : 'Action Required'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <span className="text-xs text-slate-500 font-mono">
+              Showing {
+                conversationInsights.filter(item => {
+                  if (insightsFilter === 'resolved') return item.resolutionStatus === 'resolved';
+                  if (insightsFilter === 'unresolved') return item.resolutionStatus === 'unresolved' || item.resolutionStatus === 'partially_resolved';
+                  if (insightsFilter === 'action_required') return item.requiresHumanSupport || (item.followUpTasks && item.followUpTasks.length > 0);
+                  return true;
+                }).length
+              } calls
+            </span>
+          </div>
+
+          {/* Insights Grid */}
+          {loadingInsights && conversationInsights.length === 0 ? (
+            <div className="py-16 text-center text-xs text-slate-500">Loading conversation insights...</div>
+          ) : conversationInsights.length === 0 ? (
+            <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center space-y-3">
+              <Sparkles className="w-8 h-8 text-slate-300 mx-auto" />
+              <p className="text-xs text-slate-500 font-medium">No completed call insights found yet. Insights appear automatically as calls conclude.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {conversationInsights
+                .filter(item => {
+                  if (insightsFilter === 'resolved') return item.resolutionStatus === 'resolved';
+                  if (insightsFilter === 'unresolved') return item.resolutionStatus === 'unresolved' || item.resolutionStatus === 'partially_resolved';
+                  if (insightsFilter === 'action_required') return item.requiresHumanSupport || (item.followUpTasks && item.followUpTasks.length > 0);
+                  return true;
+                })
+                .map(item => {
+                  return (
+                    <div
+                      key={item.id}
+                      className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3.5 hover:border-purple-200 hover:shadow-md transition-all flex flex-col justify-between"
+                    >
+                      <div className="space-y-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="font-extrabold text-slate-900 text-sm">{item.customerName || 'Customer'}</div>
+                            <div className="text-[10px] text-slate-400 font-mono">
+                              {new Date(item.createdAt).toLocaleDateString()} at {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • ⏱ {formatDuration(item.duration)} • {(item.language || 'en').toUpperCase()}
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-end gap-1">
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${
+                              item.resolutionStatus === 'resolved'
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                : item.resolutionStatus === 'partially_resolved'
+                                  ? 'bg-blue-100 text-blue-800 border border-blue-300'
+                                  : item.resolutionStatus === 'escalated_admin'
+                                    ? 'bg-purple-100 text-purple-800 border border-purple-300'
+                                    : 'bg-amber-100 text-amber-800 border border-amber-300'
+                            }`}>
+                              {(item.resolutionStatus || 'unresolved').replace('_', ' ')}
+                            </span>
+                            {item.requiresHumanSupport && (
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                                Support Needed
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Customer's Main Problem */}
+                        <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-800">
+                          <span className="font-bold text-slate-900 block mb-0.5">Primary Intent / Problem:</span>
+                          <span className="font-medium text-slate-700">{item.callReason}</span>
+                        </div>
+
+                        {/* Overall Summary Snippet */}
+                        <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
+                          {item.overallSummary}
+                        </p>
+
+                        {/* Recommended Next Action */}
+                        {item.recommendedNextAction && (
+                          <div className="p-2.5 bg-amber-50/80 rounded-xl border border-amber-200 text-xs text-amber-950 font-semibold flex items-start gap-1.5">
+                            <ArrowRight className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                            <span>Action: {item.recommendedNextAction}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Footer Actions */}
+                      <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+                        <span className="text-[11px] font-mono text-slate-400">
+                          ID: #{item.callId ? item.callId.slice(-6).toUpperCase() : item.id.slice(-6).toUpperCase()}
+                        </span>
+                        <button
+                          onClick={() => setSelectedCallIdForIntel(item.callId || item.callRecordId)}
+                          className="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                          <span>View Full Report</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
         </div>
       )}
 
