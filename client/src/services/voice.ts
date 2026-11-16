@@ -257,18 +257,28 @@ export class VoiceService {
         return;
       }
       console.warn('[VoiceService] Recognition error:', event.error);
-      if (this.activeOnError) this.activeOnError(event);
+      const userMessage = event.error === 'not-allowed' || event.error === 'audio-capture'
+        ? 'Microphone access is unavailable. Please check your microphone permissions.'
+        : 'Speech recognition paused. Reconnecting...';
+
+      if (this.activeOnError) this.activeOnError({ error: event.error, userMessage });
     };
 
     this.recognition.onend = () => {
-      // Automatically restart to maintain continuous dialogue
+      // Automatically restart with safe debounce to maintain continuous dialogue
       if (this.isListening) {
-        try {
-          this.recognition.start();
-        } catch (err) {
-          console.warn('[VoiceService] Could not restart speech recognition:', err);
-          if (this.activeOnError) this.activeOnError({ error: 'restart-failed', cause: err });
-        }
+        setTimeout(() => {
+          if (!this.isListening) return;
+          try {
+            this.recognition.start();
+          } catch (err: any) {
+            // Already started or restart race is safe
+            if (err?.name !== 'InvalidStateError') {
+              console.warn('[VoiceService] Could not restart speech recognition:', err);
+              if (this.activeOnError) this.activeOnError({ error: 'restart-failed', userMessage: 'Restarting speech listener...', cause: err });
+            }
+          }
+        }, 250);
       }
     };
 

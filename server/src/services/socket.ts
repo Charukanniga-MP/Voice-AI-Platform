@@ -7,6 +7,7 @@ import { callIntelligenceService } from './callIntelligence.js';
 import { conversationAnalysisService } from './conversationAnalysis.service.js';
 import { realtimeIntelligenceService } from './realtimeIntelligence.service.js';
 import { CallQualityAlert } from './callQualityAlerts.js';
+import { callReliabilityService } from './callReliability.js';
 
 // Multi-turn conversational context memory for active calls
 const activeCallContexts = new Map<string, Array<{ sender: 'customer' | 'ai'; text: string; timestamp: Date }>>();
@@ -1694,7 +1695,7 @@ export function initSocketServer(io: SocketIOServer) {
           }
 
           // AI Copilot Live Assistance: Query verified Knowledge Base for smart recommendation
-          translationService.getAiAnswerSuggestion(text, data.language || callLang).then((copilotResp) => {
+          translationService.getCopilotSuggestion(text, data.language || callLang).then((copilotResp) => {
             if (copilotResp && copilotResp.answer) {
               const copilotPayload = {
                 callId: data.callId,
@@ -1702,11 +1703,14 @@ export function initSocketServer(io: SocketIOServer) {
                 answer: copilotResp.answer,
                 sources: copilotResp.sources || [],
                 isGrounded: copilotResp.isGrounded,
+                confidence: copilotResp.confidence,
+                isConflict: copilotResp.isConflict || false,
                 language: copilotResp.language || callLang,
                 timestamp: new Date()
               };
               io.to(`call:${data.callId}`).emit('call:kb_suggestion', copilotPayload);
               io.to(`call:${data.callId}`).emit('call:copilot_recommendation', copilotPayload);
+              io.to('role:agent').emit('call:copilot_recommendation', copilotPayload);
             }
           }).catch(err => console.error('[Copilot] Live speech recommendation error:', err));
 
@@ -1740,7 +1744,7 @@ export function initSocketServer(io: SocketIOServer) {
       try {
         console.log(`[KBSuggest] Agent requested suggestion for: "${data.query}"`);
         const targetLang = data.targetLanguage || 'en';
-        const suggestion = await translationService.getAiAnswerSuggestion(data.query, targetLang);
+        const suggestion = await translationService.getCopilotSuggestion(data.query, targetLang);
 
         socket.emit('call:kb_suggestion', {
           callId: data.callId,
@@ -1748,10 +1752,42 @@ export function initSocketServer(io: SocketIOServer) {
           answer: suggestion.answer,
           sources: suggestion.sources,
           isGrounded: suggestion.isGrounded,
-          language: targetLang
+          confidence: suggestion.confidence,
+          isConflict: suggestion.isConflict || false,
+          language: targetLang,
+          timestamp: new Date()
         });
       } catch (err) {
         console.error('[KBSuggest] Error fetching suggestion:', err);
+      }
+    });
+
+    // 10b. Agent marks Copilot answer as useful or incorrect
+    socket.on('copilot:feedback', async (data: {
+      entryId?: string;
+      callId?: string;
+      query: string;
+      suggestedAnswer?: string;
+      answer?: string;
+      isUseful: boolean;
+      feedbackNotes?: string;
+      notes?: string;
+    }) => {
+      try {
+        await prisma.knowledgeFeedback.create({
+          data: {
+            entryId: data.entryId || null,
+            callId: data.callId || null,
+            agentId: socket.data?.user?.id || null,
+            query: data.query || 'Customer inquiry',
+            suggestedAnswer: data.suggestedAnswer || data.answer || 'Grounded answer',
+            isUseful: Boolean(data.isUseful),
+            feedbackNotes: data.feedbackNotes || data.notes || null
+          }
+        });
+        socket.emit('copilot:feedback_recorded', { success: true });
+      } catch (err) {
+        console.warn('[CopilotFeedback] Error recording feedback:', err);
       }
     });
 
@@ -2363,34 +2399,38 @@ export function initSocketServer(io: SocketIOServer) {
     });
 
     // 16. WebRTC Signaling Relays (Bidirectional Voice Mesh)
-    socket.on('webrtc:offer', (data: { target: string; offer: any; callId: string }) => {
+    socket.on('webrtc:offer', (data: { target: string; offer: any; callId: string; isReconnect?: boolean }) => {
       if (data.target) {
         io.to(data.target).emit('webrtc:offer', {
           sender: socket.id,
           offer: data.offer,
-          callId: data.callId
+          callId: data.callId,
+          isReconnect: data.isReconnect
         });
       } else {
         socket.to(`call:${data.callId}`).emit('webrtc:offer', {
           sender: socket.id,
           offer: data.offer,
-          callId: data.callId
+          callId: data.callId,
+          isReconnect: data.isReconnect
         });
       }
     });
 
-    socket.on('webrtc:answer', (data: { target: string; answer: any; callId: string }) => {
+    socket.on('webrtc:answer', (data: { target: string; answer: any; callId: string; isReconnect?: boolean }) => {
       if (data.target) {
         io.to(data.target).emit('webrtc:answer', {
           sender: socket.id,
           answer: data.answer,
-          callId: data.callId
+          callId: data.callId,
+          isReconnect: data.isReconnect
         });
       } else {
         socket.to(`call:${data.callId}`).emit('webrtc:answer', {
           sender: socket.id,
           answer: data.answer,
-          callId: data.callId
+          callId: data.callId,
+          isReconnect: data.isReconnect
         });
       }
     });
@@ -2420,33 +2460,66 @@ export function initSocketServer(io: SocketIOServer) {
     });
 
     // 16b. Live Call Reconnection & Reliability Events
-    socket.on('call:reconnecting', (data: { callId: string; attempt?: number; reason?: string }) => {
-      console.log(`[CallReconnect] Call ${data.callId} reconnecting: attempt ${data.attempt || 1} (${data.reason || 'network'})`);
-      socket.to(`call:${data.callId}`).emit('call:reconnecting', data);
-      io.to('role:admin').emit('call:reconnecting', data);
+    socket.on('call:reconnecting', async (data: { callId: string; attempt?: number; maxAttempts?: number; reason?: string }) => {
+      const attemptNum = data.attempt || 1;
+      const maxAttempts = data.maxAttempts || callReliabilityService.MAX_RECOVERY_ATTEMPTS;
+      console.log(`[CallReconnect] Call ${data.callId} reconnecting: attempt ${attemptNum}/${maxAttempts} (${data.reason || 'network'})`);
+
+      // Acquire recovery lock to prevent duplicate concurrent recovery cycles
+      const lockAcquired = callReliabilityService.acquireRecoveryLock(data.callId);
+
+      const userMessage = attemptNum === 1
+        ? 'Network connection is unstable. Reconnecting your call...'
+        : `Reconnecting your call... (${attemptNum}/${maxAttempts})`;
+
+      const payload = {
+        ...data,
+        attempt: attemptNum,
+        maxAttempts,
+        userMessage
+      };
+
+      socket.to(`call:${data.callId}`).emit('call:reconnecting', payload);
+      io.to('role:admin').emit('call:reconnecting', payload);
+
+      if (lockAcquired || attemptNum === 1) {
+        await callReliabilityService.recordRecoveryEvent({
+          callId: data.callId,
+          failureType: (data.reason?.includes('ICE') ? 'ice_failed' : 'network_disconnected'),
+          recoveryStatus: 'attempting',
+          attempts: attemptNum,
+          errorMessage: userMessage
+        });
+      }
     });
 
-    socket.on('call:reconnected', async (data: { callId: string }) => {
+    socket.on('call:reconnected', async (data: { callId: string; attempt?: number; durationMs?: number }) => {
       console.log(`[CallReconnect] Call ${data.callId} reconnected successfully!`);
-      socket.to(`call:${data.callId}`).emit('call:reconnected', data);
-      io.to('role:admin').emit('call:reconnected', data);
+      const userMessage = 'Connection restored! Live voice resumed.';
 
-      try {
-        await prisma.callRecord.updateMany({
-          where: { callId: data.callId },
-          data: {
-            wasReconnected: true,
-            reconnectCount: { increment: 1 }
-          }
-        });
-      } catch (e) {
-        console.error('[CallReconnect] Failed to update reconnectCount:', e);
-      }
+      const payload = {
+        ...data,
+        userMessage
+      };
+
+      socket.to(`call:${data.callId}`).emit('call:reconnected', payload);
+      io.to('role:admin').emit('call:reconnected', payload);
+
+      await callReliabilityService.markRecoverySuccess(data.callId, data.attempt || 1, data.durationMs);
     });
 
     socket.on('call:reconnect_failed', async (data: { callId: string; reason?: string }) => {
       console.log(`[CallReconnect] Call ${data.callId} reconnection failed: ${data.reason}`);
-      socket.to(`call:${data.callId}`).emit('call:reconnect_failed', data);
+      callReliabilityService.releaseRecoveryLock(data.callId);
+
+      const userMessage = 'Call connection interrupted. Connecting you to a human representative...';
+      const payload = {
+        ...data,
+        userMessage
+      };
+
+      socket.to(`call:${data.callId}`).emit('call:reconnect_failed', payload);
+      io.to('role:admin').emit('call:reconnect_failed', payload);
 
       try {
         const call = await prisma.callRecord.findUnique({ where: { callId: data.callId } });
@@ -2460,6 +2533,15 @@ export function initSocketServer(io: SocketIOServer) {
               failureReason: data.reason || 'Network connection lost. Reconnection timed out.'
             }
           });
+
+          await callReliabilityService.recordRecoveryEvent({
+            callId: data.callId,
+            failureType: 'network_disconnected',
+            recoveryStatus: 'failed',
+            attempts: callReliabilityService.MAX_RECOVERY_ATTEMPTS,
+            errorMessage: data.reason || 'Network connection lost. Reconnection timed out.'
+          });
+
           if (isFirstDropReport) {
             await prisma.callQualityEvent.create({
               data: {
@@ -2476,6 +2558,100 @@ export function initSocketServer(io: SocketIOServer) {
       } catch (e) {
         console.error('[CallReconnect] Failed to update disconnected status:', e);
       }
+    });
+
+    // 16c. Live Call Health Telemetry Report from Client WebRTC
+    socket.on('call:health_report', (data: {
+      callId: string;
+      webrtcState?: string;
+      iceState?: string;
+      latencyMs?: number;
+      packetLoss?: number;
+      jitterMs?: number;
+      audioDeviceStatus?: 'healthy' | 'mic_disconnected' | 'speaker_disconnected' | 'recovering';
+      reconnectAttempts?: number;
+    }) => {
+      if (!data?.callId) return;
+      const updated = callReliabilityService.updateCallHealth({
+        callId: data.callId,
+        webrtcState: data.webrtcState || 'connected',
+        iceState: data.iceState || 'connected',
+        latencyMs: data.latencyMs ?? 50,
+        packetLoss: data.packetLoss ?? 0,
+        jitterMs: data.jitterMs ?? 5,
+        audioDeviceStatus: data.audioDeviceStatus || 'healthy',
+        reconnectAttempts: data.reconnectAttempts ?? 0
+      });
+
+      io.to('role:admin').emit('call:health_update', updated);
+    });
+
+    // 16d. Audio Input / Output Device Failure & Restoration Events
+    socket.on('call:device_error', async (data: {
+      callId: string;
+      deviceType: 'microphone' | 'speaker';
+      status: 'error' | 'restored';
+      details?: string;
+    }) => {
+      console.log(`[CallDevice] Device ${data.deviceType} on call ${data.callId}: ${data.status}`);
+      const userMessage = data.status === 'error'
+        ? (data.deviceType === 'microphone'
+          ? 'Microphone access is unavailable. Please check your microphone permissions.'
+          : 'Audio output device disconnected. Restoring audio connection...')
+        : 'Audio device successfully restored.';
+
+      const payload = {
+        ...data,
+        userMessage
+      };
+
+      socket.to(`call:${data.callId}`).emit('call:device_error', payload);
+      io.to('role:admin').emit('call:device_error', payload);
+
+      if (data.status === 'error') {
+        await callReliabilityService.recordRecoveryEvent({
+          callId: data.callId,
+          failureType: 'device_lost',
+          recoveryStatus: 'attempting',
+          errorMessage: userMessage,
+          diagnosticData: { deviceType: data.deviceType, details: data.details }
+        });
+      } else {
+        await callReliabilityService.recordRecoveryEvent({
+          callId: data.callId,
+          failureType: 'device_lost',
+          recoveryStatus: 'recovered',
+          errorMessage: userMessage
+        });
+      }
+    });
+
+    // 16e. Intelligent AI Fallback Event Notification
+    socket.on('call:ai_fallback_triggered', async (data: {
+      callId: string;
+      serviceType: 'stt' | 'llm' | 'tts';
+      fallbackProvider: string;
+      reason: string;
+    }) => {
+      console.log(`[AIFallback] Call ${data.callId} AI fallback: ${data.serviceType} -> ${data.fallbackProvider} (${data.reason})`);
+
+      const userMessage = 'AI service temporarily unavailable. Continuing in optimized fallback mode.';
+
+      const payload = {
+        ...data,
+        userMessage
+      };
+
+      socket.to(`call:${data.callId}`).emit('call:ai_fallback_triggered', payload);
+      io.to('role:admin').emit('call:ai_fallback_triggered', payload);
+
+      await callReliabilityService.recordRecoveryEvent({
+        callId: data.callId,
+        failureType: data.serviceType === 'tts' ? 'tts_failed' : (data.serviceType === 'stt' ? 'stt_timeout' : 'llm_timeout'),
+        recoveryStatus: 'recovered',
+        errorMessage: userMessage,
+        diagnosticData: { serviceType: data.serviceType, fallbackProvider: data.fallbackProvider, reason: data.reason }
+      });
     });
 
     // 17. End Call (No hardcoded duration timeouts)
@@ -2519,10 +2695,11 @@ export function initSocketServer(io: SocketIOServer) {
             }
           });
 
-          // Clean up in-memory conversation context, query deduplication locks, and session state
+          // Clean up in-memory conversation context, query deduplication locks, session state, and health telemetry
           activeCallContexts.delete(data.callId);
           activeCallQueryLocks.delete(data.callId);
           callSessions.delete(data.callId);
+          callReliabilityService.removeCallHealth(data.callId);
 
           // Asynchronously trigger post-call AI intelligence analysis and conversation summary
           setTimeout(async () => {

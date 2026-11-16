@@ -4,10 +4,12 @@ import { audioDeviceManager } from './audioDevice';
 
 export interface WebRTCCallbacks {
   onQualityChange?: (stats: CallQualityStats) => void;
-  onReconnecting?: (attempt: number, maxAttempts: number) => void;
-  onReconnected?: () => void;
+  onReconnecting?: (attempt: number, maxAttempts: number, message?: string) => void;
+  onReconnected?: (message?: string) => void;
   onReconnectFailed?: (message: string) => void;
   onConnectionStateChange?: (state: string) => void;
+  onDeviceError?: (deviceType: 'microphone' | 'speaker', status: 'error' | 'restored', message: string) => void;
+  onAiFallback?: (serviceType: 'stt' | 'llm' | 'tts', message: string) => void;
 }
 
 export class WebRTCManager {
@@ -37,6 +39,7 @@ export class WebRTCManager {
   private readonly maxReconnectAttempts: number = 3;
   private reconnectTimeoutTimer: any = null;
   private reconnectBackoffTimer: any = null;
+  private healthReportTimer: any = null;
 
   private callbacks: WebRTCCallbacks = {};
   private iceServersLoaded: boolean = false;
@@ -132,6 +135,16 @@ export class WebRTCManager {
           this.handleDisconnection('Internet connection offline');
         }
       });
+
+      // Detect hardware device addition / removal (e.g. headset unplugged)
+      if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+        navigator.mediaDevices.addEventListener('devicechange', async () => {
+          console.log('[WebRTC] Audio device change detected.');
+          if (this.callId && this.peerConnection) {
+            await this.verifyAndRecoverAudioDevices();
+          }
+        });
+      }
     }
   }
 
@@ -206,21 +219,35 @@ export class WebRTCManager {
       }
     });
 
-    // Handle peer reconnect notification
-    socket.on('call:reconnecting', (data: { callId: string; attempt?: number; reason?: string }) => {
+    // Handle peer reconnect notification with user-friendly messages
+    socket.on('call:reconnecting', (data: { callId: string; attempt?: number; maxAttempts?: number; reason?: string; userMessage?: string }) => {
       if (this.callId === data.callId && !this.isReconnecting) {
         console.log('[WebRTC] Remote peer reported reconnection:', data.reason);
         this.isReconnecting = true;
         callQualityMonitor.setConnectionState('reconnecting', data.attempt || 1);
-        this.callbacks.onReconnecting?.(data.attempt || 1, this.maxReconnectAttempts);
+        this.callbacks.onReconnecting?.(data.attempt || 1, data.maxAttempts || this.maxReconnectAttempts, data.userMessage);
       }
     });
 
     // Handle peer reconnected notification
-    socket.on('call:reconnected', (data: { callId: string }) => {
+    socket.on('call:reconnected', (data: { callId: string; userMessage?: string }) => {
       if (this.callId === data.callId) {
         console.log('[WebRTC] Remote peer reported reconnected');
-        this.handleReconnectionSuccess();
+        this.handleReconnectionSuccess(data.userMessage);
+      }
+    });
+
+    // Handle audio input/output device failure or recovery notification
+    socket.on('call:device_error', (data: { callId: string; deviceType: 'microphone' | 'speaker'; status: 'error' | 'restored'; userMessage?: string }) => {
+      if (this.callId === data.callId) {
+        this.callbacks.onDeviceError?.(data.deviceType, data.status, data.userMessage || 'Audio device status updated.');
+      }
+    });
+
+    // Handle intelligent AI fallback notification
+    socket.on('call:ai_fallback_triggered', (data: { callId: string; serviceType: 'stt' | 'llm' | 'tts'; userMessage?: string }) => {
+      if (this.callId === data.callId) {
+        this.callbacks.onAiFallback?.(data.serviceType, data.userMessage || 'AI service temporarily unavailable.');
       }
     });
   }
@@ -233,6 +260,9 @@ export class WebRTCManager {
 
     const deviceId = preferredDeviceId || audioDeviceManager.getPreferredMicrophoneId();
     this.localStream = await audioDeviceManager.requestMicrophoneAccess(deviceId);
+    if (this.localStream.getAudioTracks().length > 0) {
+      this.bindTrackListeners(this.localStream.getAudioTracks()[0]);
+    }
     return this.localStream;
   }
 
@@ -257,6 +287,7 @@ export class WebRTCManager {
       }
       this.localStream = newStream;
       newAudioTrack.enabled = !this.isMuted;
+      this.bindTrackListeners(newAudioTrack);
       console.log(`[WebRTC] Switched active microphone to device: ${deviceId}`);
     } catch (err) {
       console.error('[WebRTC] Failed to switch microphone:', err);
@@ -270,6 +301,91 @@ export class WebRTCManager {
     if (this.remoteAudio) {
       await audioDeviceManager.applySpeakerToAudioElement(this.remoteAudio, deviceId);
     }
+  }
+
+  // Bind track lifecycle listeners for hardware disconnection and mute detection
+  private bindTrackListeners(track: MediaStreamTrack) {
+    track.onended = () => {
+      console.warn('[WebRTC] Local microphone track ended abruptly!');
+      this.handleDeviceFailure('microphone', 'Microphone access is unavailable. Please check your microphone permissions.');
+      // Attempt automatic microphone stream recovery
+      setTimeout(() => this.verifyAndRecoverAudioDevices(), 800);
+    };
+
+    track.onmute = () => {
+      console.warn('[WebRTC] Local microphone track muted by hardware or OS.');
+      this.handleDeviceFailure('microphone', 'Microphone is currently muted or blocked by your system.');
+    };
+
+    track.onunmute = () => {
+      console.log('[WebRTC] Local microphone track unmuted.');
+      this.handleDeviceRestored('microphone');
+    };
+  }
+
+  // Verify and recover audio devices dynamically
+  public async verifyAndRecoverAudioDevices(): Promise<void> {
+    if (!this.callId || !this.peerConnection) return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const hasMic = devices.some(d => d.kind === 'audioinput');
+
+      if (!hasMic) {
+        console.warn('[WebRTC] No microphone device detected!');
+        this.handleDeviceFailure('microphone', 'Microphone access is unavailable. Please check your microphone permissions.');
+        return;
+      }
+
+      // Check if current local audio track is active
+      const currentTrack = this.localStream?.getAudioTracks()[0];
+      if (!currentTrack || currentTrack.readyState === 'ended' || !currentTrack.enabled) {
+        console.warn('[WebRTC] Local microphone track ended or unavailable. Attempting auto-recovery...');
+        this.handleDeviceFailure('microphone', 'Restoring audio connection...');
+
+        const preferredMic = audioDeviceManager.getPreferredMicrophoneId();
+        const newStream = await audioDeviceManager.requestMicrophoneAccess(preferredMic);
+        const newTrack = newStream.getAudioTracks()[0];
+
+        const senders = this.peerConnection.getSenders();
+        const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
+        if (audioSender && newTrack) {
+          await audioSender.replaceTrack(newTrack);
+        }
+
+        if (this.localStream) {
+          this.localStream.getTracks().forEach(t => t.stop());
+        }
+        this.localStream = newStream;
+        newTrack.enabled = !this.isMuted;
+        this.bindTrackListeners(newTrack);
+
+        console.log('[WebRTC] Microphone track successfully recovered and replaced.');
+        this.handleDeviceRestored('microphone');
+      }
+    } catch (err) {
+      console.warn('[WebRTC] Error during device verification/recovery:', err);
+    }
+  }
+
+  private handleDeviceFailure(deviceType: 'microphone' | 'speaker', message: string) {
+    const socket = getSocket();
+    socket.emit('call:device_error', {
+      callId: this.callId,
+      deviceType,
+      status: 'error',
+      details: message
+    });
+    this.callbacks.onDeviceError?.(deviceType, 'error', message);
+  }
+
+  private handleDeviceRestored(deviceType: 'microphone' | 'speaker') {
+    const socket = getSocket();
+    socket.emit('call:device_error', {
+      callId: this.callId,
+      deviceType,
+      status: 'restored'
+    });
+    this.callbacks.onDeviceError?.(deviceType, 'restored', 'Audio device successfully restored.');
   }
 
   // Drain buffered ICE candidates after remote description is set
@@ -501,9 +617,10 @@ export class WebRTCManager {
   }
 
   // Called when connection successfully restores
-  private handleReconnectionSuccess() {
+  private handleReconnectionSuccess(message?: string) {
     if (!this.isReconnecting && this.reconnectAttempts === 0) return;
 
+    const userMessage = message || 'Connection restored! Live voice resumed.';
     console.log('[WebRTC] ✓ Call connection successfully re-established!');
     this.isReconnecting = false;
     this.reconnectAttempts = 0;
@@ -519,10 +636,10 @@ export class WebRTCManager {
     }
 
     callQualityMonitor.setConnectionState('connected', 0);
-    this.callbacks.onReconnected?.();
+    this.callbacks.onReconnected?.(userMessage);
 
     const socket = getSocket();
-    socket.emit('call:reconnected', { callId: this.callId });
+    socket.emit('call:reconnected', { callId: this.callId, userMessage });
 
     // Sync reconnect stats with database
     callQualityMonitor.syncWithBackend(this.totalReconnectCount);
@@ -583,6 +700,25 @@ export class WebRTCManager {
 
     // Start quality monitor
     callQualityMonitor.start(this.peerConnection, callId, this.authToken);
+
+    // Periodic live call health telemetry reporting (every 3 seconds)
+    if (this.healthReportTimer) clearInterval(this.healthReportTimer);
+    this.healthReportTimer = setInterval(() => {
+      if (this.callId && this.peerConnection && this.peerConnection.connectionState !== 'closed') {
+        const stats = callQualityMonitor.getCurrentStats();
+        const sk = getSocket();
+        sk.emit('call:health_report', {
+          callId: this.callId,
+          webrtcState: this.peerConnection.connectionState,
+          iceState: this.peerConnection.iceConnectionState,
+          latencyMs: stats.latency,
+          packetLoss: stats.packetLoss,
+          jitterMs: stats.jitter,
+          audioDeviceStatus: 'healthy',
+          reconnectAttempts: this.totalReconnectCount
+        });
+      }
+    }, 3000);
   }
 
   // Mute / Unmute local microphone
@@ -787,6 +923,10 @@ export class WebRTCManager {
 
     if (this.reconnectTimeoutTimer) clearTimeout(this.reconnectTimeoutTimer);
     if (this.reconnectBackoffTimer) clearTimeout(this.reconnectBackoffTimer);
+    if (this.healthReportTimer) {
+      clearInterval(this.healthReportTimer);
+      this.healthReportTimer = null;
+    }
     this.isReconnecting = false;
     this.reconnectAttempts = 0;
     this.pendingCandidates = [];

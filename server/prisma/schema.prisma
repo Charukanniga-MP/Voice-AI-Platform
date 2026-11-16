@@ -93,6 +93,7 @@ model CallRecord {
   reconnectCount     Int                   @default(0)
   wasReconnected     Boolean               @default(false)
   audioQualityScore  Float?                // estimated MOS score (1.0 - 5.0)
+  audioDeviceStatus  String?               @default("healthy") // "healthy" | "mic_disconnected" | "speaker_disconnected" | "recovering"
 
   createdAt          DateTime              @default(now())
 
@@ -105,6 +106,27 @@ model CallRecord {
   conversationAnalysis ConversationAnalysis?
   agentEvaluation    AgentPerformanceEvaluation?
   qualityEvents      CallQualityEvent[]
+  recoveryEvents     CallRecoveryEvent[]
+}
+
+model CallRecoveryEvent {
+  id                     String      @id @default(cuid())
+  callRecordId           String
+  callRecord             CallRecord  @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  callId                 String      // External string callId
+  failureType            String      // "network_disconnected" | "webrtc_failed" | "ice_failed" | "device_lost" | "stt_timeout" | "llm_timeout" | "tts_failed" | "audio_interruption"
+  recoveryStatus         String      // "attempting" | "recovered" | "failed" | "escalated_to_human"
+  attempts               Int         @default(1)
+  interruptionDurationMs Int?        // Interruption duration in milliseconds
+  diagnosticData         String?     // Sanitized JSON telemetry details
+  errorMessage           String?     // User-safe failure message
+  createdAt              DateTime    @default(now())
+  resolvedAt             DateTime?
+
+  @@index([callRecordId])
+  @@index([callId])
+  @@index([failureType, recoveryStatus])
+  @@index([createdAt])
 }
 
 model CallQualityEvent {
@@ -175,10 +197,13 @@ model KnowledgeDocument {
   fileName      String
   fileType      String
   fileSize      Int
+  fileHash      String?
   status        String           // "processing" | "indexed" | "failed"
   extractedText String
   entryCount    Int              @default(0)
+  errorMessage  String?
   createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @default(now()) @updatedAt
 
   entries       KnowledgeEntry[]
 }
@@ -189,12 +214,27 @@ model KnowledgeEntry {
   document    KnowledgeDocument? @relation(fields: [documentId], references: [id], onDelete: Cascade)
   title       String
   category    String             // "company" | "products" | "services" | "pricing" | "policies" | "faq" | "support" | "general"
+  section     String?
+  pageNumber  Int?
   question    String?
   answer      String?
   content     String
   keywords    String?
+  embedding   String?
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
+}
+
+model KnowledgeFeedback {
+  id              String   @id @default(cuid())
+  entryId         String?
+  callId          String?
+  agentId         String?
+  query           String
+  suggestedAnswer String
+  isUseful        Boolean
+  feedbackNotes   String?
+  createdAt       DateTime @default(now())
 }
 
 model SupportTicket {

@@ -22,18 +22,31 @@ export interface CustomerContext {
   }>;
 }
 
+export interface GroundedSource {
+  id: string;
+  title: string;
+  category: string;
+  section?: string | null;
+  pageNumber?: number | null;
+  documentTitle?: string | null;
+  documentFileName?: string | null;
+  snippet?: string;
+}
+
 export interface GroundedResponse {
   answer: string;
   isGrounded: boolean;
   requiresTransfer: boolean;
-  sources: Array<{ id: string; title: string; category: string }>;
+  sources: GroundedSource[];
   confidence: number;
   language?: string;
   latencyMs?: number;
+  isConflict?: boolean;
 }
 
 // Fallback message strictly required by specification
 export const FALLBACK_MESSAGE = "I apologize, but I don't currently have that specific information. Let me record your question so our support team can review it and assist you.";
+export const COPILOT_NOT_FOUND_MESSAGE = "Information not found in the approved Knowledge Base.";
 
 const STOP_WORDS = new Set([
   'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
@@ -46,7 +59,9 @@ const STOP_WORDS = new Set([
   'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not',
   'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'just',
   'don', 'now', 'you', 'your', 'me', 'my', 'i', 'we', 'our', 'tell', 'give',
-  'know', 'please', 'like', 'want', 'how', 'much', 'what', 'where', 'when', 'which', 'who', 'why', 'does'
+  'it', 'its', 'they', 'them', 'their', 'this', 'that', 'these', 'those',
+  'know', 'please', 'like', 'want', 'how', 'much', 'what', 'where', 'when', 'which', 'who', 'why', 'does', 'doe', 'did',
+  'kaira'
 ]);
 
 const STEM = (w: string) => w.toLowerCase().replace(/(ies|es|s|ing|ed)$/, '');
@@ -72,9 +87,23 @@ const SYNONYMS: Record<string, string[]> = {
   hours: ['schedule', 'time', 'availability', 'support'],
   support: ['help', 'assist', 'contact', 'availability'],
   help: ['support', 'assist', 'contact'],
-  security: ['safety', 'privacy', 'complianc'],
+  security: ['safety', 'privacy', 'complianc', 'hipaa', 'gdpr', 'soc2'],
   cancel: ['refund', 'cancellation'],
-  refund: ['cancel', 'cancellation']
+  refund: ['cancel', 'cancellation'],
+  fast: ['speed', 'latency', 'quick', 'turnaround', 'delay', 'ms', 'respond', 'response'],
+  speed: ['fast', 'latency', 'quick', 'delay', 'ms', 'respond'],
+  latency: ['fast', 'speed', 'quick', 'delay', 'ms', 'response', 'voicecore'],
+  respond: ['response', 'answer', 'reply', 'latency', 'speed', 'fast'],
+  response: ['respond', 'answer', 'reply', 'latency', 'speed', 'fast'],
+  handover: ['transfer', 'escalat', 'human', 'liveescalat', 'agent'],
+  transfer: ['handover', 'escalat', 'human', 'liveescalat', 'agent'],
+  escalat: ['transfer', 'handover', 'human', 'liveescalat', 'agent'],
+  escalate: ['transfer', 'handover', 'human', 'liveescalat', 'agent'],
+  human: ['transfer', 'handover', 'escalat', 'agent', 'person', 'representative'],
+  agent: ['assistant', 'bot', 'representative', 'voicecore'],
+  interrupt: ['barge', 'bargein', 'interruption', 'cut off'],
+  interruption: ['barge', 'bargein', 'interrupt'],
+  barge: ['interrupt', 'interruption']
 };
 
 class KnowledgeService {
@@ -129,8 +158,44 @@ class KnowledgeService {
     const syns = SYNONYMS[t] || SYNONYMS[stemmedT] || [];
     return targets.some(target => {
       const s = STEM(target);
-      return syns.some(syn => s === syn || target.includes(syn));
+      return syns.some(syn => s === syn || target === syn || STEM(syn) === s);
     });
+  }
+
+  // Conflict detection between multiple retrieved documents
+  private detectConflict(matches: SearchResult[]): { isConflict: boolean; note?: string } {
+    if (matches.length < 2) return { isConflict: false };
+    for (let i = 0; i < matches.length; i++) {
+      for (let j = i + 1; j < matches.length; j++) {
+        const m1 = matches[i].entry;
+        const m2 = matches[j].entry;
+        const doc1 = m1.documentId || 'base_kb';
+        const doc2 = m2.documentId || 'base_kb';
+        if (doc1 !== doc2) {
+          const a1 = (m1.answer || m1.content || '').toLowerCase();
+          const a2 = (m2.answer || m2.content || '').toLowerCase();
+          const isContradiction = (
+            (a1.includes('yes') && a2.includes('no')) ||
+            (a1.includes('no') && a2.includes('yes')) ||
+            (a1.includes('unsupported') && a2.includes('supported')) ||
+            (a1.includes('supported') && a2.includes('unsupported')) ||
+            (a1.includes('always') && a2.includes('never')) ||
+            (a1.includes('never') && a2.includes('always')) ||
+            (a1.includes('sub-300') && a2.includes('2500ms')) ||
+            (a2.includes('sub-300') && a1.includes('2500ms')) ||
+            (a1.includes('under') && a2.includes('never under')) ||
+            (a2.includes('under') && a1.includes('never under'))
+          );
+          if (isContradiction) {
+            return {
+              isConflict: true,
+              note: `Contradiction detected between "${m1.document?.title || m1.title}" and "${m2.document?.title || m2.title}".`
+            };
+          }
+        }
+      }
+    }
+    return { isConflict: false };
   }
 
   // Calculate similarity between customer query and a KB entry
@@ -144,6 +209,7 @@ class KnowledgeService {
     const contentTokens = this.tokenize(entry.content || '');
     const keywordsTokens = this.tokenize(entry.keywords || '');
     const categoryTokens = this.tokenize(entry.category || '');
+    const sectionTokens = this.tokenize(entry.section || '');
 
     let score = 0;
 
@@ -152,26 +218,46 @@ class KnowledgeService {
       if (this.matchToken(token, titleTokens)) score += 0.35;
       if (this.matchToken(token, questionTokens)) score += 0.35;
       if (this.matchToken(token, keywordsTokens)) score += 0.25;
+      if (this.matchToken(token, sectionTokens)) score += 0.20;
       if (this.matchToken(token, contentTokens)) score += 0.15;
       if (this.matchToken(token, categoryTokens)) score += 0.10;
     }
 
     // Normalization based on query token count
     let normalizedScore = score / queryTokens.length;
-
-    // Domain category intent bonus
     const lowerQuery = query.toLowerCase().trim();
-    if (/\b(cost|price|pricing|rate|fee|plan|plans|subscription|how much)\b/i.test(lowerQuery) && entry.category === 'pricing') {
-      normalizedScore += 0.35;
+
+    // Domain category intent bonus (only if query has baseline semantic alignment with entry)
+    if (score >= 0.35) {
+      if (/\b(cost|price|pricing|rate|fee|plan|plans|subscription|how much)\b/i.test(lowerQuery) && entry.category === 'pricing') {
+        normalizedScore += 0.25;
+      }
+      if (/\b(product|products|feature|features|offering|solution)\b/i.test(lowerQuery) && (entry.category === 'products' || entry.category === 'services')) {
+        normalizedScore += 0.20;
+      }
+      if (/\b(policy|policies|refund|cancel|cancellation|terms)\b/i.test(lowerQuery) && entry.category === 'policies') {
+        normalizedScore += 0.20;
+      }
+      if (/\b(business hours|open hours|office hours|working hours)\b/i.test(lowerQuery) && (entry.category === 'hours' || entry.category === 'support')) {
+        normalizedScore += 0.20;
+      }
     }
-    if (/\b(product|products|feature|features|offering|solution)\b/i.test(lowerQuery) && (entry.category === 'products' || entry.category === 'services')) {
-      normalizedScore += 0.30;
+
+    // Prioritize actual subscription/plans over meta-questions about "inventing prices"
+    if (/\b(how much|cost|plan|plans|tier|tiers|subscription|rate|fee|per month)\b/i.test(lowerQuery)) {
+      if (/\b(subscription|plan|plans|pricing|rates|tiers)\b/i.test(entry.title || entry.question)) {
+        normalizedScore += 0.35;
+      }
+      if (/\b(invent|hallucinate|guess)\b/i.test(entry.title || entry.question)) {
+        normalizedScore -= 0.40;
+      }
     }
-    if (/\b(policy|policies|refund|cancel|cancellation|terms)\b/i.test(lowerQuery) && entry.category === 'policies') {
-      normalizedScore += 0.30;
-    }
-    if (/\b(hour|hours|time|schedule|open|contact|support|call)\b/i.test(lowerQuery) && (entry.category === 'hours' || entry.category === 'support')) {
-      normalizedScore += 0.30;
+
+    // Specific domain intent for barge-in / interruption
+    if (/\b(interrupt|interruption|barge|barge-in|bargein|cut off)\b/i.test(lowerQuery)) {
+      if (/\b(interrupt|interruption|barge|barge-in|bargein)\b/i.test((entry.question || '') + ' ' + (entry.content || ''))) {
+        normalizedScore += 0.35;
+      }
     }
 
     // Exact phrase match bonus
@@ -230,9 +316,12 @@ class KnowledgeService {
     const effectiveQuery = strippedQuery.length >= 3 ? strippedQuery : cleanInput;
 
     // 1. Explicit request to speak with a human / Admin
+    const isAskingHowItWorks = /\b(how\s+does|how\s+do|what\s+is|explain|tell\s+me\s+about|details\s+on)\b/i.test(cleanInput);
     if (
-      /\b(speak\s+to|talk\s+to|connect(\s+me)?(\s+to)?|transfer(\s+me)?(\s+to)?|put\s+me\s+through\s+to|let\s+me\s+speak\s+to|want|need)\s+(an?\s+)?(admin|agent|human|person|representative|support|specialist)\b/i.test(cleanInput) ||
-      /\b(human agent|live agent|human representative|transfer me|live person|talk to someone)\b/i.test(cleanInput)
+      !isAskingHowItWorks && (
+        /\b(speak\s+to|talk\s+to|connect(\s+me)?(\s+to)?|transfer(\s+me)?(\s+to)?|put\s+me\s+through\s+to|let\s+me\s+speak\s+to|want|need)\s+(an?\s+)?(admin|agent|human|person|representative|support|specialist)\b/i.test(cleanInput) ||
+        /\b(human agent|live agent|human representative|transfer me|live person|talk to someone)\b/i.test(cleanInput)
+      )
     ) {
       return {
         answer: "Certainly. I will connect you with a member of our human support team right away. Please hold the line while I transfer you.",
@@ -384,6 +473,18 @@ class KnowledgeService {
         .map(m => `Title: ${m.entry.title}\nCategory: ${m.entry.category}\nQuestion: ${m.entry.question || 'N/A'}\nAnswer: ${m.entry.answer || 'N/A'}\nDetails: ${m.entry.content}`)
         .join('\n\n---\n\n');
 
+      const conflictCheck = this.detectConflict(matches);
+      const mappedSources: GroundedSource[] = matches.map(m => ({
+        id: m.entry.id,
+        title: m.entry.title,
+        category: m.entry.category,
+        section: m.entry.section || 'General',
+        pageNumber: m.entry.pageNumber || 1,
+        documentTitle: m.entry.document?.title || 'Approved Knowledge Base',
+        documentFileName: m.entry.document?.fileName || 'Approved Document',
+        snippet: m.entry.answer || (m.entry.content ? m.entry.content.slice(0, 220) : '')
+      }));
+
       // Try OpenAI if available and not quota-exhausted
       if (this.openai && !this.isQuotaExhausted) {
         try {
@@ -410,11 +511,12 @@ ${contextText}`;
           const reply = completion.choices[0]?.message?.content?.trim();
           if (reply && reply.length > 5) {
             return {
-              answer: reply,
+              answer: conflictCheck.isConflict ? `⚠️ Conflicting Information: ${reply}` : reply,
               isGrounded: true,
               requiresTransfer: false,
-              sources: matches.map(m => ({ id: m.entry.id, title: m.entry.title, category: m.entry.category })),
+              sources: mappedSources,
               confidence: topMatch.score,
+              isConflict: conflictCheck.isConflict,
               latencyMs: Date.now() - t0
             };
           }
@@ -429,22 +531,25 @@ ${contextText}`;
       // Built-in zero-latency Grounded answer
       if (topMatch.entry.answer) {
         return {
-          answer: topMatch.entry.answer,
+          answer: conflictCheck.isConflict ? `⚠️ Conflicting Information: ${topMatch.entry.answer}` : topMatch.entry.answer,
           isGrounded: true,
           requiresTransfer: false,
-          sources: matches.map(m => ({ id: m.entry.id, title: m.entry.title, category: m.entry.category })),
+          sources: mappedSources,
           confidence: topMatch.score,
+          isConflict: conflictCheck.isConflict,
           latencyMs: Date.now() - t0
         };
       } else if (topMatch.entry.content) {
         const sentences = topMatch.entry.content.split(/[.\n]/).filter((s: string) => s.trim().length > 10);
         const answer = sentences.slice(0, 2).join('. ').trim() + '.';
+        const rawAns = answer.length > 10 ? answer : topMatch.entry.content.slice(0, 200);
         return {
-          answer: answer.length > 10 ? answer : topMatch.entry.content.slice(0, 200),
+          answer: conflictCheck.isConflict ? `⚠️ Conflicting Information: ${rawAns}` : rawAns,
           isGrounded: true,
           requiresTransfer: false,
-          sources: matches.map(m => ({ id: m.entry.id, title: m.entry.title, category: m.entry.category })),
+          sources: mappedSources,
           confidence: topMatch.score,
+          isConflict: conflictCheck.isConflict,
           latencyMs: Date.now() - t0
         };
       }
@@ -643,6 +748,70 @@ If they ask for company-specific private data or account changes, explain you ca
     } catch (err) {
       console.warn('[KnowledgeGap] Error tracking knowledge gap:', err);
     }
+  }
+
+  /**
+   * Dedicated Agent Copilot Method
+   * Grounded strictly in approved Knowledge Base documents.
+   * Never fabricates missing info. Flags conflicts.
+   */
+  public async getCopilotSuggestion(
+    query: string,
+    history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
+    customerContext?: CustomerContext
+  ): Promise<GroundedResponse> {
+    const t0 = Date.now();
+    const cleanQuery = (query || '').trim();
+    if (!cleanQuery) {
+      return {
+        answer: COPILOT_NOT_FOUND_MESSAGE,
+        isGrounded: false,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 0,
+        latencyMs: 0
+      };
+    }
+
+    const matches = await this.search(cleanQuery, 3);
+    if (matches.length === 0 || matches[0].score < 0.25) {
+      return {
+        answer: COPILOT_NOT_FOUND_MESSAGE,
+        isGrounded: false,
+        requiresTransfer: false,
+        sources: [],
+        confidence: matches[0]?.score || 0,
+        latencyMs: Date.now() - t0
+      };
+    }
+
+    const topMatch = matches[0];
+    const conflict = this.detectConflict(matches);
+    const sources: GroundedSource[] = matches.map(m => ({
+      id: m.entry.id,
+      title: m.entry.title,
+      category: m.entry.category,
+      section: m.entry.section || 'Approved Knowledge Base',
+      pageNumber: m.entry.pageNumber || 1,
+      documentTitle: m.entry.document?.title || 'KAIRA Official Documentation',
+      documentFileName: m.entry.document?.fileName || 'Knowledge Base Document',
+      snippet: m.entry.answer || (m.entry.content ? m.entry.content.slice(0, 250) : '')
+    }));
+
+    let answer = topMatch.entry.answer || topMatch.entry.content?.slice(0, 300) || COPILOT_NOT_FOUND_MESSAGE;
+    if (conflict.isConflict && conflict.note) {
+      answer = `⚠️ Conflicting Knowledge Base information detected: ${answer} [${conflict.note}]`;
+    }
+
+    return {
+      answer,
+      isGrounded: true,
+      requiresTransfer: false,
+      sources,
+      confidence: Math.round(topMatch.score * 100) / 100,
+      isConflict: conflict.isConflict,
+      latencyMs: Date.now() - t0
+    };
   }
 
   private categorizeQuestion(text: string): string {

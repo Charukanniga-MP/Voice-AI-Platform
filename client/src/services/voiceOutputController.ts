@@ -13,6 +13,8 @@
  */
 
 import { audioDeviceManager } from './audioDevice.js';
+import { getSocket } from './socket.js';
+import { webrtcManager } from './webrtc.js';
 
 export interface PlaybackOptions {
   responseId?: string;
@@ -242,6 +244,19 @@ export class VoiceOutputController {
         hasFallenBack = true;
 
         console.warn(`[VoiceOutputController] ${reason}, transitioning to single SpeechSynthesis fallback:`, err);
+        try {
+          const socket = getSocket();
+          const callId = webrtcManager.getCallId();
+          if (callId) {
+            socket.emit('call:ai_fallback_triggered', {
+              callId,
+              serviceType: 'tts',
+              fallbackProvider: 'Web Speech API (SpeechSynthesis)',
+              reason: `Server audio stream unavailable (${reason})`
+            });
+          }
+        } catch {}
+
         if (this.currentAudio) {
           try {
             this.currentAudio.pause();

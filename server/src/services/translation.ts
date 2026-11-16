@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { prisma } from '../db.js';
-import { knowledgeService, FALLBACK_MESSAGE, CustomerContext } from './knowledge.js';
+import { knowledgeService, FALLBACK_MESSAGE, COPILOT_NOT_FOUND_MESSAGE, CustomerContext, GroundedSource } from './knowledge.js';
 
 export const SUPPORTED_LANGUAGES: Record<string, { name: string; nativeName: string; bcp47: string }> = {
   en: { name: 'English', nativeName: 'English', bcp47: 'en-US' },
@@ -80,6 +80,14 @@ export class TranslationService {
     this.translationCache.set(`en->hi:${orderPrompt}`, "नमस्ते! बिल्कुल मैं आपकी सहायता करूँगा। क्या आप अपनी ऑर्डर आईडी बता सकते हैं?");
     this.translationCache.set(`en->ml:${orderPrompt}`, "നമസ്കാരം! തീർച്ചയായും സഹായിക്കാം. നിങ്ങളുടെ ഓർഡർ ഐഡി പറയാമോ?");
     this.translationCache.set(`en->kn:${orderPrompt}`, "ನಮಸ್ಕಾರ! ಖಂಡಿತವಾಗಿಯೂ ಸಹಾಯ ಮಾಡುತ್ತೇನೆ. ದಯವಿಟ್ಟು ನಿಮ್ಮ ಆರ್ಡರ್ ಐಡಿಯನ್ನು ತಿಳಿಸಬಹುದೇ?");
+
+    // Pre-cache Language inquiries for instant regional language copilot queries
+    const langInquiry = "Which languages does KAIRA support?";
+    this.translationCache.set(`ta->en:KAIRA எந்தெந்த மொழிகளை ஆதரிக்கிறது?`, langInquiry);
+    this.translationCache.set(`te->en:KAIRA ఏ భాషలకు మద్దతు ఇస్తుంది?`, langInquiry);
+    this.translationCache.set(`hi->en:क्या KAIRA हिंदी समझ सकता है?`, "Can KAIRA understand Hindi and which languages are supported?");
+    this.translationCache.set(`ml->en:KAIRA മലയാളത്തിൽ സംസാരിക്കുമോ?`, "Does KAIRA speak Malayalam and support other languages?");
+    this.translationCache.set(`kn->en:KAIRA ಕನ್ನಡದಲ್ಲಿ ಕಾರ್ಯನಿರ್ವಹಿಸುತ್ತದೆಯೇ?`, "Does KAIRA work in Kannada and support other languages?");
   }
 
   // Get language display name
@@ -229,10 +237,12 @@ export class TranslationService {
     customerContext?: CustomerContext
   ): Promise<{
     answer: string;
-    sources: Array<{ id: string; title: string; category: string }>;
+    sources: GroundedSource[];
     isGrounded: boolean;
     requiresTransfer: boolean;
     language: string;
+    confidence: number;
+    isConflict?: boolean;
     latencyMs: number;
   }> {
     const t0 = Date.now();
@@ -244,6 +254,7 @@ export class TranslationService {
         isGrounded: true,
         requiresTransfer: false,
         language: customerLang,
+        confidence: 1.0,
         latencyMs: 0
       };
     }
@@ -284,6 +295,75 @@ export class TranslationService {
       isGrounded: grounded.isGrounded,
       requiresTransfer: grounded.requiresTransfer,
       language: normLang,
+      confidence: grounded.confidence || 0.8,
+      isConflict: grounded.isConflict,
+      latencyMs: Date.now() - t0
+    };
+  }
+
+  // Grounded Copilot Suggestion for Live Human Agent Dashboard
+  public async getCopilotSuggestion(
+    query: string,
+    customerLang: string = 'en',
+    callHistory: any = [],
+    customerContext?: CustomerContext
+  ): Promise<{
+    answer: string;
+    sources: GroundedSource[];
+    isGrounded: boolean;
+    requiresTransfer: boolean;
+    language: string;
+    confidence: number;
+    isConflict?: boolean;
+    latencyMs: number;
+  }> {
+    const t0 = Date.now();
+    const trimmed = (query || '').trim();
+    if (!trimmed) {
+      return {
+        answer: COPILOT_NOT_FOUND_MESSAGE,
+        sources: [],
+        isGrounded: false,
+        requiresTransfer: false,
+        language: customerLang,
+        confidence: 0,
+        latencyMs: 0
+      };
+    }
+
+    const detectedLang = this.detectLanguage(trimmed);
+    let normLang = (customerLang || 'en').toLowerCase().slice(0, 2);
+    if (detectedLang !== 'en' && detectedLang !== normLang) {
+      normLang = detectedLang;
+    }
+
+    let englishQuery = trimmed;
+    if (detectedLang !== 'en') {
+      englishQuery = await this.translateText(trimmed, 'en', detectedLang);
+    }
+
+    const formattedHistory: Array<{ role: 'user' | 'assistant'; content: string }> = Array.isArray(callHistory)
+      ? callHistory.map((item: any) => ({
+        role: (item.role || item.sender === 'customer' ? 'user' : 'assistant') as 'user' | 'assistant',
+        content: item.content || item.text || ''
+      })).filter(h => h.content)
+      : [];
+
+    const copilotResp = await knowledgeService.getCopilotSuggestion(englishQuery, formattedHistory, customerContext);
+
+    let localizedAnswer = copilotResp.answer;
+    if (normLang !== 'en' && localizedAnswer && localizedAnswer !== COPILOT_NOT_FOUND_MESSAGE) {
+      localizedAnswer = await this.translateText(localizedAnswer, normLang, 'en');
+    }
+
+    return {
+      answer: localizedAnswer,
+      sources: copilotResp.sources || [],
+      isGrounded: copilotResp.isGrounded,
+      requiresTransfer: copilotResp.requiresTransfer,
+      language: normLang,
+      confidence: copilotResp.confidence,
+      isConflict: copilotResp.isConflict,
       latencyMs: Date.now() - t0
     };
   }

@@ -225,37 +225,50 @@ export const CustomerDashboard: React.FC = () => {
     ticketId?: string;
   } | null>(null);
 
+  // Dynamic user-facing call recovery notification banner
+  const [recoveryBanner, setRecoveryBanner] = useState<{
+    type: 'reconnecting' | 'restored' | 'device' | 'escalating';
+    message: string;
+  } | null>(null);
+
   // Auto-scroll transcript
   const transcriptEndRef = useRef<HTMLDivElement>(null);
 
   // Listen to WebRTC automatic reconnection events
   useEffect(() => {
     webrtcManager.setCallbacks({
-      onReconnecting: (attempt, max) => {
+      onReconnecting: (attempt, max, message) => {
+        const text = message || `Reconnecting your call... (${attempt}/${max})`;
+        setRecoveryBanner({ type: 'reconnecting', message: text });
         setTranscripts(prev => [
           ...prev,
           {
             id: 'reconnect_' + Date.now(),
             sender: 'system',
             senderName: 'System',
-            text: `⚠️ Network connection interrupted. Attempting automatic reconnection... (${attempt}/${max})`,
+            text: `⚠️ ${text}`,
             timestamp: new Date().toISOString()
           }
         ]);
       },
-      onReconnected: () => {
+      onReconnected: (message) => {
+        const text = message || 'Connection restored! Live voice resumed.';
+        setRecoveryBanner({ type: 'restored', message: text });
+        setTimeout(() => setRecoveryBanner(null), 4000);
         setTranscripts(prev => [
           ...prev,
           {
             id: 'reconnect_' + Date.now(),
             sender: 'system',
             senderName: 'System',
-            text: `✓ Connection restored! Live two-way voice resumed.`,
+            text: `✓ ${text}`,
             timestamp: new Date().toISOString()
           }
         ]);
       },
       onReconnectFailed: (msg) => {
+        const text = msg || 'Call interrupted. Connecting you to a human representative...';
+        setRecoveryBanner({ type: 'escalating', message: text });
         setCallStatus('ended');
         setTranscripts(prev => [
           ...prev,
@@ -263,7 +276,40 @@ export const CustomerDashboard: React.FC = () => {
             id: 'reconnect_fail_' + Date.now(),
             sender: 'system',
             senderName: 'System',
-            text: `❌ ${msg}`,
+            text: `❌ ${text}`,
+            timestamp: new Date().toISOString()
+          }
+        ]);
+      },
+      onDeviceError: (deviceType, status, message) => {
+        setRecoveryBanner({
+          type: status === 'error' ? 'device' : 'restored',
+          message
+        });
+        if (status === 'restored') {
+          setTimeout(() => setRecoveryBanner(null), 4000);
+        }
+        setTranscripts(prev => [
+          ...prev,
+          {
+            id: 'device_' + Date.now(),
+            sender: 'system',
+            senderName: 'System',
+            text: status === 'error' ? `⚠️ ${message}` : `✓ ${message}`,
+            timestamp: new Date().toISOString()
+          }
+        ]);
+      },
+      onAiFallback: (_serviceType, message) => {
+        setRecoveryBanner({ type: 'device', message });
+        setTimeout(() => setRecoveryBanner(null), 4000);
+        setTranscripts(prev => [
+          ...prev,
+          {
+            id: 'ai_fallback_' + Date.now(),
+            sender: 'system',
+            senderName: 'System',
+            text: `ℹ️ ${message}`,
             timestamp: new Date().toISOString()
           }
         ]);
@@ -555,7 +601,7 @@ export const CustomerDashboard: React.FC = () => {
           (
             (data.responseId && t.id === data.responseId) ||
             (t.text.trim().toLowerCase() === data.answer.trim().toLowerCase() &&
-             Math.abs(Date.now() - new Date(t.timestamp).getTime()) < 4000)
+              Math.abs(Date.now() - new Date(t.timestamp).getTime()) < 4000)
           )
         );
         if (isDuplicate) return prev;
@@ -1748,6 +1794,29 @@ export const CustomerDashboard: React.FC = () => {
             </div>
           )}
         </div>
+
+        {/* Dynamic Call Health & Recovery Alert Banner */}
+        {recoveryBanner && (
+          <div className={`mx-6 mt-4 p-3.5 rounded-xl border flex items-center justify-between text-xs font-semibold shadow-xs transition-all ${recoveryBanner.type === 'reconnecting'
+              ? 'bg-amber-50/90 border-amber-200 text-amber-900'
+              : recoveryBanner.type === 'restored'
+                ? 'bg-emerald-50/90 border-emerald-200 text-emerald-900'
+                : recoveryBanner.type === 'escalating'
+                  ? 'bg-indigo-50/90 border-indigo-200 text-indigo-900'
+                  : 'bg-rose-50/90 border-rose-200 text-rose-900'
+            }`}>
+            <div className="flex items-center gap-2.5">
+              <span className={`w-2.5 h-2.5 rounded-full ${recoveryBanner.type === 'reconnecting' ? 'bg-amber-500 animate-ping' :
+                  recoveryBanner.type === 'restored' ? 'bg-emerald-500' :
+                    recoveryBanner.type === 'escalating' ? 'bg-indigo-500 animate-pulse' : 'bg-rose-500 animate-bounce'
+                }`} />
+              <span>{recoveryBanner.message}</span>
+            </div>
+            {recoveryBanner.type === 'restored' && (
+              <span className="text-[10px] text-emerald-700 bg-emerald-100/60 px-2 py-0.5 rounded-full">Active</span>
+            )}
+          </div>
+        )}
 
         {/* Real-time Customer Sentiment Indicator */}
         {callStatus !== 'idle' && (

@@ -138,6 +138,8 @@ export interface CallRecord {
   reconnectCount?: number;
   wasReconnected?: boolean;
   audioQualityScore?: number | null;
+  audioDeviceStatus?: string | null;
+  recoveryEvents?: CallRecoveryEvent[];
   firstResponseMs?: number | null;
   intelligence?: CallIntelligence | null;
   followUpTasks?: FollowUpTask[];
@@ -167,6 +169,8 @@ export interface KnowledgeEntry {
   documentId?: string | null;
   title: string;
   category: string;
+  section?: string | null;
+  pageNumber?: number | null;
   question?: string | null;
   answer?: string | null;
   content: string;
@@ -182,11 +186,37 @@ export interface KnowledgeDocument {
   fileName: string;
   fileType: string;
   fileSize: number;
+  fileHash?: string | null;
   status: 'processing' | 'indexed' | 'failed';
   extractedText: string;
   entryCount: number;
+  errorMessage?: string | null;
   createdAt: string;
+  updatedAt?: string;
   _count?: { entries: number };
+}
+
+export interface KnowledgeCopilotSource {
+  id: string;
+  title: string;
+  category: string;
+  section?: string | null;
+  pageNumber?: number | null;
+  documentTitle?: string | null;
+  documentFileName?: string | null;
+  snippet?: string;
+}
+
+export interface KnowledgeCopilotSuggestion {
+  callId: string;
+  query: string;
+  answer: string;
+  sources: KnowledgeCopilotSource[];
+  isGrounded: boolean;
+  confidence: number;
+  language: string;
+  isConflict?: boolean;
+  timestamp: string | Date;
 }
 
 export interface CallStats {
@@ -253,6 +283,48 @@ export interface CallQualityAlertSettings {
   droppedCallThreshold: number;
   recordingUploadThreshold: number;
   windowMinutes: number;
+}
+
+export interface CallRecoveryEvent {
+  id: string;
+  callRecordId: string;
+  callId: string;
+  failureType: 'network_disconnected' | 'webrtc_failed' | 'ice_failed' | 'device_lost' | 'stt_timeout' | 'llm_timeout' | 'tts_failed' | 'audio_interruption' | string;
+  recoveryStatus: 'attempting' | 'recovered' | 'failed' | 'escalated_to_human' | string;
+  attempts: number;
+  interruptionDurationMs?: number | null;
+  diagnosticData?: any;
+  errorMessage?: string | null;
+  createdAt: string;
+  resolvedAt?: string | null;
+  callRecord?: {
+    customerName?: string;
+    customerPhone?: string | null;
+    agentName?: string | null;
+    type?: string;
+    status?: string;
+  };
+}
+
+export interface ServiceHealthReport {
+  stt: { status: 'healthy' | 'degraded' | 'down'; latencyMs: number; provider: string };
+  llm: { status: 'healthy' | 'degraded' | 'down'; latencyMs: number; provider: string };
+  tts: { status: 'healthy' | 'degraded' | 'down'; latencyMs: number; provider: string };
+  webrtc: { status: 'healthy' | 'degraded' | 'down'; activeTurnServers: number };
+  database: { status: 'healthy' | 'degraded' | 'down'; latencyMs: number };
+}
+
+export interface CallHealthTelemetry {
+  callId: string;
+  webrtcState: string;
+  iceState: string;
+  latencyMs: number;
+  packetLoss: number;
+  jitterMs: number;
+  audioDeviceStatus: 'healthy' | 'mic_disconnected' | 'speaker_disconnected' | 'recovering';
+  reconnectAttempts: number;
+  lastUpdated: number;
+  recoveryStatus: 'attempting' | 'recovered' | 'failed' | 'escalated_to_human';
 }
 
 export interface CallIntelligence {

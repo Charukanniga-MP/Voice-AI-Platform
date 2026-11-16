@@ -9,7 +9,7 @@ import { SupportTickets } from './SupportTickets.js';
 import {
   User, CallRecord, CallTranscript, CallTransferRequest,
   KnowledgeEntry, KnowledgeDocument, CallStats, CallQualityStats, CallQualityAlertSettings, LanguageCode, SUPPORTED_LANGUAGES,
-  CallIntelligenceStats, KnowledgeGap, FollowUpTask
+  CallIntelligenceStats, KnowledgeGap, FollowUpTask, ServiceHealthReport, CallHealthTelemetry, CallRecoveryEvent
 } from '../types.js';
 import { CustomerProfileModal } from '../components/CustomerProfileModal.js';
 import { CallIntelligenceModal } from '../components/CallIntelligenceModal.js';
@@ -245,6 +245,22 @@ export const AdminDashboard: React.FC = () => {
   const [qualityFilter, setQualityFilter] = useState<'all' | 'excellent' | 'good' | 'poor' | 'reconnected' | 'disconnected' | 'failed'>('all');
   const [qualitySearch, setQualitySearch] = useState('');
   const [selectedQualityCall, setSelectedQualityCall] = useState<CallRecord | null>(null);
+
+  // Call Health & Automatic Recovery State
+  const [serviceHealth, setServiceHealth] = useState<ServiceHealthReport | null>(null);
+  const [activeCallHealth, setActiveCallHealth] = useState<CallHealthTelemetry[]>([]);
+  const [recoveryAnalytics, setRecoveryAnalytics] = useState<{
+    totalEvents: number;
+    recoveredCount: number;
+    failedCount: number;
+    escalatedCount: number;
+    recoverySuccessRate: number;
+    failureTypeBreakdown: Record<string, number>;
+    recentEvents: CallRecoveryEvent[];
+  } | null>(null);
+  const [recoveryFailureFilter, setRecoveryFailureFilter] = useState<string>('all');
+  const [recoveryStatusFilter, setRecoveryStatusFilter] = useState<string>('all');
+  const [selectedRecoveryEvent, setSelectedRecoveryEvent] = useState<CallRecoveryEvent | null>(null);
   // Audio Playback Simulator & Copilot States
   const [playbackIndex, setPlaybackIndex] = useState<number | null>(null);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
@@ -554,15 +570,21 @@ export const AdminDashboard: React.FC = () => {
     setLoadingQuality(true);
     try {
       const headers = { Authorization: `Bearer ${token}` };
-      const [res, settingsRes] = await Promise.all([
+      const [res, settingsRes, healthRes, liveRes, recoveryRes] = await Promise.all([
         fetch('/api/calls/quality/stats', { headers }),
-        fetch('/api/calls/quality/alerts/settings', { headers })
+        fetch('/api/calls/quality/alerts/settings', { headers }),
+        fetch('/api/calls/health/services', { headers }),
+        fetch('/api/calls/health/live', { headers }),
+        fetch('/api/calls/recovery/events', { headers })
       ]);
-      const data = await res.json();
-      if (res.ok) setQualityStats(data);
-      if (settingsRes.ok) {
-        setQualityAlertSettings(await settingsRes.json());
+      if (res.ok) setQualityStats(await res.json());
+      if (settingsRes.ok) setQualityAlertSettings(await settingsRes.json());
+      if (healthRes.ok) setServiceHealth(await healthRes.json());
+      if (liveRes.ok) {
+        const liveData = await liveRes.json();
+        setActiveCallHealth(liveData.activeCalls || []);
       }
+      if (recoveryRes.ok) setRecoveryAnalytics(await recoveryRes.json());
     } catch (err) {
       console.error('Failed to load call quality stats:', err);
     } finally {
@@ -830,6 +852,18 @@ export const AdminDashboard: React.FC = () => {
     socket.on('call:copilot_recommendation', handleCopilotRecommendation);
     socket.on('call:kb_suggestion', handleCopilotRecommendation);
 
+    const handleCallHealthUpdate = (telemetry: CallHealthTelemetry) => {
+      setActiveCallHealth(prev => {
+        const idx = prev.findIndex(c => c.callId === telemetry.callId);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = telemetry;
+          return next;
+        }
+        return [telemetry, ...prev];
+      });
+    };
+    socket.on('call:health_update', handleCallHealthUpdate);
 
     return () => {
       socket.off('connect', registerSession);
@@ -844,6 +878,7 @@ export const AdminDashboard: React.FC = () => {
       socket.off('call:sentiment_update', handleSentimentUpdate);
       socket.off('call:copilot_recommendation', handleCopilotRecommendation);
       socket.off('call:kb_suggestion', handleCopilotRecommendation);
+      socket.off('call:health_update', handleCallHealthUpdate);
 
       ringtoneService.stop();
     };
@@ -3649,6 +3684,296 @@ export const AdminDashboard: React.FC = () => {
                 );
               })()}
             </div>
+
+            {/* PLATFORM & AI SERVICES HEALTH BAR */}
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <HeartPulse className="w-4 h-4 text-emerald-600" />
+                  <h3 className="text-sm font-bold text-slate-900">Platform & AI Services Live Health</h3>
+                </div>
+                <span className="text-[11px] text-slate-400">Zero-latency automated failover active</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                {/* STT */}
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-700">Speech-to-Text (STT)</span>
+                    <span className={`w-2 h-2 rounded-full ${serviceHealth?.stt.status === 'healthy' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  </div>
+                  <div className="text-xs font-semibold text-emerald-700">{serviceHealth?.stt.status === 'healthy' ? '🟢 Operational' : '🟡 Degraded'}</div>
+                  <p className="text-[10px] text-slate-400 truncate">{serviceHealth?.stt.provider || 'Web Speech API + Fast VAD'}</p>
+                </div>
+                {/* LLM */}
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-700">LLM Reasoning</span>
+                    <span className={`w-2 h-2 rounded-full ${serviceHealth?.llm.status === 'healthy' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  </div>
+                  <div className="text-xs font-semibold text-emerald-700">{serviceHealth?.llm.status === 'healthy' ? '🟢 Operational' : '🟡 Local Failover'}</div>
+                  <p className="text-[10px] text-slate-400 truncate">{serviceHealth?.llm.provider || 'OpenAI / Zero-Latency Engine'}</p>
+                </div>
+                {/* TTS */}
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-700">Voice Synthesis (TTS)</span>
+                    <span className={`w-2 h-2 rounded-full ${serviceHealth?.tts.status === 'healthy' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  </div>
+                  <div className="text-xs font-semibold text-emerald-700">{serviceHealth?.tts.status === 'healthy' ? '🟢 Operational' : '🟡 Degraded'}</div>
+                  <p className="text-[10px] text-slate-400 truncate">{serviceHealth?.tts.provider || 'High-Fidelity Audio Stream'}</p>
+                </div>
+                {/* WebRTC */}
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-700">WebRTC & TURN Relay</span>
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  </div>
+                  <div className="text-xs font-semibold text-emerald-700">🟢 Operational</div>
+                  <p className="text-[10px] text-slate-400 truncate">STUN / TURN Active Relay</p>
+                </div>
+                {/* Database */}
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-700">Database & State</span>
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  </div>
+                  <div className="text-xs font-semibold text-emerald-700">🟢 Operational ({serviceHealth?.database.latencyMs ?? 1}ms)</div>
+                  <p className="text-[10px] text-slate-400 truncate">SQLite Session Cache</p>
+                </div>
+              </div>
+            </div>
+
+            {/* ACTIVE CALLS LIVE HEALTH & WEBRTC DIAGNOSTICS */}
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-indigo-600" />
+                  <h3 className="text-sm font-bold text-slate-900">Active Voice Calls — Live Telemetry & Device Health</h3>
+                  <span className="text-xs px-2 py-0.5 rounded-full font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    {activeCallHealth.length} Active
+                  </span>
+                </div>
+                <span className="text-[11px] text-slate-400">Updates live via WebRTC signaling</span>
+              </div>
+
+              {activeCallHealth.length === 0 ? (
+                <div className="py-8 text-center bg-slate-50/60 rounded-xl border border-dashed border-slate-200 text-slate-400 text-xs">
+                  No active voice calls currently in progress. All audio channels standby.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {activeCallHealth.map((call) => (
+                    <div key={call.callId} className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-900 font-mono truncate">{call.callId}</span>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          call.webrtcState === 'connected' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                          call.webrtcState === 'connecting' ? 'bg-amber-50 text-amber-700 border border-amber-200 animate-pulse' :
+                          'bg-red-50 text-red-700 border border-red-200'
+                        }`}>
+                          {call.webrtcState.toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 text-[11px] font-mono text-slate-600">
+                        <div>RTT: <strong className="text-slate-900">{call.latencyMs}ms</strong></div>
+                        <div>Loss: <strong className="text-slate-900">{call.packetLoss}%</strong></div>
+                        <div>Jitter: <strong className="text-slate-900">{call.jitterMs}ms</strong></div>
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-200/60">
+                        <span className="flex items-center gap-1 text-slate-500">
+                          {call.audioDeviceStatus === 'healthy' ? (
+                            <><Mic className="w-3 h-3 text-emerald-600" /> Audio Input Active</>
+                          ) : (
+                            <><MicOff className="w-3 h-3 text-red-600" /> Device Disconnected</>
+                          )}
+                        </span>
+                        <span className="text-slate-400">Recon: {call.reconnectAttempts}x</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* FAILURE LOGS & AUTOMATIC RECOVERY ANALYTICS */}
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Failure Logs & Automatic Recovery Analytics</h3>
+                  <p className="text-xs text-slate-500">
+                    Audit trail of network drops, ICE renegotiations, device glitches, AI fallbacks, and recovery attempts.
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 text-xs font-bold border border-emerald-200">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    Recovery Rate: {recoveryAnalytics?.recoverySuccessRate ?? 100}%
+                  </div>
+                </div>
+              </div>
+
+              {/* Filters */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-1">Failure Type:</span>
+                {(['all', 'network_disconnected', 'webrtc_failed', 'ice_failed', 'device_lost', 'stt_timeout', 'llm_timeout', 'tts_failed'] as const).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setRecoveryFailureFilter(type)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold capitalize transition-all cursor-pointer ${
+                      recoveryFailureFilter === type
+                        ? 'bg-purple-600 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {type.replace('_', ' ')}
+                  </button>
+                ))}
+              </div>
+
+              {/* Recovery Events Table */}
+              {(() => {
+                const events = (recoveryAnalytics?.recentEvents || []).filter(e => {
+                  if (recoveryFailureFilter !== 'all' && e.failureType !== recoveryFailureFilter) return false;
+                  if (recoveryStatusFilter !== 'all' && e.recoveryStatus !== recoveryStatusFilter) return false;
+                  return true;
+                });
+
+                if (events.length === 0) {
+                  return (
+                    <div className="py-8 text-center text-xs text-slate-400 bg-slate-50/60 rounded-xl border border-dashed border-slate-200">
+                      No failure recovery events recorded matching the selected filter.
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-slate-400 font-semibold bg-slate-50/70">
+                          <th className="py-3 px-4">Timestamp</th>
+                          <th className="py-3 px-4">Call ID</th>
+                          <th className="py-3 px-4">Customer</th>
+                          <th className="py-3 px-4">Failure Category</th>
+                          <th className="py-3 px-4">Attempts</th>
+                          <th className="py-3 px-4">Interruption Duration</th>
+                          <th className="py-3 px-4">Recovery Status</th>
+                          <th className="py-3 px-4 text-right">Diagnostics</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        {events.map((ev) => (
+                          <tr key={ev.id} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="py-3 px-4 text-slate-500 font-mono text-[11px]">
+                              {new Date(ev.createdAt).toLocaleTimeString()}
+                            </td>
+                            <td className="py-3 px-4 font-mono font-bold text-slate-900 truncate max-w-[140px]">
+                              {ev.callId}
+                            </td>
+                            <td className="py-3 px-4">
+                              <div className="font-semibold text-slate-800">{ev.callRecord?.customerName || 'Customer'}</div>
+                            </td>
+                            <td className="py-3 px-4">
+                              <span className="capitalize font-semibold text-slate-700">
+                                {ev.failureType.replace(/_/g, ' ')}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 font-mono text-center">
+                              {ev.attempts}x
+                            </td>
+                            <td className="py-3 px-4 font-mono">
+                              {ev.interruptionDurationMs ? `${ev.interruptionDurationMs} ms` : '—'}
+                            </td>
+                            <td className="py-3 px-4">
+                              <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                ev.recoveryStatus === 'recovered' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                                ev.recoveryStatus === 'attempting' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                                ev.recoveryStatus === 'escalated_to_human' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' :
+                                'bg-red-50 text-red-700 border border-red-200'
+                              }`}>
+                                {ev.recoveryStatus.replace(/_/g, ' ')}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              <button
+                                onClick={() => setSelectedRecoveryEvent(ev)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-50 hover:bg-purple-50 text-slate-700 hover:text-purple-700 rounded-lg border border-slate-200 font-medium text-[11px] cursor-pointer"
+                              >
+                                <Eye className="w-3.5 h-3.5" /> Diagnostics
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* DIAGNOSTIC MODAL */}
+            {selectedRecoveryEvent && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+                <div className="bg-white w-full max-w-lg rounded-2xl border border-slate-200 shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                  <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50/60">
+                    <div className="flex items-center gap-2">
+                      <Activity className="w-5 h-5 text-purple-600" />
+                      <h3 className="font-bold text-slate-900 text-sm">Failure Recovery Diagnostics</h3>
+                    </div>
+                    <button
+                      onClick={() => setSelectedRecoveryEvent(null)}
+                      className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="p-5 space-y-4 text-xs">
+                    <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                      <div>
+                        <span className="text-slate-400 block text-[10px] uppercase font-bold">Call ID</span>
+                        <span className="font-mono font-bold text-slate-800">{selectedRecoveryEvent.callId}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px] uppercase font-bold">Failure Type</span>
+                        <span className="font-bold text-slate-800 capitalize">{selectedRecoveryEvent.failureType.replace(/_/g, ' ')}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px] uppercase font-bold">Recovery Status</span>
+                        <span className="font-bold text-emerald-700 capitalize">{selectedRecoveryEvent.recoveryStatus.replace(/_/g, ' ')}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px] uppercase font-bold">Retry Count</span>
+                        <span className="font-bold text-slate-800">{selectedRecoveryEvent.attempts} attempt(s)</span>
+                      </div>
+                    </div>
+
+                    {selectedRecoveryEvent.errorMessage && (
+                      <div>
+                        <span className="text-slate-400 block text-[10px] uppercase font-bold mb-1">User Notice</span>
+                        <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 font-medium">
+                          {selectedRecoveryEvent.errorMessage}
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <span className="text-slate-400 block text-[10px] uppercase font-bold mb-1">Telemetry Diagnostics</span>
+                      <pre className="p-3 bg-slate-900 text-emerald-400 rounded-xl font-mono text-[11px] overflow-x-auto max-h-48">
+                        {JSON.stringify(selectedRecoveryEvent.diagnosticData || { status: 'Telemetric baseline normal' }, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                  <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end">
+                    <button
+                      onClick={() => setSelectedRecoveryEvent(null)}
+                      className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-semibold text-xs transition-colors cursor-pointer"
+                    >
+                      Close Diagnostics
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

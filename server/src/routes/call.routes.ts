@@ -9,6 +9,7 @@ import { callIntelligenceService } from '../services/callIntelligence.js';
 import { callSessions, emitCallQualityAlert } from '../services/socket.js';
 import { evaluateCallQualityAlert, getCallQualityAlertSettings, QualityAlertEventType } from '../services/callQualityAlerts.js';
 import { realtimeIntelligenceService } from '../services/realtimeIntelligence.service.js';
+import { callReliabilityService } from '../services/callReliability.js';
 
 const router = Router();
 
@@ -29,6 +30,38 @@ router.get('/session-lock/:callId', (req: Request, res: Response) => {
     activeSessionsTotal: callSessions.size,
     processedUtterancesCount: session.processedUtteranceIds.size
   });
+});
+
+// Live Platform & AI Services Health Status (STT, LLM, TTS, WebRTC, Database)
+router.get('/health/services', async (_req: Request, res: Response) => {
+  try {
+    const health = await callReliabilityService.getServiceHealth();
+    res.json(health);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to inspect service health.' });
+  }
+});
+
+// Live Active Calls Health & Telemetry
+router.get('/health/live', authenticate, requireRole(['admin', 'agent']), (_req: Request, res: Response) => {
+  const activeCalls = callReliabilityService.getAllActiveCallHealth();
+  res.json({ success: true, count: activeCalls.length, activeCalls });
+});
+
+// Historical Call Failure & Recovery Analytics (Admin only)
+router.get('/recovery/events', authenticate, requireRole(['admin']), async (req: Request, res: Response) => {
+  try {
+    const { failureType, recoveryStatus, startDate, endDate } = req.query;
+    const analytics = await callReliabilityService.getRecoveryAnalytics({
+      failureType: failureType as string,
+      recoveryStatus: recoveryStatus as string,
+      startDate: startDate ? new Date(startDate as string) : undefined,
+      endDate: endDate ? new Date(endDate as string) : undefined
+    });
+    res.json(analytics);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to fetch recovery analytics.' });
+  }
 });
 
 // 1. Dashboard Statistics (Admin only - calculated from real DB records)
@@ -329,21 +362,22 @@ router.put('/quality/alerts/settings', authenticate, requireRole(['admin']), asy
         return;
       }
     }
-    await prisma.$executeRaw`
-      INSERT INTO CallQualityAlertSettings
-        (id, speechRecognitionThreshold, droppedCallThreshold, recordingUploadThreshold, windowMinutes, updatedAt)
-      VALUES (
-        'default', ${req.body.speechRecognitionThreshold}, ${req.body.droppedCallThreshold},
-        ${req.body.recordingUploadThreshold}, ${req.body.windowMinutes}, ${new Date()}
-      )
-      ON CONFLICT(id) DO UPDATE SET
-        speechRecognitionThreshold = excluded.speechRecognitionThreshold,
-        droppedCallThreshold = excluded.droppedCallThreshold,
-        recordingUploadThreshold = excluded.recordingUploadThreshold,
-        windowMinutes = excluded.windowMinutes,
-        updatedAt = excluded.updatedAt
-    `;
-    const settings = await getCallQualityAlertSettings();
+    const settings = await prisma.callQualityAlertSettings.upsert({
+      where: { id: 'default' },
+      create: {
+        id: 'default',
+        speechRecognitionThreshold: req.body.speechRecognitionThreshold,
+        droppedCallThreshold: req.body.droppedCallThreshold,
+        recordingUploadThreshold: req.body.recordingUploadThreshold,
+        windowMinutes: req.body.windowMinutes
+      },
+      update: {
+        speechRecognitionThreshold: req.body.speechRecognitionThreshold,
+        droppedCallThreshold: req.body.droppedCallThreshold,
+        recordingUploadThreshold: req.body.recordingUploadThreshold,
+        windowMinutes: req.body.windowMinutes
+      }
+    });
     res.json(settings);
   } catch (err) {
     console.error('[Calls] Save quality alert settings error:', err);
@@ -1026,6 +1060,79 @@ router.post('/:id/quality-events', authenticate, async (req: Request, res: Respo
   } catch (err: any) {
     console.error('[Calls] Quality event error:', err);
     res.status(500).json({ error: 'Failed to save call quality event.' });
+  }
+});
+
+// 7b2. Log Call Failure & Recovery Event
+router.post('/:id/recovery-events', authenticate, async (req: Request, res: Response) => {
+  try {
+    const callIdentifier = req.params.id;
+    const { failureType, recoveryStatus, attempts, interruptionDurationMs, diagnosticData, errorMessage } = req.body;
+
+    const call = await prisma.callRecord.findFirst({
+      where: { OR: [{ id: callIdentifier }, { callId: callIdentifier }] },
+      select: { id: true, callId: true, customerId: true, agentId: true, adminId: true }
+    });
+
+    if (!call) {
+      res.status(404).json({ error: 'Call record not found.' });
+      return;
+    }
+
+    const isParticipant = call.customerId === req.user!.id ||
+      call.agentId === req.user!.id ||
+      call.adminId === req.user!.id;
+    if (!isParticipant && req.user!.role !== 'admin') {
+      res.status(403).json({ error: 'Access denied.' });
+      return;
+    }
+
+    const event = await callReliabilityService.recordRecoveryEvent({
+      callId: call.callId,
+      failureType: failureType || 'network_disconnected',
+      recoveryStatus: recoveryStatus || 'attempting',
+      attempts: attempts ? Number(attempts) : 1,
+      interruptionDurationMs: interruptionDurationMs ? Number(interruptionDurationMs) : undefined,
+      diagnosticData,
+      errorMessage
+    });
+
+    res.status(201).json({ success: true, event });
+  } catch (err: any) {
+    console.error('[Calls] Recovery event error:', err);
+    res.status(500).json({ error: 'Failed to record recovery event.' });
+  }
+});
+
+// 7b3. Update Audio Device Status (Microphone / Speaker)
+router.post('/:id/device-status', authenticate, async (req: Request, res: Response) => {
+  try {
+    const callIdentifier = req.params.id;
+    const { status, deviceType } = req.body;
+
+    const call = await prisma.callRecord.findFirst({
+      where: { OR: [{ id: callIdentifier }, { callId: callIdentifier }] },
+      select: { id: true, callId: true }
+    });
+
+    if (!call) {
+      res.status(404).json({ error: 'Call record not found.' });
+      return;
+    }
+
+    const updated = await prisma.callRecord.update({
+      where: { id: call.id },
+      data: { audioDeviceStatus: status || 'healthy' }
+    });
+
+    callReliabilityService.updateCallHealth({
+      callId: call.callId,
+      audioDeviceStatus: status === 'error' ? (deviceType === 'speaker' ? 'speaker_disconnected' : 'mic_disconnected') : 'healthy'
+    });
+
+    res.json({ success: true, call: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to update device status.' });
   }
 });
 

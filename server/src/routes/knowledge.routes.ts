@@ -5,7 +5,8 @@ import fs from 'fs';
 import { prisma } from '../db.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { validate, knowledgeEntrySchema } from '../middleware/validation.js';
-import { processUploadedDocument } from '../services/documentProcessor.js';
+import { processUploadedDocument, reindexDocument, deleteDocument } from '../services/documentProcessor.js';
+import { translationService } from '../services/translation.js';
 
 const router = Router();
 
@@ -242,12 +243,27 @@ router.post('/upload', authenticate, requireRole(['admin']), upload.single('file
       }
     });
 
-    // Process asynchronously so response is fast, but user can track status
-    processUploadedDocument(doc.id, file.path, file.mimetype, file.originalname);
+    // Process document synchronously for immediate feedback
+    const processResult = await processUploadedDocument(doc.id, file.path, file.mimetype, file.originalname);
 
-    res.status(202).json({
-      message: 'Document uploaded and processing queued.',
-      document: doc
+    const updatedDoc = await prisma.knowledgeDocument.findUnique({
+      where: { id: doc.id },
+      include: { _count: { select: { entries: true } } }
+    });
+
+    if (processResult.isDuplicate) {
+      res.status(409).json({
+        error: processResult.error || 'Duplicate document detected.',
+        isDuplicate: true,
+        document: updatedDoc
+      });
+      return;
+    }
+
+    res.status(201).json({
+      message: 'Document successfully uploaded and indexed into Knowledge Base.',
+      entryCount: processResult.entryCount,
+      document: updatedDoc
     });
   } catch (err: any) {
     console.error('[Knowledge] Upload error:', err);
@@ -258,38 +274,114 @@ router.post('/upload', authenticate, requireRole(['admin']), upload.single('file
 // 7. Delete Document (Admin only)
 router.delete('/documents/:id', authenticate, requireRole(['admin']), async (req: Request, res: Response) => {
   try {
-    const doc = await prisma.knowledgeDocument.findUnique({
-      where: { id: req.params.id }
-    });
+    await deleteDocument(req.params.id);
+    res.json({ message: 'Document and its extracted knowledge entries removed.' });
+  } catch (err: any) {
+    console.error('[Knowledge] Delete error:', err);
+    res.status(500).json({ error: err.message || 'Failed to delete document.' });
+  }
+});
 
+// 7b. Re-index an existing document (Admin only)
+router.post('/documents/:id/reindex', authenticate, requireRole(['admin']), async (req: Request, res: Response) => {
+  try {
+    const result = await reindexDocument(req.params.id);
+    if (!result.success) {
+      res.status(400).json({ error: result.error || 'Reindexing failed' });
+      return;
+    }
+    const updated = await prisma.knowledgeDocument.findUnique({
+      where: { id: req.params.id },
+      include: { _count: { select: { entries: true } } }
+    });
+    res.json({ message: 'Document successfully re-indexed.', document: updated });
+  } catch (err: any) {
+    console.error('[Knowledge] Reindex error:', err);
+    res.status(500).json({ error: err.message || 'Failed to reindex document.' });
+  }
+});
+
+// 7c. Document Preview & Sample Chunks (Admin & Agent)
+router.get('/documents/:id/preview', authenticate, requireRole(['admin', 'agent']), async (req: Request, res: Response) => {
+  try {
+    const doc = await prisma.knowledgeDocument.findUnique({
+      where: { id: req.params.id },
+      include: {
+        entries: {
+          take: 15,
+          select: { id: true, title: true, section: true, pageNumber: true, question: true, answer: true, category: true }
+        }
+      }
+    });
     if (!doc) {
       res.status(404).json({ error: 'Document not found.' });
       return;
     }
+    res.json({ document: doc });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to load document preview.' });
+  }
+});
 
-    // Delete associated entries first (cascade)
-    await prisma.knowledgeEntry.deleteMany({
-      where: { documentId: doc.id }
-    });
-
-    await prisma.knowledgeDocument.delete({
-      where: { id: doc.id }
-    });
-
-    // Safely remove file from disk if present
-    const safeBaseName = path.basename(doc.fileName);
-    const resolvedPath = path.resolve(uploadDir, safeBaseName);
-    if (resolvedPath.startsWith(uploadDir) && fs.existsSync(resolvedPath)) {
-      try {
-        await fs.promises.unlink(resolvedPath);
-      } catch (e) {
-        console.warn(`[Knowledge] Could not delete disk file ${resolvedPath}:`, e);
+// 7d. Query Agent Copilot directly (Admin & Agent)
+router.post('/copilot/query', authenticate, requireRole(['admin', 'agent']), async (req: Request, res: Response) => {
+  try {
+    const { query, language, callHistory, customerId } = req.body;
+    if (!query || typeof query !== 'string') {
+      res.status(400).json({ error: 'Query is required.' });
+      return;
+    }
+    let customerContext;
+    if (customerId) {
+      const cust = await prisma.user.findUnique({
+        where: { id: customerId }
+      });
+      if (cust) {
+        const tickets = await prisma.supportTicket.findMany({
+          where: { customerId: cust.id },
+          take: 3,
+          orderBy: { createdAt: 'desc' }
+        });
+        customerContext = {
+          customerId: cust.id,
+          customerName: cust.name,
+          customerEmail: cust.email,
+          customerPhone: cust.phone,
+          tickets
+        };
       }
     }
-
-    res.json({ message: 'Document and its extracted knowledge entries removed.' });
+    const result = await translationService.getCopilotSuggestion(query, language || 'en', callHistory || [], customerContext);
+    res.json(result);
   } catch (err: any) {
-    res.status(500).json({ error: 'Failed to delete document.' });
+    console.error('[Knowledge] Copilot query error:', err);
+    res.status(500).json({ error: 'Failed to process Copilot query.' });
+  }
+});
+
+// 7e. Record Agent Copilot Feedback (Admin & Agent)
+router.post('/feedback', authenticate, requireRole(['admin', 'agent']), async (req: Request, res: Response) => {
+  try {
+    const { entryId, callId, query, suggestedAnswer, isUseful, feedbackNotes } = req.body;
+    if (!query || !suggestedAnswer || isUseful === undefined) {
+      res.status(400).json({ error: 'Query, suggestedAnswer, and isUseful are required.' });
+      return;
+    }
+    const feedback = await prisma.knowledgeFeedback.create({
+      data: {
+        entryId: entryId || null,
+        callId: callId || null,
+        agentId: req.user!.id,
+        query: String(query),
+        suggestedAnswer: String(suggestedAnswer),
+        isUseful: Boolean(isUseful),
+        feedbackNotes: feedbackNotes ? String(feedbackNotes).slice(0, 500) : null
+      }
+    });
+    res.status(201).json({ message: 'Feedback recorded successfully.', feedback });
+  } catch (err: any) {
+    console.error('[Knowledge] Feedback error:', err);
+    res.status(500).json({ error: 'Failed to record feedback.' });
   }
 });
 

@@ -26,25 +26,20 @@ export interface CallQualityAlertSettings {
 }
 
 export async function getCallQualityAlertSettings(): Promise<CallQualityAlertSettings> {
-  const rows = await prisma.$queryRaw<CallQualityAlertSettings[]>`
-    SELECT id, speechRecognitionThreshold, droppedCallThreshold,
-      recordingUploadThreshold, windowMinutes, updatedAt
-    FROM CallQualityAlertSettings WHERE id = 'default' LIMIT 1
-  `;
-  if (rows[0]) return rows[0];
+  const existing = await prisma.callQualityAlertSettings.findUnique({
+    where: { id: 'default' }
+  });
+  if (existing) return existing;
 
-  const now = new Date();
-  await prisma.$executeRaw`
-    INSERT OR IGNORE INTO CallQualityAlertSettings
-      (id, speechRecognitionThreshold, droppedCallThreshold, recordingUploadThreshold, windowMinutes, updatedAt)
-    VALUES ('default', 5, 5, 3, 60, ${now})
-  `;
-  const created = await prisma.$queryRaw<CallQualityAlertSettings[]>`
-    SELECT id, speechRecognitionThreshold, droppedCallThreshold,
-      recordingUploadThreshold, windowMinutes, updatedAt
-    FROM CallQualityAlertSettings WHERE id = 'default' LIMIT 1
-  `;
-  return created[0];
+  return prisma.callQualityAlertSettings.create({
+    data: {
+      id: 'default',
+      speechRecognitionThreshold: 5,
+      droppedCallThreshold: 5,
+      recordingUploadThreshold: 3,
+      windowMinutes: 60
+    }
+  });
 }
 
 export async function evaluateCallQualityAlert(eventType: QualityAlertEventType): Promise<CallQualityAlert | null> {
@@ -56,22 +51,20 @@ export async function evaluateCallQualityAlert(eventType: QualityAlertEventType)
   };
   const now = new Date();
   const cutoff = new Date(now.getTime() - settings.windowMinutes * 60_000);
-  const [count, states] = await Promise.all([
+  const [count, state] = await Promise.all([
     prisma.callQualityEvent.count({ where: { eventType, createdAt: { gte: cutoff } } }),
-    prisma.$queryRaw<Array<{ lastAlertedAt: Date | null }>>`
-      SELECT lastAlertedAt FROM CallQualityAlertState WHERE eventType = ${eventType} LIMIT 1
-    `
+    prisma.callQualityAlertState.findUnique({ where: { eventType } })
   ]);
-  const lastAlertedAt = states[0]?.lastAlertedAt;
+  const lastAlertedAt = state?.lastAlertedAt ? new Date(state.lastAlertedAt) : null;
 
   if (count < thresholdByType[eventType]) return null;
   if (lastAlertedAt && lastAlertedAt.getTime() > cutoff.getTime()) return null;
 
-  await prisma.$executeRaw`
-    INSERT INTO CallQualityAlertState (eventType, lastAlertedAt)
-    VALUES (${eventType}, ${now})
-    ON CONFLICT(eventType) DO UPDATE SET lastAlertedAt = excluded.lastAlertedAt
-  `;
+  await prisma.callQualityAlertState.upsert({
+    where: { eventType },
+    create: { eventType, lastAlertedAt: now },
+    update: { lastAlertedAt: now }
+  });
 
   return {
     eventType,

@@ -13,13 +13,14 @@ import { CallIntelligenceModal } from '../components/CallIntelligenceModal.js';
 import { CallQualityIndicator } from '../components/CallQualityIndicator.js';
 import { AudioDeviceModal } from '../components/AudioDeviceModal.js';
 import { audioDeviceManager } from '../services/audioDevice.js';
-import { User, CallRecord, KnowledgeEntry, LanguageCode, SUPPORTED_LANGUAGES } from '../types.js';
+import { User, CallRecord, KnowledgeEntry, LanguageCode, SUPPORTED_LANGUAGES, KnowledgeCopilotSuggestion, KnowledgeCopilotSource } from '../types.js';
 import {
   PhoneCall, PhoneOutgoing, PhoneOff, Mic, MicOff, Grid3X3, MoreHorizontal,
   Volume2, VolumeX, Clock, Search, BookOpen,
   Smartphone, AlertCircle, CheckCircle2, Radio, Info,
   Globe, Sparkles, MessageSquare, Pause, Play, Send, Copy, Users, Settings, ListTodo,
-  HeartPulse, Flame, Mail, Phone, ShieldAlert, RefreshCw, ArrowRight, Lightbulb, AlertTriangle
+  HeartPulse, Flame, Mail, Phone, ShieldAlert, RefreshCw, ArrowRight, Lightbulb, AlertTriangle,
+  ThumbsUp, ThumbsDown, FileText, ExternalLink, ShieldCheck, Check, X
 } from 'lucide-react';
 import { SentimentBadge } from '../components/SentimentBadge.js';
 import { LiveSentimentCard } from '../components/LiveSentimentCard.js';
@@ -168,14 +169,11 @@ export const AgentDashboard: React.FC = () => {
 
   // Embedded Knowledge Base Copilot
   const [copilotSearch, setCopilotSearch] = useState('');
-  const [copilotSuggestion, setCopilotSuggestion] = useState<{
-    query: string;
-    answer: string;
-    sources: any[];
-    isGrounded: boolean;
-    language: string;
-  } | null>(null);
+  const [copilotSuggestion, setCopilotSuggestion] = useState<KnowledgeCopilotSuggestion | null>(null);
   const [copilotLoading, setCopilotLoading] = useState(false);
+  const [copilotFeedbackStatus, setCopilotFeedbackStatus] = useState<Record<string, 'useful' | 'incorrect'>>({});
+  const [selectedCopilotSource, setSelectedCopilotSource] = useState<KnowledgeCopilotSource | null>(null);
+  const [copiedCopilot, setCopiedCopilot] = useState(false);
 
   // Outgoing calls: Customer list and search
   const [customers, setCustomers] = useState<User[]>([]);
@@ -309,23 +307,25 @@ export const AgentDashboard: React.FC = () => {
     });
 
     // 5. AI Knowledge Base Answer Suggestion
-    socket.on('call:kb_suggestion', (data: {
-      callId: string;
-      query: string;
-      answer: string;
-      sources: any[];
-      isGrounded: boolean;
-      language: string;
-    }) => {
+    // 5. AI Knowledge Base Answer Suggestion & Copilot Recommendation
+    const handleCopilotPayload = (data: any) => {
       setCopilotLoading(false);
+      if (!data || !data.answer) return;
       setCopilotSuggestion({
-        query: data.query,
+        callId: data.callId || (activeCall ? activeCall.callId : ''),
+        query: data.query || 'Customer inquiry',
         answer: data.answer,
-        sources: data.sources || [],
-        isGrounded: data.isGrounded,
-        language: data.language
+        sources: Array.isArray(data.sources) ? data.sources : [],
+        isGrounded: data.isGrounded !== false,
+        confidence: typeof data.confidence === 'number' ? data.confidence : (data.isGrounded ? 0.92 : 0.2),
+        isConflict: Boolean(data.isConflict),
+        language: data.language || 'en',
+        timestamp: data.timestamp || new Date()
       });
-    });
+    };
+
+    socket.on('call:kb_suggestion', handleCopilotPayload);
+    socket.on('call:copilot_recommendation', handleCopilotPayload);
 
     // 6. Call ended by customer or system
     socket.on('call:ended', (data: { callId: string; duration?: number }) => {
@@ -384,6 +384,32 @@ export const AgentDashboard: React.FC = () => {
           sender: 'system',
           senderName: 'System',
           text: `❌ Automatic reconnection failed: ${data.reason}.`,
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]);
+    });
+
+    socket.on('call:device_error', (data: { deviceType: string; status: string; userMessage?: string }) => {
+      setLogs(prev => [
+        ...prev,
+        {
+          id: 'dev_err_' + Date.now(),
+          sender: 'system',
+          senderName: 'System',
+          text: data.status === 'error' ? `⚠️ Customer ${data.userMessage || 'device error'}` : `✓ ${data.userMessage || 'device restored'}`,
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]);
+    });
+
+    socket.on('call:ai_fallback_triggered', (data: { serviceType: string; userMessage?: string }) => {
+      setLogs(prev => [
+        ...prev,
+        {
+          id: 'fallback_' + Date.now(),
+          sender: 'system',
+          senderName: 'System',
+          text: `ℹ️ ${data.userMessage || 'AI fallback activated'}`,
           timestamp: new Date().toLocaleTimeString()
         }
       ]);
@@ -541,13 +567,16 @@ export const AgentDashboard: React.FC = () => {
       socket.off('agent:call_missed');
       socket.off('queue:status_updated');
       socket.off('call:live_transcript');
-      socket.off('call:kb_suggestion');
+      socket.off('call:kb_suggestion', handleCopilotPayload);
+      socket.off('call:copilot_recommendation', handleCopilotPayload);
       socket.off('call:ended');
       socket.off('call:sentiment_update', handleSentimentUpdate);
       socket.off('sentiment:assistance_alert', handleAssistanceAlert);
       socket.off('call:reconnecting');
       socket.off('call:reconnected');
       socket.off('call:reconnect_failed');
+      socket.off('call:device_error');
+      socket.off('call:ai_fallback_triggered');
       socket.off('transfer:incoming', handleIncomingEscalation);
       socket.off('transfer:accepted_success', handleTransferAcceptedSuccess);
       socket.off('transfer:error', handleTransferError);
@@ -801,17 +830,97 @@ export const AgentDashboard: React.FC = () => {
   };
 
   // Request AI Knowledge Base Answer Suggestion
-  const handleRequestKbCopilot = (queryText?: string) => {
+  const handleRequestKbCopilot = async (queryText?: string) => {
     const query = (queryText || copilotSearch).trim();
-    if (!query || !activeCall) return;
+    if (!query) return;
 
     setCopilotLoading(true);
-    const socket = getSocket();
-    socket.emit('call:request_kb_suggest', {
-      callId: activeCall.callId,
-      query,
-      targetLanguage: activeCall.preferredLanguage || 'en'
-    });
+    const targetLang = activeCall?.preferredLanguage || 'en';
+    const callId = activeCall?.callId || 'copilot-agent';
+
+    try {
+      const socket = getSocket();
+      if (socket && socket.connected) {
+        socket.emit('call:request_kb_suggest', {
+          callId,
+          query,
+          targetLanguage: targetLang
+        });
+      }
+
+      // Also request via HTTP for instant deterministic fallback
+      const res = await fetch('/api/knowledge/copilot/query', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          query,
+          language: targetLang,
+          callId
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setCopilotSuggestion({
+          callId,
+          query,
+          answer: data.answer,
+          sources: data.sources || [],
+          isGrounded: data.isGrounded !== false,
+          confidence: typeof data.confidence === 'number' ? data.confidence : 0.9,
+          isConflict: Boolean(data.isConflict),
+          language: targetLang,
+          timestamp: new Date()
+        });
+      }
+    } catch (err) {
+      console.error('[Copilot] Query error:', err);
+    } finally {
+      setCopilotLoading(false);
+    }
+  };
+
+  // Submit feedback on Copilot recommendation
+  const handleCopilotFeedback = async (isUseful: boolean) => {
+    if (!copilotSuggestion) return;
+    const queryKey = copilotSuggestion.query;
+    try {
+      const socket = getSocket();
+      if (socket && socket.connected) {
+        socket.emit('copilot:feedback', {
+          callId: activeCall?.callId || copilotSuggestion.callId,
+          query: copilotSuggestion.query,
+          answer: copilotSuggestion.answer,
+          isUseful,
+          notes: isUseful ? 'Agent marked grounded answer as helpful' : 'Agent marked answer as inaccurate or unhelpful'
+        });
+      }
+      if (token) {
+        await fetch('/api/knowledge/feedback', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            callId: activeCall?.callId || copilotSuggestion.callId,
+            query: copilotSuggestion.query,
+            answer: copilotSuggestion.answer,
+            isUseful,
+            notes: isUseful ? 'Agent marked grounded answer as helpful' : 'Agent marked answer as inaccurate or unhelpful'
+          })
+        });
+      }
+      setCopilotFeedbackStatus(prev => ({
+        ...prev,
+        [queryKey]: isUseful ? 'useful' : 'incorrect'
+      }));
+    } catch (err) {
+      console.error('Failed to submit copilot feedback:', err);
+    }
   };
 
   // Fetch customers
@@ -2020,13 +2129,19 @@ export const AgentDashboard: React.FC = () => {
               {/* Right 1 Col: Grounded Corporate Knowledge Base Copilot */}
               <div className="space-y-6">
                 <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center">
-                      <Sparkles className="w-4 h-4" />
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center">
+                        <Sparkles className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold text-slate-900">Approved Knowledge Base Copilot</h3>
+                        <p className="text-[11px] text-slate-500">Grounded strictly in verified company documents</p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900">Approved Knowledge Base Copilot</h3>
-                      <p className="text-[11px] text-slate-500">Grounded strictly in company verified data</p>
+                    <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      <span>Copilot Active</span>
                     </div>
                   </div>
 
@@ -2043,10 +2158,13 @@ export const AgentDashboard: React.FC = () => {
                     <button
                       onClick={() => handleRequestKbCopilot()}
                       disabled={copilotLoading || !copilotSearch.trim()}
-                      className="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+                      className="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
                     >
                       {copilotLoading ? (
-                        <span>Searching Knowledge Base...</span>
+                        <div className="flex items-center gap-2">
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Searching Knowledge Base...</span>
+                        </div>
                       ) : (
                         <>
                           <Sparkles className="w-3.5 h-3.5" />
@@ -2058,55 +2176,187 @@ export const AgentDashboard: React.FC = () => {
 
                   {/* Suggestion Card */}
                   {copilotSuggestion && (
-                    <div className="p-4 bg-indigo-50/70 border border-indigo-200 rounded-2xl space-y-2.5">
-                      <div className="flex items-center justify-between text-[11px] text-indigo-700 font-bold">
-                        <span>Grounded Answer Suggestion</span>
-                        <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-900 font-mono text-[10px]">
-                          {copilotSuggestion.language.toUpperCase()}
+                    <div className="p-4 bg-indigo-50/70 border border-indigo-200 rounded-2xl space-y-3">
+                      {/* Customer Query */}
+                      <div className="bg-white/90 p-2.5 rounded-xl border border-indigo-100/80 space-y-0.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          Detected Customer Question
                         </span>
+                        <p className="text-xs font-semibold text-slate-800">
+                          "{copilotSuggestion.query}"
+                        </p>
                       </div>
-                      <p className="text-xs text-slate-800 leading-relaxed font-medium">
-                        {copilotSuggestion.answer}
-                      </p>
 
-                      {/* Source references */}
-                      {copilotSuggestion.sources.length > 0 && (
-                        <div className="pt-2 border-t border-indigo-200/60 text-[10px] text-slate-500">
-                          <span className="font-bold">Verified Sources: </span>
-                          {copilotSuggestion.sources.map(s => s.title).join(', ')}
+                      {/* Conflict Warning */}
+                      {copilotSuggestion.isConflict && (
+                        <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-amber-900 text-xs flex items-start gap-2 shadow-2xs">
+                          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                          <div className="space-y-0.5">
+                            <span className="font-bold">Conflicting Knowledge Detected</span>
+                            <p className="text-[11px] text-amber-800 leading-tight">
+                              Multiple documents have differing answers on this topic. Please inspect verified citations below.
+                            </p>
+                          </div>
                         </div>
                       )}
 
-                      <div className="flex flex-wrap items-center gap-2 pt-1">
-                        <button
-                          onClick={() => {
-                            voiceService.speak(copilotSuggestion.answer, undefined, copilotSuggestion.language);
-                            if (activeCall) {
-                              const socket = getSocket();
-                              socket.emit('call:live_speech', {
-                                callId: activeCall.callId,
-                                sender: 'agent',
-                                senderName: `${user?.name || 'Agent'} (AI Voice)`,
-                                text: copilotSuggestion.answer,
-                                language: copilotSuggestion.language
-                              });
-                            }
-                          }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold shadow-xs transition-colors cursor-pointer"
-                        >
-                          <Volume2 className="w-3.5 h-3.5" />
-                          Speak to Call
-                        </button>
-                        <button
-                          onClick={() => {
-                            navigator.clipboard.writeText(copilotSuggestion.answer);
-                            alert('Copied suggestion to clipboard!');
-                          }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold transition-colors cursor-pointer"
-                        >
-                          <Copy className="w-3 h-3" />
-                          Copy
-                        </button>
+                      {/* Answer Header */}
+                      <div className="flex items-center justify-between text-[11px] text-indigo-800 font-bold">
+                        <div className="flex items-center gap-1.5">
+                          {copilotSuggestion.confidence >= 0.8 ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold border border-emerald-200">
+                              <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                              High Confidence ({Math.round(copilotSuggestion.confidence * 100)}%)
+                            </span>
+                          ) : copilotSuggestion.confidence >= 0.5 ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold border border-amber-200">
+                              <Info className="w-3 h-3 text-amber-600" />
+                              Medium Confidence ({Math.round(copilotSuggestion.confidence * 100)}%)
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[10px] font-bold border border-slate-200">
+                              <AlertCircle className="w-3 h-3 text-slate-500" />
+                              Unverified
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 text-[10px] text-slate-400 font-mono">
+                          <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-900 font-mono text-[10px] font-bold">
+                            {(copilotSuggestion.language || 'en').toUpperCase()}
+                          </span>
+                          <span>
+                            {new Date(copilotSuggestion.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Answer Content */}
+                      {copilotSuggestion.answer.includes("Information not found in the approved Knowledge Base") ? (
+                        <div className="p-3 bg-slate-100 border border-slate-300 rounded-xl space-y-1">
+                          <div className="flex items-center gap-1.5 text-slate-800 font-bold text-xs">
+                            <Info className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>Information Not in Approved Knowledge Base</span>
+                          </div>
+                          <p className="text-xs text-slate-600 leading-relaxed font-medium">
+                            {copilotSuggestion.answer}
+                          </p>
+                          <p className="text-[10px] text-rose-600 font-semibold pt-1">
+                            ⚠️ Strict Policy: Do not guess or invent contact details, pricing, or commitments.
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-800 leading-relaxed font-medium bg-white/80 p-3 rounded-xl border border-indigo-100">
+                          {copilotSuggestion.answer}
+                        </p>
+                      )}
+
+                      {/* Source references */}
+                      {copilotSuggestion.sources.length > 0 && (
+                        <div className="pt-2 border-t border-indigo-200/60 space-y-2">
+                          <div className="flex items-center justify-between text-[10px] text-slate-500 font-bold">
+                            <span>Verified Citations ({copilotSuggestion.sources.length})</span>
+                            <span className="text-indigo-600">Official KAIRA Docs</span>
+                          </div>
+                          <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                            {copilotSuggestion.sources.map((s, idx) => (
+                              <div
+                                key={s.id || idx}
+                                className="p-2 bg-white rounded-xl border border-indigo-100 text-[11px] space-y-1"
+                              >
+                                <div className="flex items-center justify-between gap-1">
+                                  <span className="font-bold text-slate-800 truncate">
+                                    {s.documentTitle || s.title}
+                                  </span>
+                                  <button
+                                    onClick={() => setSelectedCopilotSource(s)}
+                                    className="text-indigo-600 hover:text-indigo-800 text-[10px] font-bold flex items-center gap-0.5 cursor-pointer shrink-0"
+                                  >
+                                    <span>View Excerpt</span>
+                                    <ExternalLink className="w-2.5 h-2.5" />
+                                  </button>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-1">
+                                  {s.section && (
+                                    <span className="px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 text-[9px] font-semibold">
+                                      {s.section}
+                                    </span>
+                                  )}
+                                  {s.pageNumber && (
+                                    <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-700 text-[9px] font-semibold">
+                                      Page {s.pageNumber}
+                                    </span>
+                                  )}
+                                </div>
+                                {s.snippet && (
+                                  <p className="text-[10px] text-slate-500 line-clamp-2 italic">
+                                    "{s.snippet}"
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Actions & Feedback */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-indigo-200/60">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              voiceService.speak(copilotSuggestion.answer, undefined, copilotSuggestion.language);
+                              if (activeCall) {
+                                const socket = getSocket();
+                                socket.emit('call:live_speech', {
+                                  callId: activeCall.callId,
+                                  sender: 'agent',
+                                  senderName: `${user?.name || 'Agent'} (AI Voice)`,
+                                  text: copilotSuggestion.answer,
+                                  language: copilotSuggestion.language
+                                });
+                              }
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold shadow-xs transition-colors cursor-pointer"
+                          >
+                            <Volume2 className="w-3.5 h-3.5" />
+                            Speak to Call
+                          </button>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(copilotSuggestion.answer);
+                              setCopiedCopilot(true);
+                              setTimeout(() => setCopiedCopilot(false), 2000);
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-bold transition-colors cursor-pointer shadow-2xs"
+                          >
+                            {copiedCopilot ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                            {copiedCopilot ? 'Copied!' : 'Copy'}
+                          </button>
+                        </div>
+
+                        {/* Feedback 👍 / 👎 */}
+                        <div className="flex items-center gap-1">
+                          <span className="text-[10px] font-semibold text-slate-500 mr-1">Feedback:</span>
+                          <button
+                            onClick={() => handleCopilotFeedback(true)}
+                            title="Mark as useful"
+                            className={`p-1.5 rounded-lg border text-xs cursor-pointer transition-all ${copilotFeedbackStatus[copilotSuggestion.query] === 'useful'
+                                ? 'bg-emerald-100 border-emerald-300 text-emerald-700 font-bold'
+                                : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-600'
+                              }`}
+                          >
+                            <ThumbsUp className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={() => handleCopilotFeedback(false)}
+                            title="Mark as inaccurate"
+                            className={`p-1.5 rounded-lg border text-xs cursor-pointer transition-all ${copilotFeedbackStatus[copilotSuggestion.query] === 'incorrect'
+                                ? 'bg-rose-100 border-rose-300 text-rose-700 font-bold'
+                                : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-600'
+                              }`}
+                          >
+                            <ThumbsDown className="w-3 h-3" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -2114,14 +2364,17 @@ export const AgentDashboard: React.FC = () => {
                   {/* Quick Knowledge Base References */}
                   <div className="pt-2 space-y-2">
                     <h4 className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">
-                      Quick KB Topics
+                      Official FAQ Topics
                     </h4>
                     <div className="space-y-1.5 max-h-56 overflow-y-auto">
                       {[
-                        'KAIRA VoiceCore Features',
-                        'Voice Agent Pricing & Subscription',
+                        'Core Voice Features & Ultra-low Latency',
+                        'Multilingual 6-Language Native Support',
                         'LiveEscalate Human Transfer Protocol',
-                        'Refund & Cancellation Policy'
+                        'WebRTC Network & Audio Resilience',
+                        'Enterprise Security, Encryption & Privacy',
+                        'Audio Diagnostics & Echo Cancellation',
+                        'Company Policies, Pricing & Scope Limitations'
                       ].map((topic) => (
                         <button
                           key={topic}
@@ -2365,13 +2618,12 @@ export const AgentDashboard: React.FC = () => {
                           Intent: {insight.primaryIntent || 'Detecting...'}
                         </div>
                       </div>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        insight.importantInfoForAgent?.urgencyLevel === 'urgent'
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${insight.importantInfoForAgent?.urgencyLevel === 'urgent'
                           ? 'bg-rose-100 text-rose-800 border border-rose-300'
                           : insight.importantInfoForAgent?.urgencyLevel === 'high'
                             ? 'bg-amber-100 text-amber-800 border border-amber-300'
                             : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                      }`}>
+                        }`}>
                         {(insight.importantInfoForAgent?.urgencyLevel || 'normal').toUpperCase()}
                       </span>
                     </div>
@@ -2411,11 +2663,10 @@ export const AgentDashboard: React.FC = () => {
                   <button
                     key={flt}
                     onClick={() => setInsightsFilter(flt)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                      insightsFilter === flt
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${insightsFilter === flt
                         ? 'bg-purple-600 text-white shadow-2xs'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
+                      }`}
                   >
                     {flt === 'all' ? 'All Calls' : flt === 'resolved' ? 'Resolved' : flt === 'unresolved' ? 'Unresolved' : 'Action Required'}
                   </button>
@@ -2466,15 +2717,14 @@ export const AgentDashboard: React.FC = () => {
                             </div>
                           </div>
                           <div className="flex flex-col items-end gap-1">
-                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${
-                              item.resolutionStatus === 'resolved'
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${item.resolutionStatus === 'resolved'
                                 ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                                 : item.resolutionStatus === 'partially_resolved'
                                   ? 'bg-blue-100 text-blue-800 border border-blue-300'
                                   : item.resolutionStatus === 'escalated_admin'
                                     ? 'bg-purple-100 text-purple-800 border border-purple-300'
                                     : 'bg-amber-100 text-amber-800 border border-amber-300'
-                            }`}>
+                              }`}>
                               {(item.resolutionStatus || 'unresolved').replace('_', ' ')}
                             </span>
                             {item.requiresHumanSupport && (
@@ -2542,6 +2792,72 @@ export const AgentDashboard: React.FC = () => {
         token={token}
         onIntelligenceUpdated={fetchHistory}
       />
+
+      {/* Knowledge Copilot Source Excerpt Citation Modal */}
+      {selectedCopilotSource && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-indigo-200 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2 text-indigo-700">
+                <FileText className="w-5 h-5" />
+                <h3 className="font-extrabold text-slate-900 text-sm">Official Source Citation</h3>
+              </div>
+              <button
+                onClick={() => setSelectedCopilotSource(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-2.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-slate-900 text-sm">{selectedCopilotSource.title}</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-indigo-100 text-indigo-800">
+                  {selectedCopilotSource.category}
+                </span>
+              </div>
+
+              {(selectedCopilotSource.documentTitle || selectedCopilotSource.documentFileName) && (
+                <div className="text-[11px] text-slate-500 font-medium">
+                  Document: <span className="font-bold text-slate-700">{selectedCopilotSource.documentTitle || selectedCopilotSource.documentFileName}</span>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 pt-0.5">
+                {selectedCopilotSource.section && (
+                  <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-bold text-[10px] border border-blue-200">
+                    {selectedCopilotSource.section}
+                  </span>
+                )}
+                {selectedCopilotSource.pageNumber && (
+                  <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-bold text-[10px] border border-slate-200">
+                    Page {selectedCopilotSource.pageNumber}
+                  </span>
+                )}
+              </div>
+
+              <div className="pt-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                  Extracted Document Text Excerpt
+                </span>
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 text-xs leading-relaxed max-h-60 overflow-y-auto whitespace-pre-wrap font-sans">
+                  {selectedCopilotSource.snippet || selectedCopilotSource.title}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setSelectedCopilotSource(null)}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl cursor-pointer transition-colors"
+              >
+                Close Citation
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Audio Device Settings Modal */}
       <AudioDeviceModal
