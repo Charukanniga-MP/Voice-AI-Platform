@@ -677,6 +677,26 @@ export class WebRTCManager {
     }
   }
 
+  private async reportRecordingUploadFailure(callId: string, reason: string): Promise<void> {
+    try {
+      const token = this.authToken || localStorage.getItem('kaira_token') || localStorage.getItem('token');
+      if (!token) return;
+      await fetch(`/api/calls/${encodeURIComponent(callId)}/quality-events`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          eventType: 'recording_upload_failure',
+          details: reason.slice(0, 500)
+        })
+      });
+    } catch (err) {
+      console.warn('[WebRTC Recording] Could not report upload failure:', err);
+    }
+  }
+
   // Stop recording and upload to backend
   public async stopAndUploadRecording(): Promise<void> {
     if (!this.isRecording || !this.mediaRecorder) return;
@@ -705,11 +725,20 @@ export class WebRTCManager {
             if (token) headers['Authorization'] = `Bearer ${token}`;
 
             // Upload recording to /api/calls/:callId/recording
-            const res = await fetch(`/api/calls/${currentCallId}/recording`, {
-              method: 'POST',
-              headers,
-              body: formData
-            }).catch(e => console.warn('[WebRTC Recording] /api/calls/recording error:', e));
+            let res: Response | null = null;
+            try {
+              res = await fetch(`/api/calls/${currentCallId}/recording`, {
+                method: 'POST',
+                headers,
+                body: formData
+              });
+              if (!res.ok) {
+                await this.reportRecordingUploadFailure(currentCallId, `HTTP ${res.status}`);
+              }
+            } catch (err) {
+              await this.reportRecordingUploadFailure(currentCallId, String(err));
+              console.warn('[WebRTC Recording] /api/calls/recording error:', err);
+            }
 
             if (res && res.ok) {
               const data = await res.json();

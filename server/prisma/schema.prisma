@@ -104,6 +104,19 @@ model CallRecord {
   recording          CallRecording?
   conversationAnalysis ConversationAnalysis?
   agentEvaluation    AgentPerformanceEvaluation?
+  qualityEvents      CallQualityEvent[]
+}
+
+model CallQualityEvent {
+  id           String     @id @default(cuid())
+  callRecordId String
+  callRecord   CallRecord @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  eventType    String     // "speech_recognition_failure" | "recording_upload_failure" | "dropped_call"
+  details      String?
+  createdAt    DateTime   @default(now())
+
+  @@index([callRecordId, eventType])
+  @@index([eventType, createdAt])
 }
 
 model CallTranscript {

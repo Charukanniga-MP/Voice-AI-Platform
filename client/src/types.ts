@@ -138,6 +138,7 @@ export interface CallRecord {
   reconnectCount?: number;
   wasReconnected?: boolean;
   audioQualityScore?: number | null;
+  firstResponseMs?: number | null;
   intelligence?: CallIntelligence | null;
   followUpTasks?: FollowUpTask[];
   customer?: { id: string; name: string; email: string; phone?: string | null };
@@ -233,6 +234,12 @@ export interface CallQualityStats {
   avgLatency: number;
   avgPacketLoss: number;
   avgJitter?: number;
+  avgFirstResponseMs?: number;
+  firstResponseCalls?: number;
+  speechRecognitionFailures?: number;
+  recordingUploadFailures?: number;
+  droppedCalls?: number;
+  transferOutcomes?: Record<string, number>;
   qualityBreakdown: {
     excellent: number;
     good: number;

@@ -2444,14 +2444,27 @@ export function initSocketServer(io: SocketIOServer) {
       socket.to(`call:${data.callId}`).emit('call:reconnect_failed', data);
 
       try {
-        await prisma.callRecord.updateMany({
-          where: { callId: data.callId },
-          data: {
-            status: 'disconnected',
-            endedBy: 'network',
-            failureReason: data.reason || 'Network connection lost. Reconnection timed out.'
+        const call = await prisma.callRecord.findUnique({ where: { callId: data.callId } });
+        if (call) {
+          const isFirstDropReport = call.status !== 'disconnected' && call.endedBy !== 'network';
+          await prisma.callRecord.update({
+            where: { id: call.id },
+            data: {
+              status: 'disconnected',
+              endedBy: 'network',
+              failureReason: data.reason || 'Network connection lost. Reconnection timed out.'
+            }
+          });
+          if (isFirstDropReport) {
+            await prisma.callQualityEvent.create({
+              data: {
+                callRecordId: call.id,
+                eventType: 'dropped_call',
+                details: data.reason || 'Network reconnection failed.'
+              }
+            });
           }
-        });
+        }
       } catch (e) {
         console.error('[CallReconnect] Failed to update disconnected status:', e);
       }
@@ -2481,10 +2494,10 @@ export function initSocketServer(io: SocketIOServer) {
           await prisma.callRecord.update({
             where: { id: call.id },
             data: {
-              status: 'completed',
+              status: call.status === 'disconnected' || call.endedBy === 'network' ? 'disconnected' : 'completed',
               endTime: new Date(),
               duration,
-              endedBy: data.endedBy || 'user',
+              endedBy: call.endedBy === 'network' ? 'network' : (data.endedBy || 'user'),
               ...(data.notes ? { callNotes: data.notes } : {})
             }
           });

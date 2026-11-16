@@ -766,6 +766,30 @@ export const CustomerDashboard: React.FC = () => {
   }, [token]);
 
   // Speech recognition helper with automatic interruption and Echo Guard
+  const recordCallQualityEvent = async (
+    activeCallId: string,
+    eventType: 'speech_recognition_failure' | 'recording_upload_failure' | 'dropped_call',
+    details?: string
+  ) => {
+    const authToken = token || localStorage.getItem('kaira_token') || localStorage.getItem('token');
+    if (!authToken || !activeCallId) return;
+    try {
+      const response = await fetch(`/api/calls/${encodeURIComponent(activeCallId)}/quality-events`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({ eventType, details })
+      });
+      if (!response.ok) {
+        console.warn(`[CallQuality] Failed to record ${eventType} (${response.status})`);
+      }
+    } catch (err) {
+      console.warn(`[CallQuality] Failed to record ${eventType}:`, err);
+    }
+  };
+
   const startSpeechRecognition = (activeCallId: string, isHumanCall: boolean = false) => {
     voiceService.setLanguage(selectedLanguage);
 
@@ -902,6 +926,9 @@ export const CustomerDashboard: React.FC = () => {
           });
         }
       }
+    }, (error) => {
+      const errorCode = typeof error?.error === 'string' ? error.error : 'unknown';
+      void recordCallQualityEvent(activeCallId, 'speech_recognition_failure', errorCode);
     });
   };
 

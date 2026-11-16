@@ -165,8 +165,8 @@ router.get('/stats', authenticate, requireRole(['admin']), async (req: Request, 
   }
 });
 
-// 1b. Call Quality & Reliability Statistics (Admin & Agent)
-router.get('/quality/stats', authenticate, requireRole(['admin', 'agent']), async (req: Request, res: Response) => {
+// 1b. Call Quality & Reliability Statistics (Admin)
+router.get('/quality/stats', authenticate, requireRole(['admin']), async (req: Request, res: Response) => {
   try {
     const [
       totalCalls,
@@ -178,7 +178,9 @@ router.get('/quality/stats', authenticate, requireRole(['admin', 'agent']), asyn
       callsWithLatency,
       callsWithLoss,
       qualityRatings,
-      qualityHistory
+      qualityHistory,
+      transferStatusCounts,
+      qualityEventCounts
     ] = await Promise.all([
       prisma.callRecord.count(),
       prisma.callRecord.count({ where: { status: 'completed' } }),
@@ -196,8 +198,57 @@ router.get('/quality/stats', authenticate, requireRole(['admin', 'agent']), asyn
           customer: { select: { name: true, phone: true } },
           agent: { select: { name: true } }
         }
-      })
+      }),
+      prisma.callTransferRequest.groupBy({ by: ['status'], _count: { id: true } }),
+      prisma.callQualityEvent.groupBy({ by: ['eventType'], _count: { id: true } })
     ]);
+
+    const transcripts = qualityHistory.length
+      ? await prisma.callTranscript.findMany({
+          where: { callRecordId: { in: qualityHistory.map(call => call.id) } },
+          select: { callRecordId: true, sender: true, timestamp: true },
+          orderBy: { timestamp: 'asc' }
+        })
+      : [];
+
+    const transcriptByCall = new Map<string, typeof transcripts>();
+    for (const transcript of transcripts) {
+      const entries = transcriptByCall.get(transcript.callRecordId) || [];
+      entries.push(transcript);
+      transcriptByCall.set(transcript.callRecordId, entries);
+    }
+    const firstResponseByCall = new Map<string, number>();
+    for (const [callRecordId, entries] of transcriptByCall) {
+      const customerIndex = entries.findIndex(entry => entry.sender === 'customer');
+      if (customerIndex < 0) continue;
+      const firstCustomer = entries[customerIndex];
+      const firstResponse = entries.slice(customerIndex + 1).find(entry =>
+        ['ai', 'agent', 'admin'].includes(entry.sender)
+      );
+      if (firstResponse) {
+        firstResponseByCall.set(
+          callRecordId,
+          Math.max(0, firstResponse.timestamp.getTime() - firstCustomer.timestamp.getTime())
+        );
+      }
+    }
+
+    const responseTimes = Array.from(firstResponseByCall.values());
+    const avgFirstResponseMs = responseTimes.length
+      ? Math.round(responseTimes.reduce((sum, value) => sum + value, 0) / responseTimes.length)
+      : 0;
+    const eventCounts: Record<string, number> = {};
+    qualityEventCounts.forEach(event => { eventCounts[event.eventType] = event._count.id; });
+    const transferOutcomes: Record<string, number> = {
+      pending: 0,
+      ringing: 0,
+      accepted: 0,
+      connected: 0,
+      rejected: 0,
+      missed: 0,
+      completed: 0
+    };
+    transferStatusCounts.forEach(item => { transferOutcomes[item.status] = item._count.id; });
 
     const avgDuration = completedWithDuration.length > 0
       ? Math.round(completedWithDuration.reduce((acc, c) => acc + (c.duration || 0), 0) / completedWithDuration.length)
@@ -229,8 +280,17 @@ router.get('/quality/stats', authenticate, requireRole(['admin', 'agent']), asyn
       avgDuration,
       avgLatency,
       avgPacketLoss,
+      avgFirstResponseMs,
+      firstResponseCalls: responseTimes.length,
+      speechRecognitionFailures: eventCounts.speech_recognition_failure || 0,
+      recordingUploadFailures: eventCounts.recording_upload_failure || 0,
+      droppedCalls: disconnectedCalls,
+      transferOutcomes,
       qualityBreakdown,
-      history: qualityHistory
+      history: qualityHistory.map(call => ({
+        ...call,
+        firstResponseMs: firstResponseByCall.get(call.id) ?? null
+      }))
     });
   } catch (err: any) {
     console.error('[Calls] Quality stats error:', err);
@@ -865,6 +925,52 @@ router.post('/:id/quality', authenticate, async (req: Request, res: Response) =>
   } catch (err: any) {
     console.error('[Calls] Save quality error:', err);
     res.status(500).json({ error: 'Failed to save call quality data.' });
+  }
+});
+
+// 7b. Record call quality events that do not fit the network sample summary.
+router.post('/:id/quality-events', authenticate, async (req: Request, res: Response) => {
+  try {
+    const allowedEventTypes = new Set([
+      'speech_recognition_failure',
+      'recording_upload_failure',
+      'dropped_call'
+    ]);
+    const eventType = String(req.body.eventType || '');
+    if (!allowedEventTypes.has(eventType)) {
+      res.status(400).json({ error: 'Unsupported quality event type.' });
+      return;
+    }
+
+    const callIdentifier = req.params.id;
+    const call = await prisma.callRecord.findFirst({
+      where: { OR: [{ id: callIdentifier }, { callId: callIdentifier }] },
+      select: { id: true, customerId: true, agentId: true, adminId: true }
+    });
+    if (!call) {
+      res.status(404).json({ error: 'Call record not found.' });
+      return;
+    }
+
+    const isParticipant = call.customerId === req.user!.id ||
+      call.agentId === req.user!.id ||
+      call.adminId === req.user!.id;
+    if (!isParticipant && req.user!.role !== 'admin') {
+      res.status(403).json({ error: 'Access denied.' });
+      return;
+    }
+
+    const event = await prisma.callQualityEvent.create({
+      data: {
+        callRecordId: call.id,
+        eventType,
+        details: typeof req.body.details === 'string' ? req.body.details.slice(0, 500) : null
+      }
+    });
+    res.status(201).json({ success: true, eventId: event.id });
+  } catch (err: any) {
+    console.error('[Calls] Quality event error:', err);
+    res.status(500).json({ error: 'Failed to save call quality event.' });
   }
 });
 

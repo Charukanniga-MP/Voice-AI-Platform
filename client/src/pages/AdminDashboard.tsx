@@ -3181,7 +3181,7 @@ export const AdminDashboard: React.FC = () => {
               {/* 3. Disconnected Calls */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
                 <div className="flex items-center justify-between text-slate-400">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Disconnected</span>
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Dropped Calls</span>
                   <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
                     <WifiOff className="w-4 h-4" />
                   </div>
@@ -3189,7 +3189,7 @@ export const AdminDashboard: React.FC = () => {
                 <div className="text-2xl font-black text-slate-900">
                   {qualityStats?.disconnectedCalls ?? 0}
                 </div>
-                <p className="text-[11px] text-amber-600 font-semibold">Network interruptions</p>
+                <p className="text-[11px] text-amber-600 font-semibold">Network recovery failed</p>
               </div>
 
               {/* 4. Reconnected Calls */}
@@ -3234,6 +3234,53 @@ export const AdminDashboard: React.FC = () => {
                 <p className="text-[11px] text-slate-500 font-mono">
                   Loss: <span className="font-bold text-slate-700">{qualityStats?.avgPacketLoss ?? 0}%</span> • Jitter: <span className="font-bold text-slate-700">{qualityStats?.avgJitter ?? 0}ms</span>
                 </p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <h2 className="text-sm font-bold text-slate-800">Voice Response & Failure Metrics</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                  <div className="flex items-center gap-2 text-slate-500 text-[11px] font-bold uppercase">
+                    <Clock className="w-4 h-4 text-blue-600" /> Avg. First Response
+                  </div>
+                  <div className="mt-2 text-2xl font-black text-slate-900">
+                    {qualityStats?.avgFirstResponseMs
+                      ? qualityStats.avgFirstResponseMs >= 1000
+                        ? `${(qualityStats.avgFirstResponseMs / 1000).toFixed(1)} s`
+                        : `${qualityStats.avgFirstResponseMs} ms`
+                      : '—'}
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">First customer utterance to first AI or specialist response (recent {qualityStats?.firstResponseCalls ?? 0} calls)</p>
+                </div>
+
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                  <div className="flex items-center gap-2 text-slate-500 text-[11px] font-bold uppercase">
+                    <Mic className="w-4 h-4 text-amber-600" /> Speech Recognition Failures
+                  </div>
+                  <div className="mt-2 text-2xl font-black text-slate-900">{qualityStats?.speechRecognitionFailures ?? 0}</div>
+                  <p className="text-[10px] text-slate-400 mt-1">Recognition errors reported by callers</p>
+                </div>
+
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                  <div className="flex items-center gap-2 text-slate-500 text-[11px] font-bold uppercase">
+                    <Upload className="w-4 h-4 text-purple-600" /> Recording Upload Failures
+                  </div>
+                  <div className="mt-2 text-2xl font-black text-slate-900">{qualityStats?.recordingUploadFailures ?? 0}</div>
+                  <p className="text-[10px] text-slate-400 mt-1">Failed attempts to save an authorized recording</p>
+                </div>
+
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                  <div className="flex items-center gap-2 text-slate-500 text-[11px] font-bold uppercase">
+                    <PhoneForwarded className="w-4 h-4 text-indigo-600" /> Transfer Outcomes
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2 text-xs">
+                    <span className="text-slate-500">Connected</span><strong className="text-emerald-700">{(qualityStats?.transferOutcomes?.connected ?? 0) + (qualityStats?.transferOutcomes?.completed ?? 0)}</strong>
+                    <span className="text-slate-500">Rejected</span><strong className="text-red-600">{qualityStats?.transferOutcomes?.rejected ?? 0}</strong>
+                    <span className="text-slate-500">Missed</span><strong className="text-amber-600">{qualityStats?.transferOutcomes?.missed ?? 0}</strong>
+                    <span className="text-slate-500">Open</span><strong className="text-indigo-600">{(qualityStats?.transferOutcomes?.pending ?? 0) + (qualityStats?.transferOutcomes?.ringing ?? 0) + (qualityStats?.transferOutcomes?.accepted ?? 0)}</strong>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -3389,6 +3436,7 @@ export const AdminDashboard: React.FC = () => {
                           <th className="py-3 px-4">Customer & Call</th>
                           <th className="py-3 px-4">Agent / Handler</th>
                           <th className="py-3 px-4">Date & Duration</th>
+                          <th className="py-3 px-4">First Response</th>
                           <th className="py-3 px-4">Quality Rating</th>
                           <th className="py-3 px-4">Latency (RTT)</th>
                           <th className="py-3 px-4">Packet Loss & Jitter</th>
@@ -3425,6 +3473,15 @@ export const AdminDashboard: React.FC = () => {
                                 <div>{new Date(call.startTime).toLocaleDateString()}</div>
                                 <div className="text-slate-400">{new Date(call.startTime).toLocaleTimeString()}</div>
                                 <div className="font-bold text-slate-700 mt-0.5">{formatDuration(call.duration)}</div>
+                              </td>
+
+                              {/* First response time */}
+                              <td className="py-3 px-4 font-mono text-[11px]">
+                                {call.firstResponseMs == null
+                                  ? <span className="text-slate-400">—</span>
+                                  : call.firstResponseMs >= 1000
+                                    ? `${(call.firstResponseMs / 1000).toFixed(1)} s`
+                                    : `${call.firstResponseMs} ms`}
                               </td>
 
                               {/* Quality Rating */}

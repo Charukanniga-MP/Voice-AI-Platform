@@ -143,6 +143,7 @@ export class VoiceService {
   ) {
     if (!this.recognition) {
       console.warn('Speech recognition not supported in this browser.');
+      onError?.({ error: 'not-supported' });
       return;
     }
 
@@ -264,8 +265,9 @@ export class VoiceService {
       if (this.isListening) {
         try {
           this.recognition.start();
-        } catch {
-          // Ignore restart error
+        } catch (err) {
+          console.warn('[VoiceService] Could not restart speech recognition:', err);
+          if (this.activeOnError) this.activeOnError({ error: 'restart-failed', cause: err });
         }
       }
     };
@@ -276,6 +278,7 @@ export class VoiceService {
       console.log(`[VoiceService] Speech recognition started (${this.currentLang})`);
     } catch (err) {
       console.error('[VoiceService] Could not start speech recognition:', err);
+      if (this.activeOnError) this.activeOnError({ error: 'start-failed', cause: err });
     }
   }
 
