@@ -39,6 +39,8 @@ export class VoiceService {
   private vadTimer: any = null;
   private lastInterimTranscript: string = '';
   private lastFinalUtterance: { text: string; timestamp: number } = { text: '', timestamp: 0 };
+  private activeOnResult?: (text: string, isFinal: boolean, utteranceId?: string) => void;
+  private activeOnError?: (err: any) => void;
 
   public onInterruption?: () => void;
   public onSpeechStart?: () => void;
@@ -144,7 +146,13 @@ export class VoiceService {
       return;
     }
 
-    if (this.isListening) return;
+    this.activeOnResult = onResult;
+    this.activeOnError = onError;
+
+    if (this.isListening) {
+      // Recognition is already running; active callback seamlessly updated
+      return;
+    }
 
     this.recognition.onresult = (event: any) => {
       // 1. BARGE-IN: If customer speaks while AI is speaking, cut off AI speech immediately!
@@ -204,10 +212,14 @@ export class VoiceService {
 
         this.lastFinalUtterance = { text: cleanFinal, timestamp: now };
         const utteranceId = 'utt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-        onResult(finalTranscript, true, utteranceId);
+        if (this.activeOnResult) {
+          this.activeOnResult(finalTranscript, true, utteranceId);
+        }
       } else if (interim.trim()) {
         this.lastInterimTranscript = interim.trim();
-        onResult(this.lastInterimTranscript, false);
+        if (this.activeOnResult) {
+          this.activeOnResult(this.lastInterimTranscript, false);
+        }
 
         // Fast Voice Activity Detection (VAD) Debounce:
         // Finalize after 320ms pause on a meaningful utterance
@@ -230,7 +242,9 @@ export class VoiceService {
               this.lastFinalUtterance = { text: cleanText, timestamp: now };
               const utteranceId = 'utt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
               console.log('[VoiceService] Fast VAD detected end of speech (finalized):', textToEmit);
-              onResult(textToEmit, true, utteranceId);
+              if (this.activeOnResult) {
+                this.activeOnResult(textToEmit, true, utteranceId);
+              }
             }
           }, 320);
         }
@@ -242,7 +256,7 @@ export class VoiceService {
         return;
       }
       console.warn('[VoiceService] Recognition error:', event.error);
-      if (onError) onError(event);
+      if (this.activeOnError) this.activeOnError(event);
     };
 
     this.recognition.onend = () => {

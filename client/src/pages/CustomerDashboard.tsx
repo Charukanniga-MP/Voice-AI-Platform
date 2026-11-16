@@ -599,11 +599,13 @@ export const CustomerDashboard: React.FC = () => {
       currentAiSpeechTextRef.current = '';
     });
 
-    // 8. Admin transfer connected
-    socket.on('transfer:connected', async (data: { callId: string; adminName: string; adminSocketId: string }) => {
-      console.log('[Customer] Admin connected via transfer:', data.adminName);
+    // 8. Admin / Specialist transfer connected
+    socket.on('transfer:connected', async (data: { callId: string; adminName: string; adminSocketId: string; adminId?: string }) => {
+      console.log('[Customer] Specialist connected via takeover:', data.adminName);
       setCallStatus('active_admin');
-      setActivePartner({ name: data.adminName, role: 'admin' });
+      setActivePartner({ id: data.adminId, name: data.adminName, role: 'agent' });
+      setCallId(data.callId);
+      callIdRef.current = data.callId;
 
       setTranscripts(prev => [
         ...prev,
@@ -611,20 +613,33 @@ export const CustomerDashboard: React.FC = () => {
           id: 't_' + Date.now(),
           sender: 'system',
           senderName: 'System',
-          text: `Live voice transfer connected! You are now speaking with Admin ${data.adminName}.`,
+          text: `Live voice transfer connected! You are now speaking with Support Specialist ${data.adminName}.`,
           timestamp: new Date().toISOString()
         }
       ]);
 
+      // Immediately silence any ongoing or queued AI speech
       voiceOutputController.stop();
       voiceService.cancelSpeech();
+      setAiIsSpeaking(false);
+      aiIsSpeakingRef.current = false;
+      currentAiSpeechTextRef.current = '';
+
+      // Pre-unlock audio element to prevent browser autoplay blocking
+      webrtcManager.unlockAudio();
+      voiceService.unlockAudio();
+
+      // Persist recording consent non-blockingly
+      persistRecordingConsent(data.callId).catch(err => {
+        console.warn('[Recording] Consent save warning on takeover:', err);
+      });
 
       try {
-        await persistRecordingConsent(data.callId);
+        console.log('[Customer] Starting WebRTC audio link to Specialist socket:', data.adminSocketId);
         await webrtcManager.startCall(data.adminSocketId, data.callId);
         startSpeechRecognition(data.callId, true);
       } catch (err) {
-        console.error('Failed to establish WebRTC with Admin:', err);
+        console.error('Failed to establish WebRTC with Specialist:', err);
       }
     });
 
@@ -1015,7 +1030,6 @@ export const CustomerDashboard: React.FC = () => {
       console.warn('[Recording] Could not persist consent; recording will remain disabled:', err);
       recordingConsentRef.current = 'not_requested';
       webrtcManager.setRecordingConsent('not_requested');
-      window.alert('We could not save your recording preference. Your call will continue without recording.');
     }
   };
 
@@ -1419,7 +1433,9 @@ export const CustomerDashboard: React.FC = () => {
                   >
                     <div className="w-full h-full bg-white rounded-full flex items-center justify-center shadow-inner">
                       <div className="w-22 h-22 rounded-full bg-gradient-to-tr from-indigo-600 to-teal-600 text-white flex items-center justify-center shadow-md">
-                        {aiVisualState === 'speaking' ? (
+                        {callStatus === 'active_admin' || callStatus === 'active_agent' ? (
+                          <Headphones className="w-10 h-10 animate-pulse" />
+                        ) : aiVisualState === 'speaking' ? (
                           <Volume2 className="w-10 h-10 animate-bounce" />
                         ) : aiVisualState === 'thinking' ? (
                           <Sparkles className="w-10 h-10 animate-spin" />
@@ -1441,7 +1457,9 @@ export const CustomerDashboard: React.FC = () => {
                   {activePartner?.name || 'KAIRA AI Support Specialist'}
                 </h3>
                 <p className="text-xs text-slate-500">
-                  AI-Powered Voice Customer Support Platform
+                  {callStatus === 'active_admin' || callStatus === 'active_agent'
+                    ? 'Human Support Specialist (Two-Way Voice Connected)'
+                    : 'AI-Powered Voice Customer Support Platform'}
                 </p>
 
                 {/* Status Indicator Banners */}

@@ -65,6 +65,7 @@ export const AgentDashboard: React.FC = () => {
   // Active AI Calls Real-Time Monitoring & Human Escalations (Module 10)
   const [activeAiCalls, setActiveAiCalls] = useState<Array<{
     callId: string;
+    customerId?: string;
     customerName: string;
     customerPhone: string;
     language: string;
@@ -484,9 +485,47 @@ export const AgentDashboard: React.FC = () => {
       fetchHistory();
     };
 
+    const handleTransferAcceptedSuccess = (data: any) => {
+      console.log('[Agent] Transfer accepted successfully:', data);
+      if (data?.callId) {
+        setActiveAiCalls(prev => prev.filter(c => c.callId !== data.callId));
+      }
+    };
+
+    const handleTransferError = (data: { message: string }) => {
+      console.error('[Agent] Transfer error:', data.message);
+      setLogs(prev => [
+        ...prev,
+        {
+          id: 'err_' + Date.now(),
+          sender: 'system',
+          senderName: 'System',
+          text: `❌ Takeover notice: ${data.message}`,
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]);
+    };
+
+    const handleTransferConnected = (data: any) => {
+      console.log('[Agent] Transfer connected event confirmed:', data);
+      setLogs(prev => [
+        ...prev,
+        {
+          id: 'conn_ok_' + Date.now(),
+          sender: 'system',
+          senderName: 'System',
+          text: `✅ Two-way voice link confirmed with customer.`,
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]);
+    };
+
     socket.on('call:live_insights', handleLiveInsights);
     socket.on('call:intelligence_ready', handleIntelligenceReady);
     socket.on('transfer:incoming', handleIncomingEscalation);
+    socket.on('transfer:accepted_success', handleTransferAcceptedSuccess);
+    socket.on('transfer:error', handleTransferError);
+    socket.on('transfer:connected', handleTransferConnected);
     socket.on('ai_call:live_metrics', handleAiLiveMetrics);
     socket.on('ai_call:started', handleAiCallStarted);
     socket.on('ai_call:ended', handleAiCallEnded);
@@ -510,6 +549,9 @@ export const AgentDashboard: React.FC = () => {
       socket.off('call:reconnected');
       socket.off('call:reconnect_failed');
       socket.off('transfer:incoming', handleIncomingEscalation);
+      socket.off('transfer:accepted_success', handleTransferAcceptedSuccess);
+      socket.off('transfer:error', handleTransferError);
+      socket.off('transfer:connected', handleTransferConnected);
       socket.off('ai_call:live_metrics', handleAiLiveMetrics);
       socket.off('ai_call:started', handleAiCallStarted);
       socket.off('ai_call:ended', handleAiCallEnded);
@@ -520,6 +562,21 @@ export const AgentDashboard: React.FC = () => {
   // WebRTC Manager Callback Hooks
   useEffect(() => {
     webrtcManager.setCallbacks({
+      onConnectionStateChange: (state: string) => {
+        console.log('[Agent] WebRTC connection state changed:', state);
+        if (state === 'connected') {
+          setLogs(prev => [
+            ...prev,
+            {
+              id: 'webrtc_conn_' + Date.now(),
+              sender: 'system',
+              senderName: 'System',
+              text: `✅ Two-way WebRTC voice connection established with customer.`,
+              timestamp: new Date().toLocaleTimeString()
+            }
+          ]);
+        }
+      },
       onReconnecting: (attempt, max) => {
         setLogs(prev => [
           ...prev,
@@ -658,6 +715,9 @@ export const AgentDashboard: React.FC = () => {
     webrtcManager.unlockAudio();
     voiceService.unlockAudio();
 
+    // Immediately remove from Active AI Calls list so it doesn't show as unhandled AI call
+    setActiveAiCalls(prev => prev.filter(c => c.callId !== esc.callId));
+
     setActiveCall({
       callId: esc.callId,
       callRecordId: esc.callRecordId,
@@ -667,20 +727,21 @@ export const AgentDashboard: React.FC = () => {
       preferredLanguage: esc.language,
       isIncomingSupport: true,
       state: 'connected',
-      statusText: `Speaking with ${esc.customerName} (Human Escalation)`
+      statusText: `Speaking with ${esc.customerName} (Live Human Specialist Takeover)`
     });
     setLogs([
       {
         id: 't_' + Date.now(),
         sender: 'system',
         senderName: 'System',
-        text: `Escalation accepted by Support Specialist ${user?.name}. Reason: ${esc.reason}. Customer question: "${esc.question}".`,
+        text: `Escalation accepted by Support Specialist ${user?.name}. Reason: ${esc.reason}. Customer question: "${esc.question}". Connecting two-way WebRTC voice...`,
         timestamp: new Date().toLocaleTimeString()
       }
     ]);
     setActiveTab('console');
 
     const socket = getSocket();
+    socket.emit('call:join', { callId: esc.callId });
     socket.emit('transfer:accept', {
       transferId: esc.transferId,
       adminId: user?.id,
@@ -1558,6 +1619,7 @@ export const AgentDashboard: React.FC = () => {
                               transferId: 'direct_takeover_' + call.callId,
                               callId: call.callId,
                               callRecordId: call.callId,
+                              customerId: call.customerId,
                               customerName: call.customerName,
                               customerPhone: call.customerPhone,
                               language: call.language,

@@ -138,6 +138,13 @@ export class WebRTCManager {
       this.callId = data.callId;
 
       try {
+        if (!data.isReconnect && this.peerConnection) {
+          try {
+            this.peerConnection.close();
+          } catch {}
+          this.peerConnection = null;
+        }
+
         await this.initPeerConnection();
         await this.peerConnection!.setRemoteDescription(new RTCSessionDescription(data.offer));
 
@@ -162,7 +169,7 @@ export class WebRTCManager {
     // Handle incoming WebRTC answer
     socket.on('webrtc:answer', async (data: { sender: string; answer: RTCSessionDescriptionInit; callId: string; isReconnect?: boolean }) => {
       console.log('[WebRTC] Received answer from', data.sender, 'isReconnect:', data.isReconnect);
-      if (this.peerConnection) {
+      if (this.peerConnection && this.peerConnection.signalingState !== 'closed') {
         try {
           await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
           if (data.isReconnect || this.isReconnecting) {
@@ -253,7 +260,16 @@ export class WebRTCManager {
 
   // Initialize RTCPeerConnection
   private async initPeerConnection(): Promise<RTCPeerConnection> {
-    if (this.peerConnection) return this.peerConnection;
+    if (this.peerConnection && this.peerConnection.connectionState !== 'closed' && this.peerConnection.signalingState !== 'closed') {
+      return this.peerConnection;
+    }
+
+    if (this.peerConnection) {
+      try {
+        this.peerConnection.close();
+      } catch {}
+      this.peerConnection = null;
+    }
 
     if (!this.iceServersLoaded) {
       await this.loadIceServers();
@@ -497,6 +513,13 @@ export class WebRTCManager {
     this.isReconnecting = false;
     this.reconnectAttempts = 0;
     this.totalReconnectCount = 0;
+
+    if (this.peerConnection) {
+      try {
+        this.peerConnection.close();
+      } catch {}
+      this.peerConnection = null;
+    }
 
     await this.initPeerConnection();
     const offer = await this.peerConnection!.createOffer({

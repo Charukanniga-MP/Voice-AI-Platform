@@ -989,6 +989,7 @@ export function initSocketServer(io: SocketIOServer) {
         io.to('role:admin').to('role:agent').emit('call:status_changed', { callId: data.callId, status: 'active' });
         io.to('role:admin').to('role:agent').emit('ai_call:started', {
           callId: data.callId,
+          customerId: validCustomerId || data.customerId,
           customerName: data.customerName,
           customerPhone: data.customerPhone || 'Direct App Call',
           language: callLang,
@@ -1785,13 +1786,15 @@ export function initSocketServer(io: SocketIOServer) {
     // 13. Admin accepts a live call transfer or human specialist takeover
     socket.on('transfer:accept', async (data: { transferId: string; adminId: string; adminName: string }) => {
       try {
-        console.log(`[Transfer] Admin ${data.adminName} accepted transfer ${data.transferId}`);
+        console.log(`[Transfer] Support Specialist/Admin ${data.adminName} accepted transfer ${data.transferId}`);
 
         let targetCallId = '';
         let targetCallRecordId = '';
         let targetCustomerName = '';
         let targetCustomerPhone = '';
         let targetQuestion = '';
+        let targetCustomerId: string | null = null;
+        let targetCallLang = 'en';
 
         let validAdminId: string | null = null;
         if (data.adminId) {
@@ -1801,20 +1804,32 @@ export function initSocketServer(io: SocketIOServer) {
 
         if (data.transferId && data.transferId.startsWith('direct_takeover_')) {
           targetCallId = data.transferId.replace('direct_takeover_', '');
-          const call = await prisma.callRecord.findUnique({ where: { callId: targetCallId } });
+          const call = await prisma.callRecord.findFirst({
+            where: {
+              OR: [
+                { callId: targetCallId },
+                { id: targetCallId }
+              ]
+            }
+          });
           if (!call) {
             socket.emit('transfer:error', { message: 'Call not found for direct takeover.' });
             return;
           }
           targetCallRecordId = call.id;
+          targetCallId = call.callId; // Canonical callId string
           targetCustomerName = call.customerName;
           targetCustomerPhone = call.customerPhone || '';
+          targetCustomerId = call.customerId;
+          targetCallLang = call.language || 'en';
           targetQuestion = 'Direct specialist takeover';
 
           await prisma.callRecord.update({
             where: { id: targetCallRecordId },
             data: {
               adminId: validAdminId,
+              agentId: validAdminId,
+              agentName: data.adminName,
               transferred: true,
               status: 'active'
             }
@@ -1831,7 +1846,7 @@ export function initSocketServer(io: SocketIOServer) {
           }
 
           if (transfer.status === 'accepted' || transfer.status === 'connected') {
-            socket.emit('transfer:already_handled', { message: 'This transfer was already accepted by another Admin.' });
+            socket.emit('transfer:already_handled', { message: 'This transfer was already accepted by another Specialist.' });
             return;
           }
 
@@ -1840,6 +1855,8 @@ export function initSocketServer(io: SocketIOServer) {
           targetCustomerName = transfer.customerName;
           targetCustomerPhone = transfer.customerPhone || '';
           targetQuestion = transfer.question || '';
+          targetCustomerId = transfer.callRecord.customerId;
+          targetCallLang = transfer.callRecord.language || 'en';
 
           await prisma.callTransferRequest.update({
             where: { id: data.transferId },
@@ -1854,6 +1871,8 @@ export function initSocketServer(io: SocketIOServer) {
             where: { id: targetCallRecordId },
             data: {
               adminId: validAdminId,
+              agentId: validAdminId,
+              agentName: data.adminName,
               transferred: true,
               status: 'active'
             }
@@ -1861,31 +1880,97 @@ export function initSocketServer(io: SocketIOServer) {
         }
 
         // Lock session to human agent and silence AI immediately
-        const session = callSessions.get(targetCallId);
+        let session = callSessions.get(targetCallId);
         if (session) {
           session.speakerType = 'human_agent';
           session.humanSpeakerId = validAdminId || data.adminId;
           session.humanSpeakerName = data.adminName;
+        } else {
+          const newSession: CallSessionState = {
+            callId: targetCallId,
+            customerId: targetCustomerId,
+            customerName: targetCustomerName,
+            customerSocketId: '',
+            language: targetCallLang,
+            speakerType: 'human_agent',
+            humanSpeakerId: validAdminId || data.adminId,
+            humanSpeakerName: data.adminName,
+            greetingPlayed: true,
+            processedUtteranceIds: new Set(),
+            createdAt: Date.now()
+          };
+          callSessions.set(targetCallId, newSession);
+          session = newSession;
         }
-
-        // Emit call:ai_silenced to stop AI speech immediately on all clients in room
-        io.to(`call:${targetCallId}`).emit('call:ai_silenced', {
-          callId: targetCallId,
-          speakerType: 'human_agent',
-          adminId: data.adminId,
-          adminName: data.adminName
-        });
 
         await prisma.callTranscript.create({
           data: {
             callRecordId: targetCallRecordId,
             sender: 'system',
             senderName: 'System',
-            text: `Call transferred to Admin: ${data.adminName}. Live two-way voice connection established.`
+            text: `Call transferred to Support Specialist ${data.adminName}. Live two-way WebRTC voice connection established.`
           }
         });
 
+        // 1. Join Agent to Call Room
         socket.join(`call:${targetCallId}`);
+
+        // 2. Identify All Destination Rooms/Sockets for the Customer
+        const targetRooms = new Set<string>();
+        targetRooms.add(`call:${targetCallId}`);
+
+        const customerSocketId = session.customerSocketId || null;
+        if (customerSocketId) {
+          targetRooms.add(customerSocketId);
+          const custSocket = io.sockets.sockets.get(customerSocketId);
+          if (custSocket) {
+            custSocket.join(`call:${targetCallId}`);
+          }
+        }
+
+        if (targetCustomerId) {
+          targetRooms.add(`user:${targetCustomerId}`);
+          for (const [sId, u] of connectedUsers.entries()) {
+            if (u.userId === targetCustomerId) {
+              targetRooms.add(sId);
+              const s = io.sockets.sockets.get(sId);
+              if (s) s.join(`call:${targetCallId}`);
+            }
+          }
+        }
+
+        // 3. Emit transfer:connected & call:ai_silenced to customer
+        const transferPayload = {
+          callId: targetCallId,
+          adminId: data.adminId,
+          adminName: data.adminName,
+          adminSocketId: socket.id
+        };
+
+        const silencePayload = {
+          callId: targetCallId,
+          speakerType: 'human_agent',
+          adminId: data.adminId,
+          adminName: data.adminName
+        };
+
+        for (const room of targetRooms) {
+          io.to(room).emit('call:ai_silenced', silencePayload);
+          io.to(room).emit('transfer:connected', transferPayload);
+        }
+
+        // 4. Notify both Admin and Agent roles of state transition
+        io.to('role:admin').to('role:agent').emit('ai_call:ended', {
+          callId: targetCallId,
+          reason: 'human_takeover',
+          specialistName: data.adminName
+        });
+
+        io.to('role:admin').to('role:agent').emit('call:status_changed', {
+          callId: targetCallId,
+          status: 'active',
+          specialistTakeover: true
+        });
 
         io.to('role:admin').emit('transfer:status_updated', {
           transferId: data.transferId,
@@ -1893,19 +1978,14 @@ export function initSocketServer(io: SocketIOServer) {
           adminName: data.adminName
         });
 
+        // 5. Notify accepting agent of success
         socket.emit('transfer:accepted_success', {
           callId: targetCallId,
           transferId: data.transferId,
           customerName: targetCustomerName,
           customerPhone: targetCustomerPhone,
-          question: targetQuestion
-        });
-
-        io.to(`call:${targetCallId}`).emit('transfer:connected', {
-          callId: targetCallId,
-          adminId: data.adminId,
-          adminName: data.adminName,
-          adminSocketId: socket.id
+          question: targetQuestion,
+          customerSocketId
         });
       } catch (err) {
         console.error('[Transfer] Error accepting transfer:', err);
@@ -2323,6 +2403,14 @@ export function initSocketServer(io: SocketIOServer) {
           candidate: data.candidate,
           callId: data.callId
         });
+      }
+    });
+
+    // 16a. Participant explicitly joins a call room
+    socket.on('call:join', (data: { callId: string }) => {
+      if (data?.callId) {
+        socket.join(`call:${data.callId}`);
+        console.log(`[Socket] Socket ${socket.id} joined call room: call:${data.callId}`);
       }
     });
 
