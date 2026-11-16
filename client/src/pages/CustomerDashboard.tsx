@@ -115,11 +115,16 @@ export const CustomerDashboard: React.FC = () => {
   const selectedLanguageRef = useRef<LanguageCode>(selectedLanguage);
   const userRef = useRef(user);
 
+  const isMutedRef = useRef(false);
+  const isCallHeldRef = useRef(false);
+
   useEffect(() => {
     callIdRef.current = callId;
     callStatusRef.current = callStatus;
     selectedLanguageRef.current = selectedLanguage;
     userRef.current = user;
+    isMutedRef.current = isMuted;
+    isCallHeldRef.current = isCallHeld;
   });
 
   const handlePlayRecording = async (recordingUrl: string, recCallId: string) => {
@@ -772,10 +777,12 @@ export const CustomerDashboard: React.FC = () => {
     };
 
     voiceService.onSpeechStart = () => {
+      if (isMutedRef.current || isCallHeldRef.current) return;
       setIsCustomerSpeaking(true);
     };
 
     voiceService.startListening((text, isFinal, utteranceId) => {
+      if (isMutedRef.current || isCallHeldRef.current) return;
       const trimmed = text.trim();
 
       // Check text for multi-language script auto-detection
@@ -1104,8 +1111,17 @@ export const CustomerDashboard: React.FC = () => {
 
   // Toggle Mute
   const handleToggleMute = () => {
-    const muted = webrtcManager.toggleMute();
-    setIsMuted(muted);
+    if (callStatus === 'active_agent' || callStatus === 'active_admin') {
+      const muted = webrtcManager.toggleMute();
+      setIsMuted(muted);
+      isMutedRef.current = muted;
+    } else {
+      setIsMuted(prev => {
+        const next = !prev;
+        isMutedRef.current = next;
+        return next;
+      });
+    }
   };
 
   // Change Volume
@@ -1113,6 +1129,8 @@ export const CustomerDashboard: React.FC = () => {
     const val = parseFloat(e.target.value);
     setVolume(val);
     webrtcManager.setVolume(val);
+    voiceService.setVolume(val);
+    voiceOutputController.setVolume(val);
   };
 
   const formatDuration = (sec: number) => {

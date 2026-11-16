@@ -4,6 +4,7 @@ import { getSocket, registerSocketUser } from '../services/socket.js';
 import { telephonyVoiceManager, TelephonyCallState } from '../services/telephonyVoice.js';
 import { webrtcManager } from '../services/webrtc.js';
 import { voiceService } from '../services/voice.js';
+import { voiceOutputController } from '../services/voiceOutputController.js';
 import { ringtoneService } from '../services/ringtone.js';
 import { SupportTickets } from './SupportTickets.js';
 import { FollowUpTasksManager } from '../components/FollowUpTasksManager.js';
@@ -1122,6 +1123,8 @@ export const AgentDashboard: React.FC = () => {
     setVolume(val);
     setIsSpeakerOn(val > 0);
     if (val > 0) previousVolumeRef.current = val;
+    voiceService.setVolume(val);
+    voiceOutputController.setVolume(val);
     if (activeCall?.isIncomingSupport) {
       webrtcManager.setVolume(val);
     } else {

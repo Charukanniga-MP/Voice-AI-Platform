@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext.js';
 import { getSocket } from '../services/socket.js';
 import { webrtcManager } from '../services/webrtc.js';
 import { voiceService } from '../services/voice.js';
+import { voiceOutputController } from '../services/voiceOutputController.js';
 import { ringtoneService } from '../services/ringtone.js';
 import { SupportTickets } from './SupportTickets.js';
 import {
@@ -1622,6 +1623,8 @@ export const AdminDashboard: React.FC = () => {
                       const val = parseFloat(e.target.value);
                       setVolume(val);
                       webrtcManager.setVolume(val);
+                      voiceService.setVolume(val);
+                      voiceOutputController.setVolume(val);
                     }}
                     className="w-20 accent-purple-600 cursor-pointer"
                   />
@@ -2689,6 +2692,8 @@ export const AdminDashboard: React.FC = () => {
                           const val = parseFloat(e.target.value);
                           setVolume(val);
                           webrtcManager.setVolume(val);
+                          voiceService.setVolume(val);
+                          voiceOutputController.setVolume(val);
                         }}
                         className="w-20 accent-purple-600 cursor-pointer"
                       />

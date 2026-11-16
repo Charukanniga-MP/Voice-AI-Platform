@@ -7,8 +7,9 @@
  *    - Never plays browser-generated speech and server-generated speech simultaneously.
  *    - Automatically cancels previous audio before starting new audio.
  *    - Deduplicates identical responses within a 3.5s window.
- * 3. Graceful handling of browser autoplay policies and interruption (barge-in).
- * 4. Full multilingual speech support.
+ *    - Atomic fallback lock prevents race condition between HTML5 audio error and play rejection.
+ * 3. Graceful handling of browser autoplay policies, speaker device routing, and interruption (barge-in).
+ * 4. Full multilingual speech support across all 21 languages.
  */
 
 import { audioDeviceManager } from './audioDevice.js';
@@ -37,6 +38,7 @@ export class VoiceOutputController {
 
   private currentVolume: number = 1.0;
   private audioUnlocked: boolean = false;
+  private cachedVoices: SpeechSynthesisVoice[] = [];
 
   private constructor() {
     if (typeof window !== 'undefined') {
@@ -47,6 +49,15 @@ export class VoiceOutputController {
       };
       window.addEventListener('click', unlock, { once: true });
       window.addEventListener('touchstart', unlock, { once: true });
+
+      if (window.speechSynthesis) {
+        this.cachedVoices = window.speechSynthesis.getVoices();
+        if (window.speechSynthesis.onvoiceschanged !== undefined) {
+          window.speechSynthesis.onvoiceschanged = () => {
+            this.cachedVoices = window.speechSynthesis.getVoices();
+          };
+        }
+      }
     }
   }
 
@@ -68,7 +79,7 @@ export class VoiceOutputController {
       silentAudio.play().then(() => {
         this.audioUnlocked = true;
         console.log('[VoiceOutputController] Audio context unlocked successfully.');
-      }).catch(() => {});
+      }).catch(() => { });
     } catch {
       // Ignore initial silent unlock failure
     }
@@ -88,10 +99,23 @@ export class VoiceOutputController {
     return this.currentSpokenText;
   }
 
+  public getVolume(): number {
+    return this.currentVolume;
+  }
+
   public setVolume(volume: number): void {
     this.currentVolume = Math.max(0, Math.min(1, volume));
     if (this.currentAudio) {
       this.currentAudio.volume = this.currentVolume;
+    }
+  }
+
+  /**
+   * Dynamically switch speaker output device on currently playing audio element
+   */
+  public async switchSpeaker(deviceId?: string): Promise<void> {
+    if (this.currentAudio) {
+      await audioDeviceManager.applySpeakerToAudioElement(this.currentAudio, deviceId);
     }
   }
 
@@ -198,6 +222,7 @@ export class VoiceOutputController {
 
       let hasStarted = false;
       let hasResolved = false;
+      let hasFallenBack = false;
 
       const finish = () => {
         if (this.currentPlaybackId !== playbackId) return;
@@ -209,6 +234,22 @@ export class VoiceOutputController {
           options.onEnd?.();
           resolve();
         }
+      };
+
+      const triggerFallback = (reason: string, err: any) => {
+        if (this.currentPlaybackId !== playbackId) return;
+        if (hasFallenBack || hasResolved) return;
+        hasFallenBack = true;
+
+        console.warn(`[VoiceOutputController] ${reason}, transitioning to single SpeechSynthesis fallback:`, err);
+        if (this.currentAudio) {
+          try {
+            this.currentAudio.pause();
+            this.currentAudio.removeAttribute('src');
+          } catch {}
+          this.currentAudio = null;
+        }
+        this.speakWithSpeechSynthesis(cleanText, targetLang, playbackId, options).then(resolve);
       };
 
       audio.onplay = () => {
@@ -224,11 +265,7 @@ export class VoiceOutputController {
       };
 
       audio.onerror = (err) => {
-        // If this playback was superseded or stopped, ignore completely
-        if (this.currentPlaybackId !== playbackId) return;
-        console.warn('[VoiceOutputController] Server TTS error, transitioning to single SpeechSynthesis fallback:', err);
-        this.currentAudio = null;
-        this.speakWithSpeechSynthesis(cleanText, targetLang, playbackId, options).then(resolve);
+        triggerFallback('Server TTS error', err);
       };
 
       audio.play().catch((playErr) => {
@@ -240,9 +277,7 @@ export class VoiceOutputController {
           return;
         }
 
-        console.warn('[VoiceOutputController] HTML5 Audio autoplay policy error, transitioning to single SpeechSynthesis fallback:', playErr);
-        this.currentAudio = null;
-        this.speakWithSpeechSynthesis(cleanText, targetLang, playbackId, options).then(resolve);
+        triggerFallback('HTML5 Audio autoplay policy error', playErr);
       });
     });
   }
@@ -274,7 +309,7 @@ export class VoiceOutputController {
       // Ensure synth is cancelled before creating new utterance
       try {
         window.speechSynthesis.cancel();
-      } catch {}
+      } catch { }
 
       const utterance = new SpeechSynthesisUtterance(text);
       this.currentUtterance = utterance;
@@ -306,16 +341,16 @@ export class VoiceOutputController {
       const targetBcp47 = bcp47Map[langCode] || `${langCode}-${langCode.toUpperCase()}`;
       utterance.lang = targetBcp47;
 
-      const voices = window.speechSynthesis.getVoices();
+      const availableVoices = this.cachedVoices.length > 0 ? this.cachedVoices : window.speechSynthesis.getVoices();
       const langPrefix = targetBcp47.split('-')[0];
 
       // Find natural, soft, and friendly voice for this language
       const matchingVoice =
-        voices.find(v => v.lang.toLowerCase() === targetBcp47.toLowerCase() && (v.name.includes('Natural') || v.name.includes('Neural') || v.name.includes('Google') || v.name.includes('Female') || v.name.includes('Jenny') || v.name.includes('Samantha') || v.name.includes('Aria'))) ||
-        voices.find(v => v.lang.toLowerCase() === targetBcp47.toLowerCase()) ||
-        voices.find(v => v.lang.toLowerCase().startsWith(langPrefix)) ||
-        voices.find(v => (v.name.includes('Google') || v.name.includes('Natural')) && v.lang.startsWith('en')) ||
-        voices.find(v => v.lang.startsWith('en'));
+        availableVoices.find(v => v.lang.toLowerCase() === targetBcp47.toLowerCase() && (v.name.includes('Natural') || v.name.includes('Neural') || v.name.includes('Google') || v.name.includes('Female') || v.name.includes('Jenny') || v.name.includes('Samantha') || v.name.includes('Aria'))) ||
+        availableVoices.find(v => v.lang.toLowerCase() === targetBcp47.toLowerCase()) ||
+        availableVoices.find(v => v.lang.toLowerCase().startsWith(langPrefix)) ||
+        availableVoices.find(v => (v.name.includes('Google') || v.name.includes('Natural')) && v.lang.startsWith('en')) ||
+        availableVoices.find(v => v.lang.startsWith('en'));
 
       if (matchingVoice) {
         utterance.voice = matchingVoice;

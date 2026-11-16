@@ -255,6 +255,19 @@ class AudioDeviceManager {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       const ctx = new AudioContextClass();
 
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
+      }
+
+      const targetDeviceId = speakerDeviceId || this.getPreferredSpeakerId();
+      if (targetDeviceId && targetDeviceId !== 'default' && (ctx as any).setSinkId) {
+        try {
+          await (ctx as any).setSinkId(targetDeviceId);
+        } catch (e) {
+          console.warn('[AudioDevice] Could not set sinkId on AudioContext:', e);
+        }
+      }
+
       // Synthesize a pleasant two-tone confirmation chime (A4 -> C#5 -> E5)
       const now = ctx.currentTime;
       const frequencies = [440, 554.37, 659.25]; // A major chord arpeggio

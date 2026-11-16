@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Mic, Volume2, Settings2, CheckCircle2, AlertCircle, Play, X, Headphones, RefreshCw } from 'lucide-react';
 import { audioDeviceManager, AudioDeviceInfo } from '../services/audioDevice.js';
 import { webrtcManager } from '../services/webrtc.js';
+import { voiceOutputController } from '../services/voiceOutputController.js';
 
 interface AudioDeviceModalProps {
   isOpen: boolean;
@@ -109,6 +110,7 @@ export const AudioDeviceModal: React.FC<AudioDeviceModalProps> = ({
       if (webrtcManager.getCallId()) {
         await webrtcManager.switchSpeaker(newId);
       }
+      await voiceOutputController.switchSpeaker(newId);
     } catch (err) {
       console.warn('Could not switch speaker during active call:', err);
     }
@@ -120,9 +122,12 @@ export const AudioDeviceModal: React.FC<AudioDeviceModalProps> = ({
     setTimeout(() => setTestingSpeaker(false), 800);
   };
 
-  const handleSaveAndClose = () => {
+  const handleSaveAndClose = async () => {
     audioDeviceManager.setPreferredMicrophoneId(selectedMic);
     audioDeviceManager.setPreferredSpeakerId(selectedSpeaker);
+    try {
+      await voiceOutputController.switchSpeaker(selectedSpeaker);
+    } catch {}
     onDeviceChange?.(selectedMic, selectedSpeaker);
 
     setSavedSuccess(true);
