@@ -1,6 +1,6 @@
-import { getSocket } from './socket.js';
-import { callQualityMonitor, CallQualityStats } from './callQuality.js';
-import { audioDeviceManager } from './audioDevice.js';
+import { getSocket } from './socket';
+import { callQualityMonitor, CallQualityStats } from './callQuality';
+import { audioDeviceManager } from './audioDevice';
 
 export interface WebRTCCallbacks {
   onQualityChange?: (stats: CallQualityStats) => void;
@@ -27,6 +27,7 @@ export class WebRTCManager {
   private recordingConsent: 'granted' | 'declined' | 'not_requested' = 'not_requested';
   private remoteStream: MediaStream | null = null;
   private audioContext: AudioContext | null = null;
+  private pendingCandidates: RTCIceCandidateInit[] = [];
 
 
   // Reconnection management
@@ -100,8 +101,14 @@ export class WebRTCManager {
   public unlockAudio(): void {
     try {
       const audio = this.getAudioElement();
-      // Calling play() directly in a user gesture unlocks the audio pipeline for incoming WebRTC streams
-      audio.play().catch(() => {
+      if (!audio.src && !audio.srcObject) {
+        audio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+      }
+      audio.play().then(() => {
+        if (audio.src && audio.src.startsWith('data:audio/wav')) {
+          audio.removeAttribute('src');
+        }
+      }).catch(() => {
         // Expected promise rejection when srcObject is not yet attached
       });
       console.log('[WebRTC] Audio pipeline unlocked for two-way voice.');
@@ -149,6 +156,7 @@ export class WebRTCManager {
 
         await this.initPeerConnection();
         await this.peerConnection!.setRemoteDescription(new RTCSessionDescription(data.offer));
+        await this.flushPendingCandidates();
 
         const answer = await this.peerConnection!.createAnswer();
         await this.peerConnection!.setLocalDescription(answer);
@@ -174,6 +182,7 @@ export class WebRTCManager {
       if (this.peerConnection && this.peerConnection.signalingState !== 'closed') {
         try {
           await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+          await this.flushPendingCandidates();
           if (data.isReconnect || this.isReconnecting) {
             this.handleReconnectionSuccess();
           }
@@ -185,12 +194,15 @@ export class WebRTCManager {
 
     // Handle incoming ICE candidate
     socket.on('webrtc:ice-candidate', async (data: { sender: string; candidate: RTCIceCandidateInit; callId: string }) => {
-      if (this.peerConnection && data.candidate) {
+      if (!data.candidate) return;
+      if (this.peerConnection && this.peerConnection.remoteDescription && this.peerConnection.remoteDescription.type) {
         try {
           await this.peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
         } catch (err) {
           console.error('[WebRTC] Error adding ICE candidate:', err);
         }
+      } else {
+        this.pendingCandidates.push(data.candidate);
       }
     });
 
@@ -260,6 +272,21 @@ export class WebRTCManager {
     }
   }
 
+  // Drain buffered ICE candidates after remote description is set
+  private async flushPendingCandidates(): Promise<void> {
+    if (!this.peerConnection || !this.peerConnection.remoteDescription) return;
+    while (this.pendingCandidates.length > 0) {
+      const candidate = this.pendingCandidates.shift();
+      if (candidate) {
+        try {
+          await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (err) {
+          console.warn('[WebRTC] Error draining queued ICE candidate:', err);
+        }
+      }
+    }
+  }
+
   // Initialize RTCPeerConnection
   private async initPeerConnection(): Promise<RTCPeerConnection> {
     if (this.peerConnection && this.peerConnection.connectionState !== 'closed' && this.peerConnection.signalingState !== 'closed') {
@@ -283,18 +310,29 @@ export class WebRTCManager {
 
     // Add local tracks
     const stream = await this.getMicrophoneStream();
+    if (!this.peerConnection || this.peerConnection.connectionState === 'closed') {
+      return this.peerConnection!;
+    }
+    const senders = this.peerConnection.getSenders();
     stream.getTracks().forEach(track => {
-      this.peerConnection!.addTrack(track, stream);
+      const alreadyAdded = senders.some(s => s.track && s.track.id === track.id);
+      if (!alreadyAdded) {
+        this.peerConnection!.addTrack(track, stream);
+      }
     });
 
     // On remote track received
     this.peerConnection.ontrack = (event) => {
       console.log('[WebRTC] Received remote audio stream track');
+      const stream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
+      this.remoteStream = stream;
       if (this.recordingConsent === 'granted') this.startRecording();
       const audio = this.getAudioElement();
-      audio.srcObject = event.streams[0];
-      this.remoteStream = event.streams[0];
+      audio.srcObject = stream;
       audio.play().catch(e => console.warn('[WebRTC] Audio auto-play blocked by browser:', e));
+      event.track.onunmute = () => {
+        audio.play().catch(() => {});
+      };
     };
 
     // On ICE candidate generated
@@ -517,6 +555,7 @@ export class WebRTCManager {
     this.isReconnecting = false;
     this.reconnectAttempts = 0;
     this.totalReconnectCount = 0;
+    this.pendingCandidates = [];
 
     if (this.peerConnection) {
       try {
@@ -665,14 +704,7 @@ export class WebRTCManager {
             const headers: Record<string, string> = {};
             if (token) headers['Authorization'] = `Bearer ${token}`;
 
-            // 1. Upload to dedicated /api/recordings/upload
-            await fetch('/api/recordings/upload', {
-              method: 'POST',
-              headers,
-              body: formData
-            }).catch(e => console.warn('[WebRTC Recording] /api/recordings/upload error:', e));
-
-            // 2. Upload to /api/calls/:callId/recording
+            // Upload recording to /api/calls/:callId/recording
             const res = await fetch(`/api/calls/${currentCallId}/recording`, {
               method: 'POST',
               headers,
@@ -716,7 +748,10 @@ export class WebRTCManager {
 
   public endCall() {
     this.stopAndUploadRecording().catch(() => {});
-    this.remoteStream = null;
+    if (this.remoteStream) {
+      this.remoteStream.getTracks().forEach(track => track.stop());
+      this.remoteStream = null;
+    }
     // Record final quality report in backend before tearing down
     callQualityMonitor.syncWithBackend(this.totalReconnectCount);
     callQualityMonitor.stop();
@@ -725,9 +760,14 @@ export class WebRTCManager {
     if (this.reconnectBackoffTimer) clearTimeout(this.reconnectBackoffTimer);
     this.isReconnecting = false;
     this.reconnectAttempts = 0;
+    this.pendingCandidates = [];
 
     if (this.peerConnection) {
-      this.peerConnection.close();
+      try {
+        this.peerConnection.close();
+      } catch (err) {
+        console.debug('[WebRTC] Resetting closed peer connection on end:', err);
+      }
       this.peerConnection = null;
     }
 
@@ -737,6 +777,11 @@ export class WebRTCManager {
     }
 
     if (this.remoteAudio) {
+      try {
+        this.remoteAudio.pause();
+      } catch (err) {
+        console.debug('[WebRTC] Remote audio pause fallback:', err);
+      }
       this.remoteAudio.srcObject = null;
     }
 
