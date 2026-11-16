@@ -141,7 +141,9 @@ export class WebRTCManager {
         if (!data.isReconnect && this.peerConnection) {
           try {
             this.peerConnection.close();
-          } catch {}
+          } catch (err) {
+            console.debug('[WebRTC] Cleaned previous connection on incoming offer:', err);
+          }
           this.peerConnection = null;
         }
 
@@ -267,7 +269,9 @@ export class WebRTCManager {
     if (this.peerConnection) {
       try {
         this.peerConnection.close();
-      } catch {}
+      } catch (err) {
+        console.debug('[WebRTC] Resetting closed peer connection:', err);
+      }
       this.peerConnection = null;
     }
 
@@ -517,7 +521,9 @@ export class WebRTCManager {
     if (this.peerConnection) {
       try {
         this.peerConnection.close();
-      } catch {}
+      } catch (err) {
+        console.debug('[WebRTC] Resetting closed peer connection:', err);
+      }
       this.peerConnection = null;
     }
 
@@ -697,7 +703,8 @@ export class WebRTCManager {
         } else {
           resolve();
         }
-      } catch (e) {
+      } catch (err) {
+        console.debug('[WebRTC] MediaRecorder stop fallback:', err);
         resolve();
       }
     });
