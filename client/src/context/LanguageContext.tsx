@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { LanguageCode, SUPPORTED_LANGUAGES } from '../types.js';
-import { translate, TranslationKey, translations } from '../i18n/index.js';
+import { translate, TranslationKey } from '../i18n/index.js';
 import { voiceService } from '../services/voice.js';
 import { useAuth } from './AuthContext.js';
 

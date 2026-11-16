@@ -141,8 +141,8 @@ export class VoiceOutputController {
         this.currentAudio.currentTime = 0;
         this.currentAudio.src = '';
         this.currentAudio.removeAttribute('src');
-      } catch (e) {
-        // Safe catch on audio pause
+      } catch (err) {
+        console.debug('[VoiceOutput] Audio pause fallback:', err);
       }
       this.currentAudio = null;
     }
@@ -151,8 +151,8 @@ export class VoiceOutputController {
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       try {
         window.speechSynthesis.cancel();
-      } catch (e) {
-        // Safe catch on synth cancel
+      } catch (err) {
+        console.debug('[VoiceOutput] Synth cancel fallback:', err);
       }
       this.currentUtterance = null;
     }

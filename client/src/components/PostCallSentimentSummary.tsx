@@ -1,7 +1,7 @@
 import React from 'react';
 import { SentimentBadge } from './SentimentBadge.js';
 import { SentimentType } from '../types.js';
-import { CheckCircle2, AlertTriangle, ShieldCheck, HeartPulse } from 'lucide-react';
+import { HeartPulse } from 'lucide-react';
 
 interface PostCallSentimentSummaryProps {
   overallSentiment?: SentimentType | string | null;

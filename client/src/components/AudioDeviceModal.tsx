@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Mic, Volume2, Settings2, CheckCircle2, AlertCircle, Play, X, Headphones, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Mic, Volume2, CheckCircle2, AlertCircle, Play, X, Headphones, RefreshCw } from 'lucide-react';
 import { audioDeviceManager, AudioDeviceInfo } from '../services/audioDevice.js';
 import { webrtcManager } from '../services/webrtc.js';
 import { voiceOutputController } from '../services/voiceOutputController.js';
@@ -21,23 +21,26 @@ export const AudioDeviceModal: React.FC<AudioDeviceModalProps> = ({
   const [selectedSpeaker, setSelectedSpeaker] = useState<string>('default');
 
   const [micLevel, setMicLevel] = useState<number>(0);
-  const [testingMic, setTestingMic] = useState<boolean>(false);
   const [testingSpeaker, setTestingSpeaker] = useState<boolean>(false);
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [savedSuccess, setSavedSuccess] = useState<boolean>(false);
 
-  useEffect(() => {
-    if (isOpen) {
-      loadDevices();
-    } else {
-      stopTests();
-    }
-    return () => {
-      stopTests();
-    };
-  }, [isOpen]);
+  const stopTests = useCallback(() => {
+    audioDeviceManager.stopMicrophoneLevelTest();
+    setMicLevel(0);
+  }, []);
 
-  const loadDevices = async () => {
+  const startMicTest = useCallback(async (deviceId: string) => {
+    try {
+      await audioDeviceManager.startMicrophoneLevelTest(deviceId, (level) => {
+        setMicLevel(level);
+      });
+    } catch (err: any) {
+      setPermissionError(err.message || 'Could not start microphone test.');
+    }
+  }, []);
+
+  const loadDevices = useCallback(async () => {
     try {
       setPermissionError(null);
       // Pre-check permission
@@ -62,25 +65,18 @@ export const AudioDeviceModal: React.FC<AudioDeviceModalProps> = ({
     } catch (err: any) {
       setPermissionError(err.message || 'Failed to detect audio devices.');
     }
-  };
+  }, [startMicTest]);
 
-  const startMicTest = async (deviceId: string) => {
-    try {
-      setTestingMic(true);
-      await audioDeviceManager.startMicrophoneLevelTest(deviceId, (level) => {
-        setMicLevel(level);
-      });
-    } catch (err: any) {
-      setTestingMic(false);
-      setPermissionError(err.message || 'Could not start microphone test.');
+  useEffect(() => {
+    if (isOpen) {
+      loadDevices();
+    } else {
+      stopTests();
     }
-  };
-
-  const stopTests = () => {
-    audioDeviceManager.stopMicrophoneLevelTest();
-    setTestingMic(false);
-    setMicLevel(0);
-  };
+    return () => {
+      stopTests();
+    };
+  }, [isOpen, loadDevices, stopTests]);
 
   const handleMicChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newId = e.target.value;
@@ -127,7 +123,9 @@ export const AudioDeviceModal: React.FC<AudioDeviceModalProps> = ({
     audioDeviceManager.setPreferredSpeakerId(selectedSpeaker);
     try {
       await voiceOutputController.switchSpeaker(selectedSpeaker);
-    } catch {}
+    } catch (err) {
+      console.debug('[AudioDevice] Switch speaker error:', err);
+    }
     onDeviceChange?.(selectedMic, selectedSpeaker);
 
     setSavedSuccess(true);

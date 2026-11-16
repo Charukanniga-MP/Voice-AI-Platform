@@ -172,7 +172,6 @@ export class CallQualityMonitor {
       let jitterMs = 0;
       let deltaPacketsLost = 0;
       let deltaPacketsReceived = 0;
-      let hasAudioInbound = false;
 
       stats.forEach((report) => {
         // 1. Candidate pair: latency / RTT
@@ -187,7 +186,6 @@ export class CallQualityMonitor {
 
         // 2. Inbound audio stream: jitter & packet loss
         if (report.type === 'inbound-rtp' && (report.kind === 'audio' || report.mediaType === 'audio')) {
-          hasAudioInbound = true;
           if (report.jitter !== undefined) {
             jitterMs = Math.round(report.jitter * 1000);
           }
@@ -237,7 +235,7 @@ export class CallQualityMonitor {
       this.samples.push({ latency, packetLoss, jitter, mos });
       this.notify();
     } catch (err) {
-      // In non-supported or teardown state, gracefully ignore
+      console.debug('[CallQuality] Stats collection fallback:', err);
     }
   }
 

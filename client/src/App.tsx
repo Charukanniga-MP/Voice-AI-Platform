@@ -32,7 +32,7 @@ const TicketNotificationToast: React.FC = () => {
     };
     socket.on('ticket:notification', onTicketNotification);
     return () => { socket.off('ticket:notification', onTicketNotification); };
-  }, [user?.id]);
+  }, [user]);
 
   if (!alert) return null;
   return (
@@ -118,7 +118,7 @@ const checkIsResetRoute = (): boolean => {
 
 const MainApp: React.FC = () => {
   const { user, isLoading } = useAuth();
-  const [currentRoleView, setCurrentRoleView] = useState<string | null>(null);
+  const [_currentRoleView, setCurrentRoleView] = useState<string | null>(null);
   const [isResetView, setIsResetView] = useState<boolean>(checkIsResetRoute);
 
   useEffect(() => {

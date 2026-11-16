@@ -29,39 +29,35 @@ export function setupFetchInterceptor(onSessionExpired: (message: string) => voi
       config.headers = headers;
     }
 
-    try {
-      const response = await originalFetch(resource, config);
+    const response = await originalFetch(resource, config);
 
-      if (response.status === 401) {
-        // Clone response to inspect body without consuming the original stream
-        try {
-          const clone = response.clone();
-          const data = await clone.json();
+    if (response.status === 401) {
+      // Clone response to inspect body without consuming the original stream
+      try {
+        const clone = response.clone();
+        const data = await clone.json();
 
-          if (data?.code === 'SESSION_EXPIRED' || data?.error?.toLowerCase().includes('expired')) {
-            if (!isHandlingExpiredSession) {
-              isHandlingExpiredSession = true;
-              localStorage.removeItem('kaira_token');
-              localStorage.removeItem('kaira_user');
+        if (data?.code === 'SESSION_EXPIRED' || data?.error?.toLowerCase().includes('expired')) {
+          if (!isHandlingExpiredSession) {
+            isHandlingExpiredSession = true;
+            localStorage.removeItem('kaira_token');
+            localStorage.removeItem('kaira_user');
 
-              const message = data.error || 'Your session has expired. Please log in again.';
-              onSessionExpired(message);
+            const message = data.error || 'Your session has expired. Please log in again.';
+            onSessionExpired(message);
 
-              // Allow future expirations after delay
-              setTimeout(() => {
-                isHandlingExpiredSession = false;
-              }, 3000);
-            }
+            // Allow future expirations after delay
+            setTimeout(() => {
+              isHandlingExpiredSession = false;
+            }, 3000);
           }
-        } catch {
-          // Response body was not JSON or already consumed
         }
+      } catch {
+        // Response body was not JSON or already consumed
       }
-
-      return response;
-    } catch (error) {
-      throw error;
     }
+
+    return response;
   };
 }
 

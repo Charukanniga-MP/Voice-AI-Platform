@@ -34,7 +34,6 @@ export const ResetPasswordPage: React.FC<ResetPasswordProps> = ({ onBackToLogin 
   const [requestEmail, setRequestEmail] = useState<string>(user?.email || '');
   const [requestLoading, setRequestLoading] = useState<boolean>(false);
   const [requestSuccess, setRequestSuccess] = useState<string | null>(null);
-  const [devDirectLink, setDevDirectLink] = useState<string | null>(null);
   const [devDirectToken, setDevDirectToken] = useState<string | null>(null);
 
   // Manual token input state
@@ -97,7 +96,6 @@ export const ResetPasswordPage: React.FC<ResetPasswordProps> = ({ onBackToLogin 
 
     setRequestLoading(true);
     setRequestSuccess(null);
-    setDevDirectLink(null);
     setDevDirectToken(null);
 
     try {
@@ -113,9 +111,6 @@ export const ResetPasswordPage: React.FC<ResetPasswordProps> = ({ onBackToLogin 
       if (data.devToken) {
         setDevDirectToken(data.devToken);
       }
-      if (data.devResetLink) {
-        setDevDirectLink(data.devResetLink);
-      }
     } catch {
       setRequestSuccess('If an account exists with this email address, password reset instructions have been dispatched.');
     } finally {
@@ -128,7 +123,7 @@ export const ResetPasswordPage: React.FC<ResetPasswordProps> = ({ onBackToLogin 
   const hasUppercase = /[A-Z]/.test(newPassword);
   const hasLowercase = /[a-z]/.test(newPassword);
   const hasNumber = /\d/.test(newPassword);
-  const hasSpecial = /[@$!%*?&#^()_\-+=\[\]{}|:;<>,./~`]/.test(newPassword);
+  const hasSpecial = /[@$!%*?&#^()_\-+=[\]{}|:;<>,./~`]/.test(newPassword);
   const passwordsMatch = newPassword.length > 0 && newPassword === confirmPassword;
   const isFormValid = hasMinLength && hasUppercase && hasLowercase && hasNumber && hasSpecial && passwordsMatch;
 

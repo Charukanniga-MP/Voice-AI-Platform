@@ -40,6 +40,7 @@ class TelephonyVoiceManager {
       });
       return await res.json();
     } catch (err: any) {
+      console.warn('[Telephony] Failed to fetch telephony status:', err);
       return {
         configured: false,
         provider: 'twilio',

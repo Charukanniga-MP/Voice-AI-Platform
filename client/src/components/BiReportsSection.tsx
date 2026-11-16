@@ -6,11 +6,11 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  TrendingUp, BarChart3, PieChart, FileText, Download, Calendar,
+  TrendingUp, BarChart3, FileText, Calendar,
   RefreshCw, CheckCircle2, AlertCircle, Clock, Users, PhoneCall,
-  PhoneIncoming, PhoneForwarded, PhoneOff, ShieldAlert, Sparkles,
-  Lightbulb, Search, Filter, Eye, ChevronRight, X, ArrowUpRight,
-  ArrowDownRight, HelpCircle, Layers, FileSpreadsheet
+  PhoneForwarded, PhoneOff,
+  Lightbulb, Search, Eye, X, ArrowUpRight,
+  ArrowDownRight, Layers, FileSpreadsheet
 } from 'lucide-react';
 import { BiOverviewData, BusinessReportRecord } from '../types.js';
 
@@ -24,8 +24,8 @@ export const BiReportsSection: React.FC<BiReportsSectionProps> = ({ token }) => 
 
   // Period Filters
   const [period, setPeriod] = useState<string>('30days');
-  const [customStart, setCustomStart] = useState<string>('');
-  const [customEnd, setCustomEnd] = useState<string>('');
+  const [customStart, _setCustomStart] = useState<string>('');
+  const [customEnd, _setCustomEnd] = useState<string>('');
 
   // Data State
   const [loading, setLoading] = useState<boolean>(true);
@@ -52,7 +52,7 @@ export const BiReportsSection: React.FC<BiReportsSectionProps> = ({ token }) => 
 
   // Report Details Modal
   const [selectedReport, setSelectedReport] = useState<any | null>(null);
-  const [viewLoading, setViewLoading] = useState<boolean>(false);
+  const [_viewLoading, setViewLoading] = useState<boolean>(false);
 
   // Active chart tooltip states
   const [hoveredPoint, setHoveredPoint] = useState<{ label: string; totalCalls: number; completed: number; x: number; y: number } | null>(null);
@@ -258,30 +258,6 @@ export const BiReportsSection: React.FC<BiReportsSectionProps> = ({ token }) => 
     const fruOffset = -((posPct + neuPct + negPct) * C);
 
     return { posDash, neuDash, negDash, fruDash, posOffset, neuOffset, negOffset, fruOffset, C };
-  }, [overview]);
-
-  // Donut chart calculations for call status
-  const statusDonut = useMemo(() => {
-    if (!overview) return null;
-    const k = overview.kpis;
-    const total = Math.max(k.totalCalls, 1);
-    const compPct = k.completedCalls / total;
-    const missPct = k.missedCalls / total;
-    const tranPct = k.transferredCalls / total;
-    const rejPct = k.rejectedCalls / total;
-
-    const C = 238.76;
-    const compDash = `${compPct * C} ${C}`;
-    const missDash = `${missPct * C} ${C}`;
-    const tranDash = `${tranPct * C} ${C}`;
-    const rejDash = `${rejPct * C} ${C}`;
-
-    const compOffset = 0;
-    const missOffset = -(compPct * C);
-    const tranOffset = -((compPct + missPct) * C);
-    const rejOffset = -((compPct + missPct + tranPct) * C);
-
-    return { compDash, missDash, tranDash, rejDash, compOffset, missOffset, tranOffset, rejOffset, C };
   }, [overview]);
 
   return (

@@ -125,8 +125,8 @@ export class RingtoneService {
         } catch {}
         this.activeGain = null;
       }
-    } catch (e) {
-      // Ignore cleanup error
+    } catch (err) {
+      console.debug('[Ringtone] Cleanup error:', err);
     }
   }
 }
