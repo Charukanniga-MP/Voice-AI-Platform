@@ -16,7 +16,7 @@ import {
   resetPasswordSchema
 } from '../middleware/validation.js';
 import { logSecurityEvent } from '../services/audit.js';
-import { sendPasswordResetEmail, sendGoogleAccountRecoveryNotice } from '../services/email.js';
+import { sendPasswordResetEmail, sendGoogleAccountRecoveryNotice, verifySmtpConnection, sendTestEmail } from '../services/email.js';
 import { env } from '../config/env.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1124,9 +1124,43 @@ router.post('/forgot-password', forgotPasswordLimiter, validate(forgotPasswordSc
       }
     });
 
-    // Send reset email with reset link containing the plain token
-    const resetLink = `${env.FRONTEND_URL}/reset-password?token=${rawToken}`;
-    await sendPasswordResetEmail(user.email, user.name, resetLink);
+    // Determine client's frontend origin dynamically so link opens directly in the Kaira project
+    let frontendOrigin = env.FRONTEND_URL || 'http://localhost:5173';
+    if (req.headers.origin && typeof req.headers.origin === 'string') {
+      frontendOrigin = req.headers.origin;
+    } else if (req.headers.referer && typeof req.headers.referer === 'string') {
+      try {
+        frontendOrigin = new URL(req.headers.referer).origin;
+      } catch {}
+    }
+
+    // Send reset email with reset link containing the plain token pointing directly to Kaira reset page
+    const resetLink = `${frontendOrigin.replace(/\/$/, '')}/reset-password?token=${rawToken}`;
+    
+    // Await email delivery operation via SMTP
+    const emailResult = await sendPasswordResetEmail(user.email, user.name, resetLink);
+
+    if (!emailResult.delivered) {
+      console.error(`[Auth] ❌ Failed to dispatch password reset email to ${user.email}: ${emailResult.error}`);
+
+      await logSecurityEvent({
+        eventType: 'PASSWORD_RESET_FAILED',
+        userId: user.id,
+        email: user.email,
+        ipAddress: req.ip || req.socket.remoteAddress,
+        userAgent: req.headers['user-agent'] as string,
+        details: `Password reset email delivery failed: ${emailResult.error}`
+      });
+
+      res.status(503).json({
+        success: false,
+        error: 'Unable to send password reset email at this time due to an email delivery issue. Please check server SMTP configuration.',
+        code: 'EMAIL_DELIVERY_FAILED'
+      });
+      return;
+    }
+
+    console.log(`[Auth] ✓ Password reset email successfully dispatched to ${user.email} via SMTP.`);
 
     await logSecurityEvent({
       eventType: 'PASSWORD_RESET_REQUESTED',
@@ -1134,22 +1168,39 @@ router.post('/forgot-password', forgotPasswordLimiter, validate(forgotPasswordSc
       email: user.email,
       ipAddress: req.ip || req.socket.remoteAddress,
       userAgent: req.headers['user-agent'] as string,
-      details: 'Password reset token generated and dispatched'
+      details: 'Password reset token generated and dispatched via SMTP'
     });
 
-    if (env.NODE_ENV !== 'production') {
-      res.json({
-        message: neutralMessage,
-        devResetLink: resetLink,
-        devToken: rawToken
-      });
-    } else {
-      res.json({ message: neutralMessage });
-    }
+    res.json({
+      success: true,
+      message: neutralMessage
+    });
   } catch (err: any) {
     console.error('[Auth] Forgot password error:', err);
     res.status(500).json({ error: 'Failed to process password recovery request.' });
   }
+});
+
+// 7b. Diagnostic: Verify SMTP Connection
+router.get('/smtp/verify', async (_req: Request, res: Response) => {
+  const result = await verifySmtpConnection();
+  res.json({
+    smtpHost: env.EMAIL_HOST || process.env.EMAIL_HOST || 'smtp.gmail.com',
+    smtpPort: env.EMAIL_PORT || 465,
+    smtpUser: env.EMAIL_USER || process.env.EMAIL_USER || null,
+    isConfigured: Boolean(env.EMAIL_USER && env.EMAIL_PASSWORD),
+    result
+  });
+});
+
+// 7c. Diagnostic: Send Test Email
+router.post('/smtp/test-email', async (req: Request, res: Response) => {
+  const targetEmail = req.body?.email || env.EMAIL_USER || process.env.EMAIL_USER;
+  const result = await sendTestEmail(targetEmail);
+  res.json({
+    targetEmail,
+    result
+  });
 });
 
 // 8. Verify Password Reset Token Validity (before submitting form)
@@ -1244,7 +1295,7 @@ router.post('/reset-password', authLimiter, validate(resetPasswordSchema), async
     });
 
     res.json({
-      message: 'Your password has been successfully reset. Please sign in with your new credentials.'
+      message: 'Your password has been reset successfully. You can now log in with your new password.'
     });
   } catch (err: any) {
     console.error('[Auth] Reset password error:', err);

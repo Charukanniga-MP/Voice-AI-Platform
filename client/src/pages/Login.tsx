@@ -10,7 +10,8 @@ import {
   AlertCircle,
   CheckCircle2,
   ArrowRight,
-  Loader2
+  Loader2,
+  KeyRound
 } from 'lucide-react';
 
 export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({ onAuthSuccess }) => {
@@ -37,7 +38,12 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
   // Forgot password form state
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSent, setForgotSent] = useState(false);
-  const [forgotResult, setForgotResult] = useState<{ emailConfigured: boolean; message: string } | null>(null);
+  const [forgotResult, setForgotResult] = useState<{
+    emailConfigured?: boolean;
+    message?: string;
+    token?: string;
+    resetLink?: string;
+  } | null>(null);
 
   // UI status state
   const [loading, setLoading] = useState(false);
@@ -175,9 +181,13 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to send reset instructions.');
+      const token = data.devToken || data.resetToken || data.token;
+      const resetLink = data.devResetLink || data.resetLink;
       setForgotResult({
         emailConfigured: Boolean(data.emailConfigured),
-        message: data.message
+        message: data.message,
+        token,
+        resetLink
       });
       setForgotSent(true);
     } catch (err: any) {
@@ -512,39 +522,20 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
           {mode === 'forgot' && (
             <div className="space-y-4">
               {forgotSent ? (
-                <div className="text-center py-4 space-y-3">
-                  {forgotResult?.emailConfigured ? (
-                    <>
-                      <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
-                        <CheckCircle2 className="w-6 h-6" />
-                      </div>
-                      <h3 className="font-extrabold text-slate-900 text-sm">Instructions Sent</h3>
-                      <p className="text-xs text-slate-500 leading-relaxed">
-                        If an account is associated with <span className="font-semibold text-slate-700">{forgotEmail}</span>, password reset instructions have been dispatched.
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mx-auto">
-                        <AlertCircle className="w-6 h-6" />
-                      </div>
-                      <h3 className="font-extrabold text-slate-900 text-sm">Admin-Assisted Password Reset</h3>
-                      <div className="p-3 bg-amber-50/80 rounded-xl border border-amber-200 text-left text-xs text-amber-900 space-y-1.5 leading-relaxed">
-                        <p className="font-semibold text-amber-950">
-                          Automated email delivery is not configured on this server.
-                        </p>
-                        <p className="text-[11px] text-amber-800">
-                          To reset credentials for <span className="font-bold underline">{forgotEmail}</span>, please contact your KAIRA System Administrator directly:
-                        </p>
-                        <p className="font-mono text-[11px] bg-white px-2 py-1 rounded border border-amber-300 font-bold text-slate-800">
-                          admin@kaira
-                        </p>
-                        <p className="text-[10px] text-amber-700 pt-0.5">
-                          The administrator can verify your identity and update your password in the Administrator Console.
-                        </p>
-                      </div>
-                    </>
-                  )}
+                <div className="text-center py-4 space-y-4">
+                  <div className="w-14 h-14 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto shadow-md shadow-indigo-100">
+                    <Mail className="w-7 h-7" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <h3 className="font-extrabold text-slate-900 text-base">Check Your Email</h3>
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      If an account exists for <span className="font-semibold text-slate-800 underline">{forgotEmail}</span>, a password reset link has been dispatched to your inbox.
+                    </p>
+                    <p className="text-[11px] text-slate-400 mt-2">
+                      Please check your Gmail inbox and click the <strong>Reset Password</strong> button to set a new password. The link expires in 15 minutes.
+                    </p>
+                  </div>
+
                   <button
                     type="button"
                     onClick={() => {
@@ -577,7 +568,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                       <input
                         type="email"
                         required
-                        placeholder="name@example.com"
+                        placeholder="Enter your registered email address"
                         value={forgotEmail}
                         onChange={(e) => setForgotEmail(e.target.value)}
                         className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-900 font-medium transition-colors"
@@ -597,7 +588,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                       </>
                     ) : (
                       <>
-                        <span>Send Reset Instructions</span>
+                        <span>Send Reset Link</span>
                         <ArrowRight className="w-4 h-4" />
                       </>
                     )}

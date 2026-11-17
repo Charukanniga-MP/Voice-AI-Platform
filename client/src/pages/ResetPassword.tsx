@@ -49,6 +49,23 @@ export const ResetPasswordPage: React.FC<ResetPasswordProps> = ({ onBackToLogin 
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [success, setSuccess] = useState<boolean>(false);
+  const [countdown, setCountdown] = useState<number>(4);
+
+  // Auto-redirect to login after successful password reset
+  useEffect(() => {
+    if (!success) return;
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          onBackToLogin();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [success, onBackToLogin]);
 
   // Verify a token against backend API
   const verifyToken = async (targetToken: string) => {
@@ -108,8 +125,12 @@ export const ResetPasswordPage: React.FC<ResetPasswordProps> = ({ onBackToLogin 
       const data = await res.json();
       setRequestSuccess(data.message || 'If an account exists with this email address, password reset instructions have been dispatched.');
 
-      if (data.devToken) {
-        setDevDirectToken(data.devToken);
+      const token = data.devToken || data.resetToken || data.token;
+      if (token) {
+        setDevDirectToken(token);
+      }
+      if (data.devResetLink || data.resetLink) {
+        setDevDirectLink(data.devResetLink || data.resetLink);
       }
     } catch {
       setRequestSuccess('If an account exists with this email address, password reset instructions have been dispatched.');
@@ -184,10 +205,13 @@ export const ResetPasswordPage: React.FC<ResetPasswordProps> = ({ onBackToLogin 
               <div className="w-14 h-14 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto border border-emerald-100">
                 <CheckCircle2 className="w-7 h-7" />
               </div>
-              <div>
-                <h2 className="text-base font-bold text-slate-900">Password Changed Successfully!</h2>
-                <p className="text-xs text-slate-600 mt-2 leading-relaxed">
-                  Your new password is now active. All security tokens have been consumed and previous sessions invalidated.
+              <div className="space-y-2">
+                <h2 className="text-base font-bold text-slate-900">Password Reset Successful</h2>
+                <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-semibold leading-relaxed">
+                  Your password has been reset successfully. You can now log in with your new password.
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Redirecting to login page in {countdown} seconds...
                 </p>
               </div>
               <div className="pt-2">
@@ -196,7 +220,7 @@ export const ResetPasswordPage: React.FC<ResetPasswordProps> = ({ onBackToLogin 
                   onClick={onBackToLogin}
                   className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
                 >
-                  Sign In With New Password
+                  Log In With New Password
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
@@ -250,7 +274,7 @@ export const ResetPasswordPage: React.FC<ResetPasswordProps> = ({ onBackToLogin 
 
               {/* Confirm Password */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Confirm New Password</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Confirm Password</label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
                     <Lock className="w-4 h-4" />
@@ -260,7 +284,7 @@ export const ResetPasswordPage: React.FC<ResetPasswordProps> = ({ onBackToLogin 
                     required
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="Re-enter new password"
+                    placeholder="Confirm new password"
                     className="block w-full pl-9 pr-10 py-2 text-xs sm:text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 text-slate-900"
                   />
                   <button
@@ -318,7 +342,7 @@ export const ResetPasswordPage: React.FC<ResetPasswordProps> = ({ onBackToLogin 
                 ) : (
                   <>
                     <ShieldCheck className="w-4 h-4" />
-                    Set New Password
+                    Update Password
                   </>
                 )}
               </button>
@@ -369,7 +393,7 @@ export const ResetPasswordPage: React.FC<ResetPasswordProps> = ({ onBackToLogin 
                       required
                       value={requestEmail}
                       onChange={(e) => setRequestEmail(e.target.value)}
-                      placeholder="e.g. customer@kaira or alex.morgan@example.com"
+                      placeholder="Enter your registered email address"
                       className="block w-full pl-9 pr-3 py-2 text-xs sm:text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 text-slate-900"
                     />
                   </div>
@@ -388,7 +412,7 @@ export const ResetPasswordPage: React.FC<ResetPasswordProps> = ({ onBackToLogin 
                   ) : (
                     <>
                       <Mail className="w-4 h-4" />
-                      Send Reset Instructions
+                      Send Reset Link
                     </>
                   )}
                 </button>
