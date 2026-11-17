@@ -1636,7 +1636,7 @@ export const AgentDashboard: React.FC = () => {
               </div>
               <div className="bg-white/10 backdrop-blur-xs p-3.5 rounded-2xl border border-white/10">
                 <span className="text-[11px] text-indigo-200">Supported Languages</span>
-                <div className="text-xl font-black mt-0.5">6 Regional</div>
+                <div className="text-xl font-black mt-0.5">Multiple Languages</div>
               </div>
               <div className="bg-white/10 backdrop-blur-xs p-3.5 rounded-2xl border border-white/10">
                 <span className="text-[11px] text-indigo-200">Barge-in Support</span>
@@ -2340,8 +2340,8 @@ export const AgentDashboard: React.FC = () => {
                             onClick={() => handleCopilotFeedback(true)}
                             title="Mark as useful"
                             className={`p-1.5 rounded-lg border text-xs cursor-pointer transition-all ${copilotFeedbackStatus[copilotSuggestion.query] === 'useful'
-                                ? 'bg-emerald-100 border-emerald-300 text-emerald-700 font-bold'
-                                : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-600'
+                              ? 'bg-emerald-100 border-emerald-300 text-emerald-700 font-bold'
+                              : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-600'
                               }`}
                           >
                             <ThumbsUp className="w-3 h-3" />
@@ -2350,8 +2350,8 @@ export const AgentDashboard: React.FC = () => {
                             onClick={() => handleCopilotFeedback(false)}
                             title="Mark as inaccurate"
                             className={`p-1.5 rounded-lg border text-xs cursor-pointer transition-all ${copilotFeedbackStatus[copilotSuggestion.query] === 'incorrect'
-                                ? 'bg-rose-100 border-rose-300 text-rose-700 font-bold'
-                                : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-600'
+                              ? 'bg-rose-100 border-rose-300 text-rose-700 font-bold'
+                              : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-600'
                               }`}
                           >
                             <ThumbsDown className="w-3 h-3" />
@@ -2619,10 +2619,10 @@ export const AgentDashboard: React.FC = () => {
                         </div>
                       </div>
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${insight.importantInfoForAgent?.urgencyLevel === 'urgent'
-                          ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                          : insight.importantInfoForAgent?.urgencyLevel === 'high'
-                            ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                            : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                        ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                        : insight.importantInfoForAgent?.urgencyLevel === 'high'
+                          ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                          : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                         }`}>
                         {(insight.importantInfoForAgent?.urgencyLevel || 'normal').toUpperCase()}
                       </span>
@@ -2664,8 +2664,8 @@ export const AgentDashboard: React.FC = () => {
                     key={flt}
                     onClick={() => setInsightsFilter(flt)}
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${insightsFilter === flt
-                        ? 'bg-purple-600 text-white shadow-2xs'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      ? 'bg-purple-600 text-white shadow-2xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                       }`}
                   >
                     {flt === 'all' ? 'All Calls' : flt === 'resolved' ? 'Resolved' : flt === 'unresolved' ? 'Unresolved' : 'Action Required'}
@@ -2718,12 +2718,12 @@ export const AgentDashboard: React.FC = () => {
                           </div>
                           <div className="flex flex-col items-end gap-1">
                             <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${item.resolutionStatus === 'resolved'
-                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                                : item.resolutionStatus === 'partially_resolved'
-                                  ? 'bg-blue-100 text-blue-800 border border-blue-300'
-                                  : item.resolutionStatus === 'escalated_admin'
-                                    ? 'bg-purple-100 text-purple-800 border border-purple-300'
-                                    : 'bg-amber-100 text-amber-800 border border-amber-300'
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                              : item.resolutionStatus === 'partially_resolved'
+                                ? 'bg-blue-100 text-blue-800 border border-blue-300'
+                                : item.resolutionStatus === 'escalated_admin'
+                                  ? 'bg-purple-100 text-purple-800 border border-purple-300'
+                                  : 'bg-amber-100 text-amber-800 border border-amber-300'
                               }`}>
                               {(item.resolutionStatus || 'unresolved').replace('_', ' ')}
                             </span>

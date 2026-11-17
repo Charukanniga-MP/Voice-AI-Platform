@@ -2076,29 +2076,22 @@ export const AdminDashboard: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <Globe className="w-5 h-5 text-indigo-600" />
                   <h3 className="font-extrabold text-slate-900 text-base">
-                    Multilingual Voice Call Distribution (6 Regional Languages)
+                    Multilingual Voice Call Distribution (Multiple Languages Supported)
                   </h3>
                 </div>
                 <span className="text-xs text-slate-400">Grounded real-time interpretation</span>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
-                {[
-                  { code: 'en', name: 'English', native: 'English' },
-                  { code: 'ta', name: 'Tamil', native: 'தமிழ்' },
-                  { code: 'te', name: 'Telugu', native: 'తెలుగు' },
-                  { code: 'ml', name: 'Malayalam', native: 'മലയാളം' },
-                  { code: 'kn', name: 'Kannada', native: 'ಕನ್ನಡ' },
-                  { code: 'hi', name: 'Hindi', native: 'हिन्दी' }
-                ].map(l => {
-                  const count = stats.callsByLanguage?.[l.code] || 0;
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2.5 sm:gap-3 max-h-80 overflow-y-auto p-1 kaira-dropdown-scroll">
+                {(Object.entries(SUPPORTED_LANGUAGES) as [LanguageCode, typeof SUPPORTED_LANGUAGES[LanguageCode]][]).map(([code, meta]) => {
+                  const count = stats.callsByLanguage?.[code] || 0;
                   return (
-                    <div key={l.code} className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-slate-700">{l.name}</span>
-                        <span className="text-[11px] text-slate-400 font-medium">{l.native}</span>
+                    <div key={code} className="p-3 sm:p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1 hover:border-slate-300 transition-colors">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-xs font-bold text-slate-700 truncate">{meta.name}</span>
+                        <span className="text-[10px] text-slate-400 font-medium shrink-0">{meta.nativeName}</span>
                       </div>
-                      <div className="text-2xl font-black text-slate-900">{count}</div>
+                      <div className="text-xl sm:text-2xl font-black text-slate-900">{count}</div>
                       <p className="text-[10px] text-slate-400">Total calls handled</p>
                     </div>
                   );

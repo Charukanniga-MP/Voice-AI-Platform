@@ -321,10 +321,14 @@ export const CustomerDashboard: React.FC = () => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transcripts, interimText]);
 
-  // Set voice recognition language on mount and when language changes
+  // Set voice recognition language on mount and when language changes, and sync with active call session
   useEffect(() => {
     voiceService.setLanguage(selectedLanguage);
-  }, [selectedLanguage]);
+    if (callId && callStatus !== 'idle') {
+      const socket = getSocket();
+      socket.emit('call:change_language', { callId, language: selectedLanguage });
+    }
+  }, [selectedLanguage, callId, callStatus]);
 
   // Sync language selection with server and active call session
   const handleLanguageChange = async (lang: LanguageCode) => {
@@ -1255,35 +1259,6 @@ export const CustomerDashboard: React.FC = () => {
           <p className="text-blue-100 text-xs sm:text-sm leading-relaxed">
             {t('dashboard.banner_desc')}
           </p>
-
-          {/* 6 Languages Selector */}
-          <div className="pt-2">
-            <div className="flex items-center gap-2 mb-2 text-xs font-semibold text-blue-200">
-              <Globe className="w-4 h-4 text-blue-300" />
-              <span>{t('dashboard.select_language_title')}</span>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 sm:gap-2.5">
-              {(Object.entries(SUPPORTED_LANGUAGES) as [LanguageCode, typeof SUPPORTED_LANGUAGES[LanguageCode]][]).map(([code, meta]) => {
-                const isSelected = selectedLanguage === code;
-                return (
-                  <button
-                    key={code}
-                    disabled={isCallActive}
-                    onClick={() => handleLanguageChange(code)}
-                    className={`px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-2xl text-left border transition-all cursor-pointer ${isSelected
-                      ? 'bg-white text-indigo-900 border-white shadow-md font-bold scale-[1.02]'
-                      : 'bg-white/10 text-white border-white/20 hover:bg-white/20 hover:border-white/40'
-                      } ${isCallActive ? 'opacity-60 cursor-not-allowed' : ''}`}
-                  >
-                    <div className="text-xs sm:text-sm font-extrabold leading-tight">{meta.nativeName}</div>
-                    <div className={`text-[10px] sm:text-[11px] ${isSelected ? 'text-indigo-600 font-semibold' : 'text-blue-200'}`}>
-                      {meta.name}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
         </div>
       </div>
 
@@ -1387,7 +1362,7 @@ export const CustomerDashboard: React.FC = () => {
                       ⚡ Ultra-fast speech (&lt;1.2s)
                     </span>
                     <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 flex items-center gap-1 shadow-2xs">
-                      🌐 6 Regional Languages
+                      🌐 Multiple Languages Supported
                     </span>
                     <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 flex items-center gap-1 shadow-2xs">
                       🎙️ Voice Interruption
@@ -1798,17 +1773,17 @@ export const CustomerDashboard: React.FC = () => {
         {/* Dynamic Call Health & Recovery Alert Banner */}
         {recoveryBanner && (
           <div className={`mx-6 mt-4 p-3.5 rounded-xl border flex items-center justify-between text-xs font-semibold shadow-xs transition-all ${recoveryBanner.type === 'reconnecting'
-              ? 'bg-amber-50/90 border-amber-200 text-amber-900'
-              : recoveryBanner.type === 'restored'
-                ? 'bg-emerald-50/90 border-emerald-200 text-emerald-900'
-                : recoveryBanner.type === 'escalating'
-                  ? 'bg-indigo-50/90 border-indigo-200 text-indigo-900'
-                  : 'bg-rose-50/90 border-rose-200 text-rose-900'
+            ? 'bg-amber-50/90 border-amber-200 text-amber-900'
+            : recoveryBanner.type === 'restored'
+              ? 'bg-emerald-50/90 border-emerald-200 text-emerald-900'
+              : recoveryBanner.type === 'escalating'
+                ? 'bg-indigo-50/90 border-indigo-200 text-indigo-900'
+                : 'bg-rose-50/90 border-rose-200 text-rose-900'
             }`}>
             <div className="flex items-center gap-2.5">
               <span className={`w-2.5 h-2.5 rounded-full ${recoveryBanner.type === 'reconnecting' ? 'bg-amber-500 animate-ping' :
-                  recoveryBanner.type === 'restored' ? 'bg-emerald-500' :
-                    recoveryBanner.type === 'escalating' ? 'bg-indigo-500 animate-pulse' : 'bg-rose-500 animate-bounce'
+                recoveryBanner.type === 'restored' ? 'bg-emerald-500' :
+                  recoveryBanner.type === 'escalating' ? 'bg-indigo-500 animate-pulse' : 'bg-rose-500 animate-bounce'
                 }`} />
               <span>{recoveryBanner.message}</span>
             </div>

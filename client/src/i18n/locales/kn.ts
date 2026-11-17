@@ -75,7 +75,7 @@ export const kn: Record<TranslationKey, string> = {
 
   // Customer Dashboard Banner
   'dashboard.platform_badge': 'ಬಹುಭಾಷಾ ಧ್ವನಿ ವೇದಿಕೆ',
-  'dashboard.supported_languages_badge': '6 ಭಾಷೆಗಳು ಬೆಂಬಲಿತವಾಗಿವೆ',
+  'dashboard.supported_languages_badge': 'ಬಹು ಭಾಷೆಗಳು ಬೆಂಬಲಿತವಾಗಿವೆ',
   'dashboard.welcome_user': 'ಸ್ವಾಗತ, {name}',
   'dashboard.banner_desc': 'ನಿಮ್ಮ ಪ್ರಾದೇಶಿಕ ಭಾಷೆಯಲ್ಲಿ ನಮ್ಮ ಬೆಂಬಲ ತಜ್ಞರು ಮತ್ತು AI ಸಹಾಯಕರೊಂದಿಗೆ ಸರಳವಾಗಿ ಮಾತನಾಡಿ. ಪ್ರಾರಂಭಿಸಲು ಕೆಳಗೆ ನಿಮ್ಮ ಭಾಷೆಯನ್ನು ಆಯ್ಕೆಮಾಡಿ.',
   'dashboard.select_language_title': 'ನಿಮ್ಮ ಆದ್ಯತೆಯ ಸಂವಹನ ಭಾಷೆಯನ್ನು ಆಯ್ಕೆಮಾಡಿ:',
