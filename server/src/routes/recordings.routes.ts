@@ -6,6 +6,7 @@ import { conversationAnalysisService } from '../services/conversationAnalysis.se
 import { agentEvaluationService } from '../services/agentEvaluation.service.js';
 import { businessGrowthService } from '../services/businessGrowth.service.js';
 import { prisma } from '../db.js';
+import { getRetentionPolicy } from '../services/settings.service.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -36,7 +37,7 @@ router.post(
         return res.status(409).json({ error: 'Recording consent has already been applied to this call.' });
       }
 
-      const retentionDays = Math.max(1, Number(process.env.RECORDING_RETENTION_DAYS) || 90);
+      const { recordingRetentionDays: retentionDays } = await getRetentionPolicy();
       const retentionExpiry = new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000);
       const recording = await prisma.callRecording.upsert({
         where: { callRecordId: call.id },

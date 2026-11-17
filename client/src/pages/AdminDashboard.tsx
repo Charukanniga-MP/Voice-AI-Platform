@@ -47,7 +47,7 @@ export const AdminDashboard: React.FC = () => {
   const { user, token } = useAuth();
 
   // Active navigation section
-  const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'agents' | 'calls' | 'intelligence' | 'tasks' | 'transfers' | 'knowledge' | 'tickets' | 'quality' | 'sentiment' | 'bi'>('overview');
+  const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'agents' | 'calls' | 'intelligence' | 'tasks' | 'transfers' | 'knowledge' | 'tickets' | 'quality' | 'sentiment' | 'bi' | 'settings'>('overview');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   // Stats state
@@ -245,6 +245,10 @@ export const AdminDashboard: React.FC = () => {
   const [qualityFilter, setQualityFilter] = useState<'all' | 'excellent' | 'good' | 'poor' | 'reconnected' | 'disconnected' | 'failed'>('all');
   const [qualitySearch, setQualitySearch] = useState('');
   const [selectedQualityCall, setSelectedQualityCall] = useState<CallRecord | null>(null);
+  const [retentionSettings, setRetentionSettings] = useState({ recordingRetentionDays: 90, transcriptRetentionDays: 90, updatedAt: null as string | null, updatedBy: null as string | null, history: [] as Array<{ createdAt: string; email: string | null; details: string | null }> });
+  const [savingRetentionSettings, setSavingRetentionSettings] = useState(false);
+  const [retentionSettingsSaved, setRetentionSettingsSaved] = useState(false);
+  const [retentionSettingsError, setRetentionSettingsError] = useState('');
 
   // Call Health & Automatic Recovery State
   const [serviceHealth, setServiceHealth] = useState<ServiceHealthReport | null>(null);
@@ -643,6 +647,44 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  const fetchRetentionSettings = async () => {
+    if (!token) return;
+    try {
+      const response = await fetch('/api/admin/settings/retention', { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) throw new Error('Could not load retention settings.');
+      setRetentionSettings(await response.json());
+      setRetentionSettingsError('');
+    } catch (error: any) {
+      setRetentionSettingsError(error.message || 'Could not load retention settings.');
+    }
+  };
+
+  const saveRetentionSettings = async () => {
+    if (!token) return;
+    setSavingRetentionSettings(true);
+    setRetentionSettingsSaved(false);
+    setRetentionSettingsError('');
+    try {
+      const response = await fetch('/api/admin/settings/retention', {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recordingRetentionDays: Number(retentionSettings.recordingRetentionDays),
+          transcriptRetentionDays: Number(retentionSettings.transcriptRetentionDays)
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not save retention settings.');
+      setRetentionSettings({ ...data, history: retentionSettings.history });
+      await fetchRetentionSettings();
+      setRetentionSettingsSaved(true);
+    } catch (error: any) {
+      setRetentionSettingsError(error.message || 'Could not save retention settings.');
+    } finally {
+      setSavingRetentionSettings(false);
+    }
+  };
+
   // Fetch AI Post-Call Intelligence Statistics & Knowledge Gaps
   const fetchIntelligenceStats = async () => {
     if (!token) return;
@@ -721,6 +763,7 @@ export const AdminDashboard: React.FC = () => {
     if (activeSection === 'knowledge') fetchKnowledge();
     if (activeSection === 'quality') fetchQualityStats();
     if (activeSection === 'intelligence') fetchIntelligenceStats();
+    if (activeSection === 'settings') fetchRetentionSettings();
   }, [activeSection, token, customerSearch, agentSearch, callFilter, callSearch, kbCategory, kbSearch]);
 
   // Save Operator Name
@@ -1353,6 +1396,7 @@ export const AdminDashboard: React.FC = () => {
               { id: 'sentiment', label: 'Sentiment' },
               { id: 'tickets', label: 'Tickets' },
               { id: 'bi', label: 'BI Reports' },
+              { id: 'settings', label: 'Settings' },
             ].map(tab => (
               <button
                 key={tab.id}
@@ -1515,6 +1559,17 @@ export const AdminDashboard: React.FC = () => {
             >
               <TrendingUp className="w-4 h-4 text-blue-400" />
               Business Intelligence
+            </button>
+
+            <button
+              onClick={() => setActiveSection('settings')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'settings'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                }`}
+            >
+              <Sliders className="w-4 h-4" />
+              Settings &amp; Policies
             </button>
           </nav>
         </div>
@@ -2938,6 +2993,67 @@ export const AdminDashboard: React.FC = () => {
 
         {/* SECTION: AUTOMATED BUSINESS INTELLIGENCE REPORTS & ANALYTICS */}
         {activeSection === 'bi' && <BiReportsSection token={token} />}
+
+        {activeSection === 'settings' && (
+          <div className="space-y-6">
+            <div>
+              <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Settings &amp; Policies</h1>
+              <p className="mt-1 text-sm text-slate-500">Control how long customer call recordings and transcripts are retained.</p>
+            </div>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-5">
+              <div>
+                <h2 className="text-base font-bold text-slate-900">Call data retention</h2>
+                <p className="mt-1 text-xs text-slate-500">Changes apply to existing and future records. Expired audio and transcript text are removed by the hourly cleanup job.</p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {[['recordingRetentionDays', 'Recording retention'], ['transcriptRetentionDays', 'Transcript retention']].map(([key, label]) => (
+                  <label key={key} className="block space-y-1.5">
+                    <span className="text-sm font-semibold text-slate-700">{label}</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number" min={1} max={3650} step={1}
+                        value={retentionSettings[key as 'recordingRetentionDays' | 'transcriptRetentionDays']}
+                        onChange={event => {
+                          setRetentionSettings(current => ({ ...current, [key]: Number(event.target.value) }));
+                          setRetentionSettingsSaved(false);
+                        }}
+                        className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-100"
+                      />
+                      <span className="text-sm text-slate-500">days</span>
+                    </div>
+                    <span className="block text-[11px] text-slate-400">Choose from 1 to 3650 days.</span>
+                  </label>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4">
+                <button type="button" onClick={saveRetentionSettings} disabled={savingRetentionSettings} className="rounded-xl bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50 cursor-pointer">
+                  {savingRetentionSettings ? 'Saving…' : 'Save policy'}
+                </button>
+                {retentionSettingsSaved && <span className="text-sm font-medium text-emerald-700">Policy saved. Expired data will be cleaned up within an hour.</span>}
+                {retentionSettingsError && <span role="alert" className="text-sm font-medium text-red-600">{retentionSettingsError}</span>}
+                {retentionSettings.updatedAt && <span className="text-xs text-slate-400 sm:ml-auto">Last changed {new Date(retentionSettings.updatedAt).toLocaleString()} by {retentionSettings.updatedBy || 'an administrator'}</span>}
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="text-base font-bold text-slate-900">Recent policy changes</h2>
+              <p className="mt-1 text-xs text-slate-500">The latest 20 changes are recorded for accountability.</p>
+              <div className="mt-4 divide-y divide-slate-100">
+                {retentionSettings.history.length === 0 ? <p className="py-4 text-sm text-slate-400">No policy changes recorded yet.</p> : retentionSettings.history.map((item, index) => {
+                  let change: any = {};
+                  try { change = item.details ? JSON.parse(item.details) : {}; } catch { /* Keep the audit row visible if details are malformed. */ }
+                  return (
+                    <div key={`${item.createdAt}-${index}`} className="flex flex-col gap-1 py-3 text-xs sm:flex-row sm:items-center sm:justify-between">
+                      <span className="font-medium text-slate-700">{item.email || 'Administrator'} changed retention to {change.updated?.recordingRetentionDays ?? '—'} days for recordings and {change.updated?.transcriptRetentionDays ?? '—'} days for transcripts.</span>
+                      <time className="shrink-0 text-slate-400">{new Date(item.createdAt).toLocaleString()}</time>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          </div>
+        )}
 
         {/* SECTION F: KNOWLEDGE BASE MANAGEMENT */}
         {activeSection === 'knowledge' && (

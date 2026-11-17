@@ -8,11 +8,11 @@ import { PrismaClient } from '@prisma/client';
 import fs from 'fs';
 import path from 'path';
 import { Request, Response } from 'express';
+import { getRetentionPolicy } from './settings.service.js';
 
 const prisma = new PrismaClient();
 
 const RECORDINGS_DIR = path.resolve(process.cwd(), 'uploads', 'recordings');
-const recordingRetentionDays = Math.max(1, Number(process.env.RECORDING_RETENTION_DAYS) || 90);
 
 // Ensure recordings directory exists with restricted permissions
 if (!fs.existsSync(RECORDINGS_DIR)) {
@@ -46,6 +46,7 @@ export class RecordingService {
       throw new Error(`Call record not found for callId: ${callId}`);
     }
 
+    const { recordingRetentionDays } = await getRetentionPolicy();
     const retentionExpiry = new Date(Date.now() + recordingRetentionDays * 24 * 60 * 60 * 1000);
 
     // If customer declined consent, do NOT store audio file

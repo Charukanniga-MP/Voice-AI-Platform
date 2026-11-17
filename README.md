@@ -110,12 +110,12 @@ cd server && npx tsx src/test-transfer-workflow.ts
 
 Customers are asked before recording starts and can continue without audio recording. Admins can delete an individual recording or transcript entry from call details. The server purges expired recording audio and transcript text hourly while retaining call metadata and audit history.
 
-Configure retention in `server/.env` (values are days and must be at least 1):
+Admins can update retention periods in **Admin Dashboard → Settings & Policies** (1–3650 days). Changes apply to existing and future records without a server restart; expired data is removed by the hourly cleanup job. The page keeps a history of recent changes. Before the first dashboard update, the server uses these environment values as defaults:
 
 ```env
 RECORDING_RETENTION_DAYS=90
 TRANSCRIPT_RETENTION_DAYS=90
 ```
 
-Restart the server after changing these values. This controls audio files and transcript text separately; call metadata, summaries, and other derived analysis are retained.
+Call metadata, summaries, and other derived analysis are retained.
 

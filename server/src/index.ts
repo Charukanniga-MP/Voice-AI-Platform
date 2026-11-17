@@ -38,6 +38,7 @@ import followUpRoutes from './routes/followUp.routes.js';
 import knowledgeGapRoutes from './routes/knowledgeGap.routes.js';
 import biRoutes from './routes/bi.routes.js';
 import recordingsRoutes from './routes/recordings.routes.js';
+import adminSettingsRoutes from './routes/adminSettings.routes.js';
 import { initSocketServer } from './services/socket.js';
 import { initBiScheduler } from './services/biScheduler.js';
 import { initRetentionScheduler } from './services/retention.service.js';
@@ -243,6 +244,7 @@ app.use('/api/knowledge-gaps', knowledgeGapRoutes);
 app.use('/api/admin/bi', biRoutes);
 app.use('/api/recordings', recordingsRoutes);
 app.use('/api/admin/recordings', recordingsRoutes);
+app.use('/api/admin/settings', adminSettingsRoutes);
 
 // Dev-only Team Sync API (Strictly never mounted in production)
 if (process.env.NODE_ENV !== 'production') {

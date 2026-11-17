@@ -356,7 +356,7 @@ model PasswordResetToken {
 
 model SecurityAuditLog {
   id        String   @id @default(cuid())
-  eventType String   // "LOGIN_FAILED" | "LOGIN_SUCCESS" | "RATE_LIMIT_EXCEEDED" | "PASSWORD_RESET_REQUESTED" | "PASSWORD_RESET_SUCCESS" | "UNAUTHORIZED_ACCESS_ATTEMPT"
+  eventType String   // Security events and auditable administrative setting changes
   userId    String?
   user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   email     String?
@@ -367,6 +367,13 @@ model SecurityAuditLog {
 
   @@index([eventType, createdAt])
   @@index([userId])
+}
+
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedBy String?
+  updatedAt DateTime @updatedAt
 }
 
 model SentimentAnalysis {
