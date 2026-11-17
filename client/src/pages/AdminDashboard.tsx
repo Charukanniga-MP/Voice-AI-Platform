@@ -542,6 +542,23 @@ export const AdminDashboard: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  const handleDeleteTranscript = async (transcriptId: string) => {
+    if (!window.confirm('Permanently delete this transcript entry? This cannot be undone.')) return;
+    try {
+      const response = await fetch(`/api/recordings/transcript/${transcriptId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) throw new Error('Transcript deletion failed');
+      setSelectedCallDetails(current => current ? {
+        ...current,
+        transcripts: current.transcripts?.filter(entry => entry.id !== transcriptId)
+      } : current);
+    } catch {
+      alert('Could not delete this transcript entry. Please try again.');
+    }
+  };
+
   const handleDownloadRecording = async (recordingUrl: string, filename: string) => {
     try {
       const authToken = token || localStorage.getItem('kaira_token') || localStorage.getItem('token');
@@ -562,6 +579,19 @@ export const AdminDashboard: React.FC = () => {
     } catch (err) {
       console.warn('Recording download error:', err);
       alert('Could not download the recording. Check your authorization and try again.');
+    }
+  };
+
+  const handleDeleteRecording = async (callId: string) => {
+    if (!window.confirm('Permanently delete the audio recording for this call?')) return;
+    try {
+      const response = await fetch(`/api/recordings/${encodeURIComponent(callId)}`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) throw new Error('Recording deletion failed');
+      setSelectedCallDetails(current => current ? { ...current, recordingUrl: null, recordingStatus: 'deleted' } : current);
+    } catch {
+      alert('Could not delete this recording. Please try again.');
     }
   };
   // Fetch Call Quality Stats & Telemetry
@@ -4951,6 +4981,9 @@ export const AdminDashboard: React.FC = () => {
                   className="w-full h-8 rounded-lg outline-none"
                   preload="metadata"
                 />
+                <button type="button" onClick={() => handleDeleteRecording(selectedCallDetails.callId)} className="inline-flex items-center gap-1.5 rounded-lg bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 cursor-pointer">
+                  <Trash2 className="w-3.5 h-3.5" /> Delete recording
+                </button>
               </div>
             )}
 
@@ -5040,7 +5073,12 @@ export const AdminDashboard: React.FC = () => {
               ) : (
                 selectedCallDetails.transcripts.map((t, tIdx) => (
                   <div key={t.id} className={`text-xs p-2 rounded-xl transition-colors ${playbackIndex === tIdx ? "bg-purple-100 border border-purple-300 ring-2 ring-purple-400" : ""}`}>
-                    <span className="font-semibold text-slate-500 block mb-0.5">{t.senderName || t.sender}:</span>
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="font-semibold text-slate-500">{t.senderName || t.sender}:</span>
+                      <button type="button" onClick={() => handleDeleteTranscript(t.id)} title="Delete transcript entry" aria-label="Delete transcript entry" className="text-slate-400 hover:text-red-600 cursor-pointer">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                     <p className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-slate-800">
                       {t.text}
                     </p>

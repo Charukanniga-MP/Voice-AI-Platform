@@ -36,7 +36,8 @@ router.post(
         return res.status(409).json({ error: 'Recording consent has already been applied to this call.' });
       }
 
-      const retentionExpiry = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+      const retentionDays = Math.max(1, Number(process.env.RECORDING_RETENTION_DAYS) || 90);
+      const retentionExpiry = new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000);
       const recording = await prisma.callRecording.upsert({
         where: { callRecordId: call.id },
         update: {
@@ -283,6 +284,22 @@ router.delete(
     } catch (err: any) {
       console.error('[RecordingsRoute] Error deleting recording:', err);
       return res.status(500).json({ error: err.message || 'Failed to delete recording' });
+    }
+  }
+);
+
+// Permanently delete a transcript entry (recording deletion is managed separately).
+router.delete(
+  '/transcript/:transcriptId',
+  authenticate,
+  authorizeRoles('admin'),
+  async (req: Request, res: Response) => {
+    try {
+      await recordingService.deleteTranscript(req.params.transcriptId, req.user, req.ip);
+      return res.json({ success: true, message: 'Transcript entry permanently deleted.' });
+    } catch (err: any) {
+      const status = err.message === 'Transcript entry not found' ? 404 : 500;
+      return res.status(status).json({ error: err.message || 'Failed to delete transcript entry.' });
     }
   }
 );

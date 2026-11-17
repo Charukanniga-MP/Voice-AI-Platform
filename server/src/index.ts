@@ -40,6 +40,7 @@ import biRoutes from './routes/bi.routes.js';
 import recordingsRoutes from './routes/recordings.routes.js';
 import { initSocketServer } from './services/socket.js';
 import { initBiScheduler } from './services/biScheduler.js';
+import { initRetentionScheduler } from './services/retention.service.js';
 import { knowledgeService } from './services/knowledge.js';
 import { seedDatabase } from './seed.js';
 
@@ -307,6 +308,7 @@ server.listen(PORT, async () => {
   try {
     await seedDatabase();
     initBiScheduler();
+    initRetentionScheduler();
     // Warm up AI knowledge engine on server startup for instant sub-second response
     await knowledgeService.warmup();
   } catch (err) {

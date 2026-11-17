@@ -106,3 +106,16 @@ cd server && npx tsx src/test-kb.ts
 cd server && npx tsx src/test-transfer-workflow.ts
 ```
 
+## Recording consent and retention
+
+Customers are asked before recording starts and can continue without audio recording. Admins can delete an individual recording or transcript entry from call details. The server purges expired recording audio and transcript text hourly while retaining call metadata and audit history.
+
+Configure retention in `server/.env` (values are days and must be at least 1):
+
+```env
+RECORDING_RETENTION_DAYS=90
+TRANSCRIPT_RETENTION_DAYS=90
+```
+
+Restart the server after changing these values. This controls audio files and transcript text separately; call metadata, summaries, and other derived analysis are retained.
+

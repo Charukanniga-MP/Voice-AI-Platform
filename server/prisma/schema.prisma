@@ -520,7 +520,7 @@ model RecordingAuditLog {
   id            String        @id @default(cuid())
   recordingId   String
   recording     CallRecording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
-  action        String        // "PLAYBACK" | "DOWNLOAD" | "DELETE" | "CONSENT_RECORDED" | "TRANSCRIPT_CORRECTED"
+  action        String        // "PLAYBACK" | "DOWNLOAD" | "DELETE" | "CONSENT_RECORDED" | "TRANSCRIPT_CORRECTED" | "TRANSCRIPT_DELETED"
   performedBy   String        // User ID or name/email
   userRole      String        // "admin" | "manager" | "system"
   ipAddress     String?

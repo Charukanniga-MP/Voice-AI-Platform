@@ -12,6 +12,7 @@ import { Request, Response } from 'express';
 const prisma = new PrismaClient();
 
 const RECORDINGS_DIR = path.resolve(process.cwd(), 'uploads', 'recordings');
+const recordingRetentionDays = Math.max(1, Number(process.env.RECORDING_RETENTION_DAYS) || 90);
 
 // Ensure recordings directory exists with restricted permissions
 if (!fs.existsSync(RECORDINGS_DIR)) {
@@ -45,8 +46,7 @@ export class RecordingService {
       throw new Error(`Call record not found for callId: ${callId}`);
     }
 
-    // Default 90-day retention policy
-    const retentionExpiry = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+    const retentionExpiry = new Date(Date.now() + recordingRetentionDays * 24 * 60 * 60 * 1000);
 
     // If customer declined consent, do NOT store audio file
     if (consentStatus === 'declined') {
@@ -406,6 +406,24 @@ export class RecordingService {
     });
 
     return updated;
+  }
+
+  /** Permanently removes one transcript entry. Only the admin route exposes this. */
+  public async deleteTranscript(transcriptId: string, user: any, ipAddress?: string): Promise<void> {
+    const transcript = await prisma.callTranscript.findUnique({ where: { id: transcriptId } });
+    if (!transcript) throw new Error('Transcript entry not found');
+    const recording = await prisma.callRecording.findUnique({ where: { callRecordId: transcript.callRecordId } });
+    await prisma.callTranscript.delete({ where: { id: transcriptId } });
+    if (recording) {
+      await prisma.recordingAuditLog.create({ data: {
+        recordingId: recording.id,
+        action: 'TRANSCRIPT_DELETED',
+        performedBy: user?.name || user?.email || 'admin',
+        userRole: user?.role || 'admin',
+        ipAddress,
+        details: `Transcript entry ${transcriptId} permanently deleted.`
+      } });
+    }
   }
 
   /**
