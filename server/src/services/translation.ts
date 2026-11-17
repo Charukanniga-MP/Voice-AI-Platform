@@ -66,12 +66,12 @@ export class TranslationService {
     this.translationCache.set(`en->ml:${productsAnswer}`, "KAIRA മൂന്ന് പ്രാഥമിക ഉൽപ്പന്നങ്ങൾ വാഗ്ദാനം ചെയ്യുന്നു: KAIRA VoiceCore, KAIRA LiveEscalate, കൂടാതെ KAIRA Omnichannel Hub.");
     this.translationCache.set(`en->kn:${productsAnswer}`, "KAIRA ಮೂರು ಪ್ರಾಥಮಿಕ ಉತ್ಪನ್ನಗಳನ್ನು ಒದಗಿಸುತ್ತದೆ: KAIRA VoiceCore, KAIRA LiveEscalate, ಮತ್ತು KAIRA Omnichannel Hub.");
 
-    const pricingAnswer = "KAIRA offers three subscription plans: Starter at $49/month (500 voice minutes), Professional at $199/month (2,500 voice minutes, includes live human transfer), and Enterprise at $799/month (unlimited knowledge bases, dedicated WebRTC SIP trunking, 24/7 SLA).";
-    this.translationCache.set(`en->ta:${pricingAnswer}`, "KAIRA மூன்று சந்தா திட்டங்களை வழங்குகிறது: ஸ்டார்ட்டர் $49/மாதம், புரொபஷனல் $199/மாதம், மற்றும் எண்டர்பிரைஸ் $799/மாதம்.");
-    this.translationCache.set(`en->te:${pricingAnswer}`, "KAIRA మూడు సబ్‌స్క్రిప్షన్ ప్లాన్‌లను అందిస్తుంది: స్టార్టర్ $49/నెలకు, ప్రొఫెషనల్ $199/నెలకు, మరియు ఎంటర్‌ప్రైజ్ $799/నెలకు.");
-    this.translationCache.set(`en->hi:${pricingAnswer}`, "KAIRA तीन सदस्यता योजनाएं प्रदान करता है: स्टार्टर $49/माह, प्रोफेशनल $199/माह, और एंटरप्राइज $799/माह।");
-    this.translationCache.set(`en->ml:${pricingAnswer}`, "KAIRA മൂന്ന് സബ്‌സ്‌ക്രിപ്ഷൻ പ്ലാനുകൾ വാഗ്ദാനം ചെയ്യുന്നു: സ്റ്റാർട്ടർ $49/മാസം, പ്രൊഫഷണൽ $199/മാസം, എന്റർപ്രൈസ് $799/മാസം.");
-    this.translationCache.set(`en->kn:${pricingAnswer}`, "KAIRA ಮೂರು ಚಂದಾದಾರಿಕೆ ಯೋಜನೆಗಳನ್ನು ಒದಗಿಸುತ್ತದೆ: ಸ್ಟಾರ್ಟರ್ $49/ತಿಂಗಳಿಗೆ, ಪ್ರೊಫೆಷನಲ್ $199/ತಿಂಗಳಿಗೆ, ಮತ್ತು ಎಂಟರ್‌ಪ್ರೈಸ್ $799/ತಿಂಗಳಿಗೆ.");
+    const pricingAnswer = "Pricing information was not supplied. Refer customers to an authorized sales representative or official pricing document.";
+    this.translationCache.set(`en->ta:${pricingAnswer}`, "விலை விவரங்கள் வழங்கப்படவில்லை. அங்கீகரிக்கப்பட்ட விற்பனை பிரதிநிதி அல்லது அதிகாரப்பூர்வ விலை ஆவணத்தைப் பார்க்கவும்.");
+    this.translationCache.set(`en->te:${pricingAnswer}`, "ధరల సమాచారం అందించబడలేదు. దయచేసి అధీకృత సేల్స్ ప్రతినిధిని లేదా అధికారిక ధరల పత్రాన్ని సంప్రదించండి.");
+    this.translationCache.set(`en->hi:${pricingAnswer}`, "मूल्य निर्धारण की जानकारी प्रदान नहीं की गई है। कृपया अधिकृत बिक्री प्रतिनिधि या आधिकारिक मूल्य दस्तावेज़ देखें।");
+    this.translationCache.set(`en->ml:${pricingAnswer}`, "വിലവിവരങ്ങൾ നൽകിയിട്ടില്ല. അംഗീകൃത സെയിൽസ് പ്രതിനിധിയെയോ ഔദ്യോഗിക പ്രൈസിങ് ഡോക്യുമെന്റെയോ കാണുക.");
+    this.translationCache.set(`en->kn:${pricingAnswer}`, "ಬೆಲೆ ವಿವರಗಳನ್ನು ಒದಗಿಸಲಾಗಿಲ್ಲ. ಅಧಿಕೃತ ಮಾರಾಟ ಪ್ರತಿನಿಧಿ ಅಥವಾ ಅಧಿಕೃತ ಬೆಲೆ ದಾಖಲೆಯನ್ನು ಸಂಪರ್ಕಿಸಿ.");
 
     // Pre-cache Order inquiries for instant response across all 6 languages
     const orderPrompt = "Hello! I would be delighted to help you with your order. Could you please tell me your Order ID?";

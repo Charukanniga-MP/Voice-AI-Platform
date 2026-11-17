@@ -195,7 +195,7 @@ async function runE2EVerification() {
 
     customerSocket.emit('call:query', {
       callId: testCallId,
-      query: 'Hello, what are your products and solutions?',
+      query: 'Hello, what is KAIRA and what does it do?',
       customerId: 'test_cust_e2e',
       utteranceId: utt1,
       duration: 5,
@@ -204,7 +204,7 @@ async function runE2EVerification() {
   });
 
   const q1NotGreeting = !ans1Data?.answer?.includes('Welcome to KAIRA') && !ans1Data?.answer?.includes('How may I help you today');
-  const q1Relevant = ans1Data?.answer?.toLowerCase()?.includes('voicecore') || ans1Data?.answer?.toLowerCase()?.includes('omnichannel') || ans1Data?.answer?.toLowerCase()?.includes('product');
+  const q1Relevant = ans1Data?.answer?.toLowerCase()?.includes('voice') || ans1Data?.answer?.toLowerCase()?.includes('customer support') || ans1Data?.answer?.toLowerCase()?.includes('platform');
 
   // Verify Utterance Deduplication: sending duplicate utt1 must NOT trigger a second response
   let duplicateReceived = false;
@@ -214,7 +214,7 @@ async function runE2EVerification() {
   customerSocket.on('call:ai_response', duplicateListener);
   customerSocket.emit('call:query', {
     callId: testCallId,
-    query: 'Hello, what are your products and solutions?',
+    query: 'Hello, what is KAIRA and what does it do?',
     customerId: 'test_cust_e2e',
     utteranceId: utt1,
     duration: 5,
@@ -223,7 +223,7 @@ async function runE2EVerification() {
   await new Promise(r => setTimeout(r, 600));
   customerSocket.off('call:ai_response', duplicateListener);
 
-  // Question 2: Begins with "Hi" but asks about pricing plans
+  // Question 2: Begins with "Hi" but asks about pricing plans (Acknowledging Missing Info per Q100)
   const utt2 = 'utt_e2e_price_' + Date.now();
   let ans2Data: any = null;
 
@@ -237,7 +237,7 @@ async function runE2EVerification() {
 
     customerSocket.emit('call:query', {
       callId: testCallId,
-      query: 'Hi, how much does the Starter subscription plan cost?',
+      query: "Hi, what are KAIRA's subscription plans or prices?",
       customerId: 'test_cust_e2e',
       utteranceId: utt2,
       duration: 10,
@@ -245,14 +245,14 @@ async function runE2EVerification() {
     });
   });
 
-  const q2Relevant = ans2Data?.answer?.includes('$49') || ans2Data?.answer?.toLowerCase()?.includes('starter') || ans2Data?.answer?.toLowerCase()?.includes('month');
+  const q2Relevant = ans2Data?.answer?.toLowerCase()?.includes('pricing') || ans2Data?.answer?.toLowerCase()?.includes('supplied') || ans2Data?.answer?.toLowerCase()?.includes('sales');
   const answersAreDistinct = ans1Data?.answer !== ans2Data?.answer;
 
   recordCheck(
     3,
     'AI understands actual customer question and does not swallow it as a greeting',
     Boolean(q1NotGreeting && q1Relevant),
-    `Query: "Hello, what are your products?". Answer: "${ans1Data?.answer?.slice(0, 60)}..."`
+    `Query: "Hello, what is KAIRA?". Answer: "${ans1Data?.answer?.slice(0, 60)}..."`
   );
 
   recordCheck(

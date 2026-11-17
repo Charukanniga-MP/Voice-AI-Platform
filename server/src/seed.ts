@@ -208,9 +208,9 @@ export const DEFAULT_KNOWLEDGE_ENTRIES = [
   {
     title: 'Subscription Pricing & Plans',
     category: 'pricing',
-    question: 'What are the pricing plans for KAIRA?',
-    answer: 'KAIRA offers three subscription plans: Starter at $49/month (500 voice minutes), Professional at $199/month (2,500 voice minutes, includes live human transfer), and Enterprise at $799/month (unlimited knowledge bases, dedicated WebRTC SIP trunking, 24/7 SLA).',
-    content: '- Starter Plan: $49 per month. Includes 500 voice minutes, 1 knowledge base, standard email support.\n- Professional Plan: $199 per month. Includes 2,500 voice minutes, 5 knowledge bases, real-time live transfer to human agents, priority email & chat support.\n- Enterprise Plan: $799 per month. Custom minutes, unlimited knowledge bases, dedicated WebRTC SIP trunking, 99.99% uptime SLA, and a dedicated 24/7 account manager.',
+    question: "What are KAIRA's subscription plans or prices?",
+    answer: 'Pricing information was not supplied. Refer customers to an authorized sales representative or official pricing document.',
+    content: 'Pricing information was not supplied in the official documentation. Refer customers to an authorized sales representative or official pricing document.',
     keywords: 'pricing, plans, cost, subscription, starter, professional, enterprise, price, how much'
   },
   {
@@ -360,6 +360,16 @@ export const DEFAULT_KNOWLEDGE_ENTRIES = [
 ];
 
 export async function seedDefaultKnowledgeEntries(): Promise<number> {
+  // If an approved KnowledgeDocument already exists with entries (e.g. the official 100 Q&A PDF),
+  // preserve the official ingested document and do not insert ungrounded orphan entries
+  const indexedDocCount = await prisma.knowledgeDocument.count({
+    where: { status: 'indexed' }
+  });
+  if (indexedDocCount > 0) {
+    console.log(`[Seed] Official knowledge documents are already indexed (${indexedDocCount} document(s)). Skipping legacy seed entries.`);
+    return 0;
+  }
+
   console.log(`--- Seeding ${DEFAULT_KNOWLEDGE_ENTRIES.length} Knowledge Base Entries ---`);
   let count = 0;
   for (const entry of DEFAULT_KNOWLEDGE_ENTRIES) {

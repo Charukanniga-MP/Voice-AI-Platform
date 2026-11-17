@@ -280,7 +280,7 @@ async function runCallReliabilityRecoveryTests() {
     );
 
     // Test Zero-Latency Local LLM Knowledge Fallback
-    const fallbackAnswer = await knowledgeService.answerQuery('What is KAIRA VoiceCore?');
+    const fallbackAnswer = await knowledgeService.answerQuery('What is KAIRA?');
     recordResult(
       'AI Fallback',
       'LLM Timeout / Quota Exhaustion Zero-Latency NLP Fallback',
@@ -313,7 +313,7 @@ async function runCallReliabilityRecoveryTests() {
     await new Promise<void>((resolve) => {
       customerSocket.emit('call:query', {
         callId: testCallId5,
-        query: 'What products does KAIRA offer?',
+        query: 'What is KAIRA?',
         customerId: customerUser.id,
         utteranceId: `utt_before_drop_${Date.now()}`
       });
@@ -347,7 +347,7 @@ async function runCallReliabilityRecoveryTests() {
     await new Promise<void>((resolve) => {
       customerSocket.emit('call:query', {
         callId: testCallId5,
-        query: 'Can you tell me more about VoiceCore?',
+        query: 'Does KAIRA support voice calls?',
         customerId: customerUser.id,
         utteranceId: `utt_after_drop_${Date.now()}`
       });
@@ -360,7 +360,7 @@ async function runCallReliabilityRecoveryTests() {
     recordResult(
       'Session Preservation',
       'Conversation Context Retained Across Reconnection Turns',
-      followUpAnswer.toLowerCase().includes('voicecore') || followUpAnswer.toLowerCase().includes('voice'),
+      followUpAnswer.toLowerCase().includes('voice') || followUpAnswer.toLowerCase().includes('calling'),
       `Retained dialogue context. Response: "${followUpAnswer.slice(0, 50)}..."`
     );
 
