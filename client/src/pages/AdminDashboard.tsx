@@ -49,6 +49,12 @@ export const AdminDashboard: React.FC = () => {
   // Active navigation section
   const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'agents' | 'calls' | 'intelligence' | 'tasks' | 'transfers' | 'knowledge' | 'tickets' | 'quality' | 'sentiment' | 'bi' | 'settings'>('overview');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const mainContentRef = useRef<HTMLElement | null>(null);
+
+  // Automatically scroll main content to top when switching navigation sections
+  useEffect(() => {
+    mainContentRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [activeSection]);
 
   // Stats state
   const [stats, setStats] = useState<CallStats>({
@@ -1353,9 +1359,9 @@ export const AdminDashboard: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
-      {/* 1. SIDEBAR NAVIGATION */}
-      <aside className="w-full md:w-64 bg-slate-900 text-slate-300 flex-shrink-0 flex flex-col justify-between p-3 sm:p-4 md:min-h-screen border-r border-slate-800">
+    <div className="min-h-screen md:min-h-0 md:h-[calc(100vh-5rem)] md:h-[calc(100dvh-5rem)] md:overflow-hidden bg-slate-50 flex flex-col md:flex-row">
+      {/* 1. SIDEBAR NAVIGATION - Fixed on desktop, independently scrollable */}
+      <aside className="w-full md:w-64 bg-slate-900 text-slate-300 flex-shrink-0 flex flex-col justify-between p-3 sm:p-4 md:sticky md:top-20 md:h-[calc(100vh-5rem)] md:h-[calc(100dvh-5rem)] md:overflow-y-auto md:overflow-x-hidden border-r border-slate-800 z-30 select-none scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
         <div className="space-y-3 md:space-y-6">
           <div className="px-2 py-1 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -1574,14 +1580,17 @@ export const AdminDashboard: React.FC = () => {
           </nav>
         </div>
 
-        <div className="p-3 bg-slate-800/60 rounded-2xl border border-slate-800 space-y-1">
+        <div className="p-3 bg-slate-800/60 rounded-2xl border border-slate-800 space-y-1 mt-4 shrink-0">
           <p className="text-[11px] font-bold text-slate-200">{user?.name}</p>
           <p className="text-[10px] text-slate-400 truncate">{user?.email}</p>
         </div>
       </aside>
 
-      {/* 2. MAIN CONTENT AREA */}
-      <main className="flex-1 p-3.5 sm:p-6 md:p-8 space-y-6 sm:space-y-8 overflow-y-auto max-w-7xl w-full min-w-0">
+      {/* 2. MAIN CONTENT AREA - Primary vertical scrolling container */}
+      <main
+        ref={mainContentRef}
+        className="flex-1 p-3.5 sm:p-6 md:p-8 space-y-6 sm:space-y-8 overflow-y-auto max-w-7xl w-full min-w-0 md:h-[calc(100vh-5rem)] md:h-[calc(100dvh-5rem)]"
+      >
 
         {/* MULTI-ADMIN CONCURRENCY & OPERATOR IDENTITY BANNER */}
         <div className="bg-white rounded-3xl border border-slate-200/80 p-5 shadow-xs space-y-4">
