@@ -223,7 +223,7 @@ export class VoiceService {
         }
 
         // Fast Voice Activity Detection (VAD) Debounce:
-        // Finalize after 320ms pause on a meaningful utterance
+        // Finalize after 800ms natural conversational pause on a complete utterance
         if (this.vadTimer) clearTimeout(this.vadTimer);
         if (this.lastInterimTranscript.length >= 2) {
           this.vadTimer = setTimeout(() => {
@@ -242,12 +242,12 @@ export class VoiceService {
 
               this.lastFinalUtterance = { text: cleanText, timestamp: now };
               const utteranceId = 'utt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-              console.log('[VoiceService] Fast VAD detected end of speech (finalized):', textToEmit);
+              console.log('[VoiceService] VAD detected end of speech (finalized):', textToEmit);
               if (this.activeOnResult) {
                 this.activeOnResult(textToEmit, true, utteranceId);
               }
             }
-          }, 320);
+          }, 800);
         }
       }
     };

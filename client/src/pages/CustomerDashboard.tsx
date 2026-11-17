@@ -58,6 +58,8 @@ export const CustomerDashboard: React.FC = () => {
   const [liveLatency, setLiveLatency] = useState<number | null>(null);
   const speechEndTimeRef = useRef<number | null>(null);
   const currentAiSpeechTextRef = useRef('');
+  const lastAiSpokenTextRef = useRef('');
+  const lastAiSpokenTimeRef = useRef(0);
   const [textInput, setTextInput] = useState('');
 
   const lastSentQueryRef = useRef<{ text: string; time: number }>({ text: '', time: 0 });
@@ -231,8 +233,17 @@ export const CustomerDashboard: React.FC = () => {
     message: string;
   } | null>(null);
 
-  // Auto-scroll transcript
-  const transcriptEndRef = useRef<HTMLDivElement>(null);
+  // Independent transcript container ref & user scroll state
+  const transcriptContainerRef = useRef<HTMLDivElement>(null);
+  const isUserScrolledUpRef = useRef<boolean>(false);
+
+  // Handle user manual scroll inside transcript container (keeps user in complete control)
+  const handleTranscriptScroll = () => {
+    const el = transcriptContainerRef.current;
+    if (!el) return;
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    isUserScrolledUpRef.current = !isNearBottom;
+  };
 
   // Listen to WebRTC automatic reconnection events
   useEffect(() => {
@@ -317,9 +328,14 @@ export const CustomerDashboard: React.FC = () => {
     });
   }, []);
 
+  // Independent container scrolling: Only scroll inner container when a new message arrives AND user is at the bottom
+  // NEVER scroll the window or Customer Dashboard page!
   useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [transcripts, interimText]);
+    const el = transcriptContainerRef.current;
+    if (el && !isUserScrolledUpRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [transcripts]);
 
   // Set voice recognition language on mount and when language changes, and sync with active call session
   useEffect(() => {
@@ -557,11 +573,14 @@ export const CustomerDashboard: React.FC = () => {
       setAiIsSpeaking(true);
       aiIsSpeakingRef.current = true;
       currentAiSpeechTextRef.current = data.greeting;
+      lastAiSpokenTextRef.current = data.greeting;
+      lastAiSpokenTimeRef.current = Date.now();
 
       voiceService.speak(data.greeting, () => {
         setAiIsSpeaking(false);
         aiIsSpeakingRef.current = false;
         currentAiSpeechTextRef.current = '';
+        lastAiSpokenTimeRef.current = Date.now();
       }, data.language, undefined, data.responseId);
     });
 
@@ -598,6 +617,8 @@ export const CustomerDashboard: React.FC = () => {
       setAiIsSpeaking(true);
       aiIsSpeakingRef.current = true;
       currentAiSpeechTextRef.current = data.answer;
+      lastAiSpokenTextRef.current = data.answer;
+      lastAiSpokenTimeRef.current = Date.now();
 
       setTranscripts(prev => {
         const isDuplicate = prev.some(t =>
@@ -636,6 +657,7 @@ export const CustomerDashboard: React.FC = () => {
         setAiIsSpeaking(false);
         aiIsSpeakingRef.current = false;
         currentAiSpeechTextRef.current = '';
+        lastAiSpokenTimeRef.current = Date.now();
       }, data.language || selectedLanguageRef.current, undefined, data.responseId);
     });
 
@@ -886,11 +908,16 @@ export const CustomerDashboard: React.FC = () => {
       }
 
       // --- ECHO GUARD & NATURAL VOICE INTERRUPTION (BARGE-IN) ---
-      if (!isHumanCall && trimmed.length > 0 && (aiIsSpeakingRef.current || (typeof window !== 'undefined' && window.speechSynthesis?.speaking))) {
-        const isAiEcho = currentAiSpeechTextRef.current &&
-          currentAiSpeechTextRef.current.toLowerCase().trim().startsWith(trimmed.toLowerCase()) &&
-          trimmed.length < 6;
+      const currentAiText = (currentAiSpeechTextRef.current || '').toLowerCase().trim();
+      const recentAiText = (lastAiSpokenTextRef.current || '').toLowerCase().trim();
+      const timeSinceAiSpoke = Date.now() - lastAiSpokenTimeRef.current;
+      const lowerTrimmed = trimmed.toLowerCase();
 
+      // Check if recognized speech matches what AI is currently speaking or spoke within last 2.5s (acoustic echo prevention)
+      const isAiEcho = (currentAiText.length > 0 && (currentAiText.includes(lowerTrimmed) || lowerTrimmed.includes(currentAiText))) ||
+        (timeSinceAiSpoke < 2500 && recentAiText.length > 0 && (recentAiText.includes(lowerTrimmed) || lowerTrimmed.includes(recentAiText)));
+
+      if (!isHumanCall && trimmed.length > 0 && (aiIsSpeakingRef.current || (typeof window !== 'undefined' && window.speechSynthesis?.speaking))) {
         if (!isAiEcho) {
           voiceService.cancelSpeech();
           setAiIsSpeaking(false);
@@ -909,6 +936,12 @@ export const CustomerDashboard: React.FC = () => {
         setInterimText('');
         setIsCustomerSpeaking(false);
         if (!trimmed) return;
+
+        // Acoustic Echo Guard on final speech: suppress if this is an echo of AI speech
+        if (isAiEcho) {
+          console.log('[CustomerDashboard] Suppressed acoustic echo of AI speech:', trimmed);
+          return;
+        }
 
         // Deduplicate customer utterance dispatch
         if (utteranceId && dispatchedUtteranceIdsRef.current.has(utteranceId)) {
@@ -1510,8 +1543,8 @@ export const CustomerDashboard: React.FC = () => {
                     : 'AI-Powered Voice Customer Support Platform'}
                 </p>
 
-                {/* Status Indicator Banners */}
-                <div className="mt-3">
+                {/* Status Indicator Banners (Fixed min-height to eliminate layout shifts) */}
+                <div className="mt-3 min-h-[36px] flex items-center justify-center">
                   {aiVisualState === 'listening' && (
                     <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold animate-pulse">
                       <Mic className="w-3.5 h-3.5 text-emerald-600" />
@@ -1845,7 +1878,11 @@ export const CustomerDashboard: React.FC = () => {
             </div>
           </div>
 
-          <div className="bg-white rounded-2xl border border-slate-200/90 p-4 h-80 overflow-y-auto space-y-4 shadow-2xs">
+          <div
+            ref={transcriptContainerRef}
+            onScroll={handleTranscriptScroll}
+            className="bg-white rounded-2xl border border-slate-200/90 p-4 h-80 overflow-y-auto space-y-4 shadow-2xs"
+          >
             {transcripts.length === 0 && !interimText && (
               <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs text-center p-4 space-y-3">
                 <div>
@@ -1948,8 +1985,6 @@ export const CustomerDashboard: React.FC = () => {
                 </div>
               </div>
             )}
-
-            <div ref={transcriptEndRef} />
           </div>
         </div>
       </div>

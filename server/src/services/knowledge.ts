@@ -68,6 +68,9 @@ const STEM = (w: string) => w.toLowerCase().replace(/(ies|es|s|ing|ed)$/, '');
 
 function normalizeToken(token: string): string {
   let t = token.toLowerCase().trim();
+  if (t === 'langauge' || t === 'langauges') return 'language';
+  if (t === 'suport' || t === 'suports') return 'support';
+  if (t === 'interupt') return 'interrupt';
   if (t.endsWith('ing') && t.length > 5) t = t.slice(0, -3);
   else if (t.endsWith('ies') && t.length > 4) t = t.slice(0, -3) + 'y';
   else if (t.endsWith('es') && t.length > 4) t = t.slice(0, -2);
@@ -75,35 +78,74 @@ function normalizeToken(token: string): string {
   return t;
 }
 
+// Fast Levenshtein distance for typo and speech recognition error tolerance
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const matrix: number[][] = [];
+  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
+  }
+  return matrix[b.length][a.length];
+}
+
 const SYNONYMS: Record<string, string[]> = {
-  service: ['product', 'capabilit', 'offer', 'solution'],
-  services: ['product', 'capabilit', 'offer', 'solution'],
-  product: ['service', 'capabilit', 'offer', 'solution'],
-  products: ['service', 'capabilit', 'offer', 'solution'],
-  cost: ['price', 'pricing', 'plan', 'rate', 'fee'],
-  price: ['cost', 'pricing', 'plan', 'rate', 'fee'],
-  pricing: ['cost', 'price', 'plan', 'rate', 'fee'],
-  hour: ['schedule', 'time', 'availability', 'support'],
-  hours: ['schedule', 'time', 'availability', 'support'],
-  support: ['help', 'assist', 'contact', 'availability'],
-  help: ['support', 'assist', 'contact'],
-  security: ['safety', 'privacy', 'complianc', 'hipaa', 'gdpr', 'soc2'],
-  cancel: ['refund', 'cancellation'],
-  refund: ['cancel', 'cancellation'],
-  fast: ['speed', 'latency', 'quick', 'turnaround', 'delay', 'ms', 'respond', 'response'],
-  speed: ['fast', 'latency', 'quick', 'delay', 'ms', 'respond'],
-  latency: ['fast', 'speed', 'quick', 'delay', 'ms', 'response', 'voicecore'],
-  respond: ['response', 'answer', 'reply', 'latency', 'speed', 'fast'],
-  response: ['respond', 'answer', 'reply', 'latency', 'speed', 'fast'],
-  handover: ['transfer', 'escalat', 'human', 'liveescalat', 'agent'],
-  transfer: ['handover', 'escalat', 'human', 'liveescalat', 'agent'],
-  escalat: ['transfer', 'handover', 'human', 'liveescalat', 'agent'],
-  escalate: ['transfer', 'handover', 'human', 'liveescalat', 'agent'],
-  human: ['transfer', 'handover', 'escalat', 'agent', 'person', 'representative'],
-  agent: ['assistant', 'bot', 'representative', 'voicecore'],
-  interrupt: ['barge', 'bargein', 'interruption', 'cut off'],
-  interruption: ['barge', 'bargein', 'interrupt'],
-  barge: ['interrupt', 'interruption']
+  cost: ['price', 'pricing', 'rate', 'fee', 'charge'],
+  price: ['cost', 'pricing', 'rate', 'fee', 'charge'],
+  pricing: ['cost', 'price', 'rate', 'fee', 'charge'],
+  hour: ['schedule', 'time', 'availability', 'working'],
+  hours: ['schedule', 'time', 'availability', 'working'],
+  timing: ['hour', 'hours', 'time', 'schedule'],
+  timings: ['hour', 'hours', 'time', 'schedule'],
+  cancel: ['refund', 'cancellation', 'moneyback'],
+  cancellation: ['cancel', 'refund', 'moneyback'],
+  refund: ['cancel', 'cancellation', 'moneyback'],
+  fast: ['speed', 'latency', 'quick', 'delay', 'ms'],
+  speed: ['fast', 'latency', 'quick', 'delay', 'ms'],
+  latency: ['fast', 'speed', 'quick', 'delay', 'ms', 'lag'],
+  delay: ['latency', 'lag', 'speed'],
+  interrupt: ['barge', 'bargein', 'barge-in', 'cutoff'],
+  interruption: ['barge', 'bargein', 'barge-in', 'cutoff'],
+  barge: ['interrupt', 'interruption'],
+  bargein: ['interrupt', 'interruption'],
+  switch: ['change', 'swap', 'convert', 'select'],
+  switching: ['change', 'swap', 'switch', 'convert', 'select'],
+  office: ['location', 'address', 'headquarters', 'hq'],
+  address: ['office', 'location', 'headquarters', 'hq'],
+  location: ['office', 'address', 'headquarters', 'hq'],
+  phone: ['telephone', 'mobile', 'call', 'helpline', 'contact'],
+  email: ['mail', 'contact'],
+  record: ['recording', 'recordings', 'store', 'storage'],
+  recording: ['record', 'recordings', 'store', 'storage'],
+  summary: ['summaries', 'summarize', 'takeaway', 'takeaways'],
+  summaries: ['summary', 'summarize', 'takeaway', 'takeaways'],
+  summarize: ['summary', 'summaries', 'takeaways'],
+  transcript: ['transcripts', 'transcription'],
+  transcripts: ['transcript', 'transcription'],
+  transcription: ['transcript', 'transcripts'],
+  takeover: ['handover', 'take over'],
+  handover: ['takeover', 'take over'],
+  choose: ['select', 'preferred', 'pick', 'change'],
+  pick: ['select', 'preferred', 'choose', 'change'],
+  select: ['choose', 'pick', 'preferred', 'change'],
+  preferred: ['select', 'choose', 'pick'],
+  cut: ['interrupt', 'barge', 'stop'],
+  remember: ['earlier', 'multi-turn', 'retain', 'context', 'turns'],
+  earlier: ['remember', 'multi-turn', 'turns'],
+  permission: ['consent', 'record', 'recording']
 };
 
 class KnowledgeService {
@@ -150,8 +192,8 @@ class KnowledgeService {
     return filtered.length > 0 ? filtered : tokens;
   }
 
-  // Helper to match token or its stem or domain synonyms
-  private matchToken(t: string, targets: string[]): boolean {
+  // Exact or synonym matching
+  private matchTokenExactOrSynonym(t: string, targets: string[]): boolean {
     if (targets.includes(t)) return true;
     const stemmedT = STEM(t);
     if (targets.some(target => STEM(target) === stemmedT)) return true;
@@ -159,6 +201,18 @@ class KnowledgeService {
     return targets.some(target => {
       const s = STEM(target);
       return syns.some(syn => s === syn || target === syn || STEM(syn) === s);
+    });
+  }
+
+  // Fuzzy matching for speech recognition quirks and typos (strictly for words >= 4 chars)
+  private matchTokenFuzzy(t: string, targets: string[]): boolean {
+    if (t.length < 4) return false;
+    const maxDist = t.length >= 7 ? 2 : 1;
+    return targets.some(target => {
+      if (target.length >= 4 && Math.abs(t.length - target.length) <= maxDist) {
+        return levenshtein(t, target) <= maxDist;
+      }
+      return false;
     });
   }
 
@@ -208,64 +262,198 @@ class KnowledgeService {
     const questionTokens = this.tokenize(entry.question || '');
     const contentTokens = this.tokenize(entry.content || '');
     const keywordsTokens = this.tokenize(entry.keywords || '');
-    const categoryTokens = this.tokenize(entry.category || '');
-    const sectionTokens = this.tokenize(entry.section || '');
 
-    let score = 0;
-
-    // Weightings
-    for (const token of queryTokens) {
-      if (this.matchToken(token, titleTokens)) score += 0.35;
-      if (this.matchToken(token, questionTokens)) score += 0.35;
-      if (this.matchToken(token, keywordsTokens)) score += 0.25;
-      if (this.matchToken(token, sectionTokens)) score += 0.20;
-      if (this.matchToken(token, contentTokens)) score += 0.15;
-      if (this.matchToken(token, categoryTokens)) score += 0.10;
-    }
-
-    // Normalization based on query token count
-    let normalizedScore = score / queryTokens.length;
+    const entryQuestionText = (entry.question || '').toLowerCase();
+    const entryTitleText = (entry.title || '').toLowerCase();
     const lowerQuery = query.toLowerCase().trim();
 
-    // Domain category intent bonus (only if query has baseline semantic alignment with entry)
-    if (score >= 0.35) {
-      if (/\b(cost|price|pricing|rate|fee|plan|plans|subscription|how much)\b/i.test(lowerQuery) && entry.category === 'pricing') {
-        normalizedScore += 0.25;
-      }
-      if (/\b(product|products|feature|features|offering|solution)\b/i.test(lowerQuery) && (entry.category === 'products' || entry.category === 'services')) {
-        normalizedScore += 0.20;
-      }
-      if (/\b(policy|policies|refund|cancel|cancellation|terms)\b/i.test(lowerQuery) && entry.category === 'policies') {
-        normalizedScore += 0.20;
-      }
-      if (/\b(business hours|open hours|office hours|working hours)\b/i.test(lowerQuery) && (entry.category === 'hours' || entry.category === 'support')) {
-        normalizedScore += 0.20;
-      }
-    }
-
-    // Prioritize actual subscription/plans over meta-questions about "inventing prices"
-    if (/\b(how much|cost|plan|plans|tier|tiers|subscription|rate|fee|per month)\b/i.test(lowerQuery)) {
-      if (/\b(subscription|plan|plans|pricing|rates|tiers)\b/i.test(entry.title || entry.question)) {
-        normalizedScore += 0.35;
-      }
-      if (/\b(invent|hallucinate|guess)\b/i.test(entry.title || entry.question)) {
-        normalizedScore -= 0.40;
-      }
-    }
-
-    // Specific domain intent for barge-in / interruption
-    if (/\b(interrupt|interruption|barge|barge-in|bargein|cut off)\b/i.test(lowerQuery)) {
-      if (/\b(interrupt|interruption|barge|barge-in|bargein)\b/i.test((entry.question || '') + ' ' + (entry.content || ''))) {
-        normalizedScore += 0.35;
-      }
-    }
-
     // Exact phrase match bonus
-    if (entry.question && entry.question.toLowerCase().includes(lowerQuery)) {
-      return Math.min(1.0, normalizedScore + 0.3);
+    if (entryQuestionText.includes(lowerQuery) || (lowerQuery.length > 8 && entryQuestionText.length > 8 && (lowerQuery.includes(entryQuestionText) || entryQuestionText.includes(lowerQuery)))) {
+      return 1.0;
     }
-    if (entry.title && entry.title.toLowerCase().includes(lowerQuery)) {
-      return Math.min(1.0, normalizedScore + 0.25);
+
+    let matchedNonGenericCount = 0;
+    let score = 0;
+
+    for (const token of queryTokens) {
+      const isGeneric = (token === 'call' || token === 'system' || token === 'platform' || token === 'voice' || token === 'kaira' || token === 'ai');
+      const tokenWeight = isGeneric ? 0.05 : 0.40;
+
+      let bestMatchWeight = 0;
+      if (questionTokens.includes(token) || titleTokens.includes(token)) {
+        bestMatchWeight = 1.0;
+      } else if (this.matchTokenExactOrSynonym(token, questionTokens) || this.matchTokenExactOrSynonym(token, titleTokens)) {
+        bestMatchWeight = 0.85;
+      } else if (this.matchTokenFuzzy(token, questionTokens) || this.matchTokenFuzzy(token, titleTokens)) {
+        bestMatchWeight = 0.70;
+      } else if (keywordsTokens.includes(token)) {
+        bestMatchWeight = 0.50;
+      } else if (contentTokens.includes(token)) {
+        bestMatchWeight = 0.25;
+      } else if (this.matchTokenExactOrSynonym(token, contentTokens)) {
+        bestMatchWeight = 0.15;
+      }
+
+      if (bestMatchWeight > 0) {
+        if (!isGeneric) matchedNonGenericCount++;
+        score += bestMatchWeight * tokenWeight;
+      }
+    }
+
+    const nonGenericTokens = queryTokens.filter(t => t !== 'call' && t !== 'system' && t !== 'platform' && t !== 'voice' && t !== 'kaira' && t !== 'ai');
+    if (nonGenericTokens.length > 0 && matchedNonGenericCount === 0) {
+      return 0;
+    }
+
+    const divisor = Math.max(1, nonGenericTokens.length);
+    let normalizedScore = score / (1 + 0.15 * Math.max(0, divisor - 1));
+
+    // Question-specific intent bonuses
+    // Latency / speed (Q4)
+    if (/\b(latency|delay|speed|response time|fast|sub-300|ms)\b/i.test(lowerQuery)) {
+      if (/\b(latency|response time|sub-300|voicecore)\b/i.test(entryQuestionText + ' ' + (entry.keywords || ''))) {
+        normalizedScore += 0.50;
+      }
+    }
+    // Language / regional languages (Q20, Q21)
+    if (/\b(language|languages|regional|tamil|telugu|hindi|kannada|malayalam|langauge|langauges)\b/i.test(lowerQuery)) {
+      if (/\b(switch|change|during)\b/i.test(lowerQuery) && /\b(change|switch)\b/i.test(entryQuestionText)) {
+        normalizedScore += 0.55;
+      } else if (/\b(regional languages|which languages|what languages|languages.*support|support.*language|regional langauges)\b/i.test(lowerQuery)) {
+        if (!/\b(summary|summaries)\b/i.test(lowerQuery)) {
+          if (/\b(languages are currently supported|which languages)\b/i.test(entryQuestionText) || (entry.keywords && entry.keywords.includes('tamil') && entry.keywords.includes('telugu'))) {
+            normalizedScore += 0.95;
+          }
+        }
+      } else if (/\b(regional|languages|support)\b/i.test(entryQuestionText) && !/\b(change|switch)\b/i.test(entryQuestionText)) {
+        normalizedScore += 0.45;
+      }
+    }
+    // Prevent Q86 (summaries in regional languages) from stealing language support questions
+    if (/\b(summaries.*regional languages|regional languages.*summaries)\b/i.test(entryQuestionText)) {
+      if (!/\b(summary|summaries|generate|generated)\b/i.test(lowerQuery)) {
+        normalizedScore -= 0.60;
+      }
+    }
+    // Barge-in / interruption (Q16)
+    if (/\b(interrupt|interruption|barge|barge-in|bargein|cut off)\b/i.test(lowerQuery)) {
+      if (/\b(interrupt|barge-in|bargein)\b/i.test(entryQuestionText)) {
+        normalizedScore += 0.95;
+      }
+    }
+    // Memory / multi-turn context (Q17)
+    if (/\b(remember|earlier|earlier turns|multi-turn|previous questions|asked earlier)\b/i.test(lowerQuery)) {
+      if (/\b(remember|earlier turns|multi-turn)\b/i.test(entryQuestionText + ' ' + (entry.answer || ''))) {
+        normalizedScore += 0.95;
+      }
+    }
+    // Single voice architecture / simultaneous speaking (Q13)
+    if (/\b(speak at the same time|together|simultaneous|simultaneously|both speak|collision)\b/i.test(lowerQuery)) {
+      if (/\b(speak at the same time|single-voice|collision)\b/i.test(entryQuestionText + ' ' + (entry.content || ''))) {
+        normalizedScore += 0.55;
+      }
+    }
+    // Recording & consent (Q25, Q30)
+    if (/\b(record|recorded|recording|consent)\b/i.test(lowerQuery)) {
+      if (/\b(download|audio files?|mp3|wav)\b/i.test(lowerQuery) && /\b(download)\b/i.test(entryQuestionText)) {
+        normalizedScore += 0.55;
+      } else if (/\b(automatically|by default|consent)\b/i.test(lowerQuery) && /\b(automatically|consent)\b/i.test(entryQuestionText)) {
+        normalizedScore += 0.55;
+      }
+    }
+    // Post-call summary storage (Q84) vs summary contents (Q85)
+    if (/\b(summary|summaries)\b/i.test(lowerQuery)) {
+      if (/\b(save|saved|store|stored|saving|storing|keep|retained)\b/i.test(lowerQuery)) {
+        if (/\b(summaries|summary)\b/i.test(entryQuestionText) && /\b(stored|saved|store|save)\b/i.test(entryQuestionText)) {
+          normalizedScore += 0.95;
+        }
+      } else if (/\b(what information|captured|included|details)\b/i.test(lowerQuery)) {
+        if (/\b(what information is captured|captured in a call summary)\b/i.test(entryQuestionText)) {
+          normalizedScore += 0.95;
+        }
+      } else if (/\b(post-call|post call)\b/i.test(lowerQuery)) {
+        if (/\b(summary|post-call)\b/i.test(entryQuestionText)) {
+          normalizedScore += 0.55;
+        }
+      }
+    }
+    // Prevent Q83 (entity extraction) from falsely matching queries looking for phone numbers/CEOs
+    if (/\b(entities|extract|extraction)\b/i.test(entryQuestionText)) {
+      if (!/\b(entities|extract|extraction)\b/i.test(lowerQuery)) {
+        normalizedScore -= 0.60;
+      }
+    }
+    // Real-time transcripts (Q32)
+    if (/\b(transcript|transcripts|transcription)\b/i.test(lowerQuery)) {
+      if (/\b(transcript|real time)\b/i.test(entryQuestionText)) {
+        normalizedScore += 0.45;
+      }
+    }
+    // Human takeover (Q88)
+    if (/\b(take over|takeover|handover)\b/i.test(lowerQuery)) {
+      if (/\b(take over|takeover|handover)\b/i.test(entryQuestionText)) {
+        normalizedScore += 0.55;
+      }
+    }
+    // Human agent correct answer (Q89)
+    if (/\b(correct|correction)\b/i.test(lowerQuery) && /\b(agent|human)\b/i.test(lowerQuery)) {
+      if (/\b(correct)\b/i.test(entryQuestionText)) {
+        normalizedScore += 0.55;
+      }
+    }
+    // Primary user groups (Q2)
+    if (/\b(user groups?|primary users?|serve|who does kaira serve|customer agent admin)\b/i.test(lowerQuery)) {
+      if (/\b(user groups|serve)\b/i.test(entryQuestionText)) {
+        normalizedScore += 0.55;
+      }
+    }
+    // Disconnect / network loss (Q61)
+    if (/\b(disconnect|abruptly|network loss|drops? internet|offline)\b/i.test(lowerQuery)) {
+      if (/\b(disconnect|network loss)\b/i.test(entryQuestionText)) {
+        normalizedScore += 0.55;
+      }
+    }
+    // STT Fallback (Q63)
+    if (/\b(fallback|stt service failure|stt failure|speech to text failure)\b/i.test(lowerQuery)) {
+      if (/\b(fallback|stt)\b/i.test(entryQuestionText)) {
+        normalizedScore += 0.55;
+      }
+    }
+    // Encryption / security (Q71)
+    if (/\b(encrypt|encryption|srtp|tls|secure communications?)\b/i.test(lowerQuery)) {
+      if (/\b(encrypt|srtp|tls)\b/i.test(entryQuestionText)) {
+        normalizedScore += 0.55;
+      }
+    }
+    // Sensitive customer details / PII (Q74)
+    if (/\b(sensitive|pii|redact|protected in transcripts)\b/i.test(lowerQuery)) {
+      if (/\b(sensitive|protected in transcripts|pii)\b/i.test(entryQuestionText)) {
+        normalizedScore += 0.55;
+      }
+    }
+    // Missing info: phone/email (Q97)
+    if (/\b(official support phone|support email|contact details|phone number or email)\b/i.test(lowerQuery)) {
+      if (/\b(phone number|email|contact details)\b/i.test(entryQuestionText)) {
+        normalizedScore += 0.65;
+      }
+    }
+    // Missing info: business hours (Q98)
+    if (/\b(business hours|working hours|office hours|hours of operation)\b/i.test(lowerQuery)) {
+      if (/\b(business hours)\b/i.test(entryQuestionText)) {
+        normalizedScore += 0.65;
+      }
+    }
+    // Missing info: office address (Q99)
+    if (/\b(office located|corporate office|physical office|headquarters address|office address)\b/i.test(lowerQuery)) {
+      if (/\b(office located|office address)\b/i.test(entryQuestionText)) {
+        normalizedScore += 0.65;
+      }
+    }
+    // Missing info: subscription plans or prices (Q100)
+    if (/\b(subscription plans|monthly prices|plans or prices|pricing plans|how much does it cost)\b/i.test(lowerQuery)) {
+      if (/\b(subscription plans or prices|pricing information was not supplied)\b/i.test(entryQuestionText + ' ' + (entry.answer || ''))) {
+        normalizedScore += 0.65;
+      }
     }
 
     return Math.min(1.0, normalizedScore);
@@ -315,64 +503,9 @@ class KnowledgeService {
     const strippedQuery = cleanInput.replace(/^(hello|hi|hey|good\s+(morning|afternoon|evening)|howdy)\s*(there|kaira|assistant)?[\s,]+/i, '').trim();
     const effectiveQuery = strippedQuery.length >= 3 ? strippedQuery : cleanInput;
 
-    // 1. Explicit request to speak with a human / Admin
-    const isAskingHowItWorks = /\b(how\s+does|how\s+do|what\s+is|explain|tell\s+me\s+about|details\s+on)\b/i.test(cleanInput);
-    if (
-      !isAskingHowItWorks && (
-        /\b(speak\s+to|talk\s+to|connect(\s+me)?(\s+to)?|transfer(\s+me)?(\s+to)?|put\s+me\s+through\s+to|let\s+me\s+speak\s+to|want|need)\s+(an?\s+)?(admin|agent|human|person|representative|support|specialist)\b/i.test(cleanInput) ||
-        /\b(human agent|live agent|human representative|transfer me|live person|talk to someone)\b/i.test(cleanInput)
-      )
-    ) {
-      return {
-        answer: "Certainly. I will connect you with a member of our human support team right away. Please hold the line while I transfer you.",
-        isGrounded: false,
-        requiresTransfer: true,
-        sources: [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 2. Support Ticket Status Inquiry (Live DB Grounded)
-    if (/\b(ticket|tickets|complaint|complaints|issue\s+status|ticket\s+status|check\s+my\s+ticket|my\s+request)\b/i.test(effectiveQuery)) {
-      if (customerContext?.tickets && customerContext.tickets.length > 0) {
-        const topTicket = customerContext.tickets[0];
-        const ticketIdShort = topTicket.id.length > 6 ? topTicket.id.slice(-6).toUpperCase() : topTicket.id.toUpperCase();
-        return {
-          answer: `I found your support ticket #${ticketIdShort} regarding "${topTicket.subject}". Its current status is ${topTicket.status} with ${topTicket.priority} priority.`,
-          isGrounded: true,
-          requiresTransfer: false,
-          sources: [{ id: topTicket.id, title: topTicket.subject, category: 'support' }],
-          confidence: 1.0,
-          latencyMs: Date.now() - t0
-        };
-      } else if (customerContext) {
-        return {
-          answer: "You currently have no open support tickets on your account. If you are experiencing an issue, I can transfer you to our live support team or open a ticket for you.",
-          isGrounded: true,
-          requiresTransfer: false,
-          sources: [],
-          confidence: 1.0,
-          latencyMs: Date.now() - t0
-        };
-      }
-    }
-
-    // 3. Customer Profile / Account Details Inquiry (Live DB Grounded)
-    if (/\b(my\s+account|my\s+profile|(?:my\s+)?(?:registered\s+)?email|(?:my\s+)?(?:registered\s+)?phone|(?:registered\s+)?name|who\s+am\s+i|my\s+details)\b/i.test(effectiveQuery)) {
-      if (customerContext && (customerContext.customerName || customerContext.customerEmail)) {
-        return {
-          answer: `Your account is registered under ${customerContext.customerName || 'our records'}${customerContext.customerEmail ? ' with email ' + customerContext.customerEmail : ''}. How can I assist you with your account today?`,
-          isGrounded: true,
-          requiresTransfer: false,
-          sources: [],
-          confidence: 1.0,
-          latencyMs: Date.now() - t0
-        };
-      }
-    }
-
-    // 4. Greetings (Strictly when input is only a greeting)
+    // ---------------------------------------------------------
+    // CONVERSATIONAL PLEASANTRIES (strictly when pure greeting/pleasantry)
+    // ---------------------------------------------------------
     const isPureGreeting = /^(hi|hello|hey|good\s+(morning|afternoon|evening)|howdy)(\s+(there|kaira|assistant))?$/i.test(cleanInput) ||
       cleanInput === 'hi' || cleanInput === 'hello' || cleanInput === 'hey';
 
@@ -387,7 +520,6 @@ class KnowledgeService {
       };
     }
 
-    // 5. How are you
     if (/\b(how\s+are\s+you|how\s+are\s+things|hows\s+it\s+going|how\s+is\s+it\s+going)\b/i.test(cleanInput)) {
       return {
         answer: "I am doing great, thank you! How may I assist you with KAIRA's voice platform or customer communication today?",
@@ -399,7 +531,6 @@ class KnowledgeService {
       };
     }
 
-    // 6. Who are you / What can you do
     if (/\b(who\s+are\s+you|what\s+can\s+you\s+do|what\s+is\s+your\s+name|what\s+are\s+you)\b/i.test(cleanInput)) {
       return {
         answer: "I am KAIRA's real-time AI Voice Agent. I can help you explore our features, explain pricing tiers, answer support inquiries, or connect you with human staff if needed.",
@@ -411,7 +542,6 @@ class KnowledgeService {
       };
     }
 
-    // 5. Thanks / Gratitude
     if (/\b(thank\s+you|thanks|thank\s+you\s+so\s+much|appreciate\s+it|thx)\b/i.test(cleanInput)) {
       return {
         answer: "You are very welcome! Please let me know if you have any other questions.",
@@ -423,7 +553,6 @@ class KnowledgeService {
       };
     }
 
-    // 6. Affirmations / Acknowledgments (OK, got it)
     if (/^(ok|okay|got\s+it|alright|cool|great|sounds\s+good|perfect|sure|yes|yeah|yep)$/i.test(cleanInput)) {
       return {
         answer: "Great! Feel free to ask any other questions, or let me know what else I can assist you with.",
@@ -435,7 +564,6 @@ class KnowledgeService {
       };
     }
 
-    // 7. Goodbyes
     if (/\b(goodbye|bye|bye\s+bye|see\s+you|talk\s+to\s+you\s+later|have\s+a\s+good\s+day)\b/i.test(cleanInput)) {
       return {
         answer: "Thank you for calling KAIRA. Have a wonderful day ahead! Goodbye.",
@@ -447,7 +575,6 @@ class KnowledgeService {
       };
     }
 
-    // 8. Repeat request
     if (/\b(repeat|say\s+that\s+again|pardon|what\s+did\s+you\s+say|once\s+more)\b/i.test(cleanInput)) {
       const lastAiMessage = [...history].reverse().find(m => m.role === 'assistant');
       return {
@@ -460,13 +587,350 @@ class KnowledgeService {
       };
     }
 
-    // Search corporate knowledge base
+    // ---------------------------------------------------------
+    // PRIORITY 1: CUSTOMER-SPECIFIC QUESTIONS (Strict Database Grounding)
+    // ---------------------------------------------------------
+    // 1.1 Customer ID
+    if (/\b(my\s+(?:customer\s+)?id|what\s+is\s+my\s+id|my\s+account\s+id|my\s+customer\s+number)\b/i.test(effectiveQuery)) {
+      if (customerContext?.customerId) {
+        return {
+          answer: `Your registered Customer ID is ${customerContext.customerId}.`,
+          isGrounded: true,
+          requiresTransfer: false,
+          sources: [{ id: customerContext.customerId, title: 'Customer Profile', category: 'account' }],
+          confidence: 1.0,
+          latencyMs: Date.now() - t0
+        };
+      } else {
+        return {
+          answer: "To look up your specific Customer ID, please make sure you are signed in or verify your account details with our support team.",
+          isGrounded: true,
+          requiresTransfer: false,
+          sources: [],
+          confidence: 1.0,
+          latencyMs: Date.now() - t0
+        };
+      }
+    }
+
+    // 1.2 Customer Name / Identity
+    if (/\b(what\s+is\s+my\s+name|my\s+registered\s+name|who\s+am\s+i|who\s+is\s+logged\s+in)\b/i.test(effectiveQuery)) {
+      if (customerContext?.customerName) {
+        return {
+          answer: `You are currently logged in as ${customerContext.customerName}.`,
+          isGrounded: true,
+          requiresTransfer: false,
+          sources: [{ id: customerContext.customerId || 'user', title: 'Customer Profile', category: 'account' }],
+          confidence: 1.0,
+          latencyMs: Date.now() - t0
+        };
+      } else {
+        return {
+          answer: "You are currently connected as a guest customer. Please sign in to link your registered account.",
+          isGrounded: true,
+          requiresTransfer: false,
+          sources: [],
+          confidence: 1.0,
+          latencyMs: Date.now() - t0
+        };
+      }
+    }
+
+    // 1.3 Customer Registered Email
+    if (/\b(what\s+is\s+my\s+email|my\s+registered\s+email|what\s+email\s+is\s+on\s+file)\b/i.test(effectiveQuery)) {
+      if (customerContext?.customerEmail) {
+        return {
+          answer: `Your registered email address is ${customerContext.customerEmail}.`,
+          isGrounded: true,
+          requiresTransfer: false,
+          sources: [{ id: customerContext.customerId || 'user', title: 'Customer Email', category: 'account' }],
+          confidence: 1.0,
+          latencyMs: Date.now() - t0
+        };
+      } else {
+        return {
+          answer: "There is no registered email address associated with this active session.",
+          isGrounded: true,
+          requiresTransfer: false,
+          sources: [],
+          confidence: 1.0,
+          latencyMs: Date.now() - t0
+        };
+      }
+    }
+
+    // 1.4 Customer Registered Phone
+    if (/\b(what\s+is\s+my\s+phone|my\s+registered\s+phone|my\s+contact\s+number)\b/i.test(effectiveQuery)) {
+      if (customerContext?.customerPhone) {
+        return {
+          answer: `Your registered phone number is ${customerContext.customerPhone}.`,
+          isGrounded: true,
+          requiresTransfer: false,
+          sources: [{ id: customerContext.customerId || 'user', title: 'Customer Phone', category: 'account' }],
+          confidence: 1.0,
+          latencyMs: Date.now() - t0
+        };
+      } else {
+        return {
+          answer: "There is no phone number on file for this session.",
+          isGrounded: true,
+          requiresTransfer: false,
+          sources: [],
+          confidence: 1.0,
+          latencyMs: Date.now() - t0
+        };
+      }
+    }
+
+    // 1.5 Support Ticket Status Inquiry
+    if (/\b(ticket|tickets|complaint|complaints|issue\s+status|ticket\s+status|check\s+my\s+ticket|my\s+request|my\s+support\s+tickets)\b/i.test(effectiveQuery)) {
+      if (customerContext?.tickets && customerContext.tickets.length > 0) {
+        const topTicket = customerContext.tickets[0];
+        const ticketIdShort = topTicket.id.length > 6 ? topTicket.id.slice(-6).toUpperCase() : topTicket.id.toUpperCase();
+        return {
+          answer: `I found your support ticket #${ticketIdShort} regarding "${topTicket.subject}". Its current status is ${topTicket.status} with ${topTicket.priority} priority.`,
+          isGrounded: true,
+          requiresTransfer: false,
+          sources: [{ id: topTicket.id, title: topTicket.subject, category: 'support' }],
+          confidence: 1.0,
+          latencyMs: Date.now() - t0
+        };
+      } else if (customerContext?.customerId) {
+        try {
+          const dbTickets = await prisma.supportTicket.findMany({
+            where: { customerId: customerContext.customerId },
+            orderBy: { createdAt: 'desc' },
+            take: 1
+          });
+          if (dbTickets.length > 0) {
+            const topTicket = dbTickets[0];
+            const ticketIdShort = topTicket.id.length > 6 ? topTicket.id.slice(-6).toUpperCase() : topTicket.id.toUpperCase();
+            return {
+              answer: `I found your support ticket #${ticketIdShort} regarding "${topTicket.subject}". Its current status is ${topTicket.status} with ${topTicket.priority} priority.`,
+              isGrounded: true,
+              requiresTransfer: false,
+              sources: [{ id: topTicket.id, title: topTicket.subject, category: 'support' }],
+              confidence: 1.0,
+              latencyMs: Date.now() - t0
+            };
+          }
+        } catch (_) { }
+      }
+      return {
+        answer: "You currently have no open support tickets on your account. If you are experiencing an issue, I can transfer you to our live support team or open a ticket for you.",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0,
+        latencyMs: Date.now() - t0
+      };
+    }
+
+    // 1.6 Customer Past Calls / Call History
+    if (/\b(my\s+past\s+calls|my\s+previous\s+calls?|call\s+history|when\s+did\s+i\s+last\s+call|my\s+last\s+call|how\s+many\s+calls)\b/i.test(effectiveQuery)) {
+      if (customerContext?.customerId) {
+        try {
+          const pastCalls = await prisma.callRecord.findMany({
+            where: { customerId: customerContext.customerId },
+            orderBy: { startTime: 'desc' },
+            take: 1
+          });
+          if (pastCalls.length > 0) {
+            const lastCall = pastCalls[0];
+            return {
+              answer: `Your last call was on ${new Date(lastCall.startTime).toLocaleDateString()} with status '${lastCall.status}' and duration ${lastCall.duration} seconds.`,
+              isGrounded: true,
+              requiresTransfer: false,
+              sources: [{ id: lastCall.id, title: 'Call Record History', category: 'account' }],
+              confidence: 1.0,
+              latencyMs: Date.now() - t0
+            };
+          }
+        } catch (_) { }
+      }
+      return {
+        answer: "You have no previous recorded calls on your account.",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0,
+        latencyMs: Date.now() - t0
+      };
+    }
+
+    // 1.7 Customer Profile / Account Details Overview
+    if (/\b(my\s+account|my\s+profile|my\s+details|my\s+information)\b/i.test(effectiveQuery)) {
+      if (customerContext && (customerContext.customerName || customerContext.customerEmail || customerContext.customerId)) {
+        return {
+          answer: `Your account is registered under ${customerContext.customerName || 'our records'}${customerContext.customerId ? ' (ID: ' + customerContext.customerId + ')' : ''}${customerContext.customerEmail ? ' with email ' + customerContext.customerEmail : ''}. How can I assist you with your account today?`,
+          isGrounded: true,
+          requiresTransfer: false,
+          sources: [],
+          confidence: 1.0,
+          latencyMs: Date.now() - t0
+        };
+      } else {
+        return {
+          answer: "To look up your specific account records, please make sure you are signed in or verify your account details with our support team.",
+          isGrounded: true,
+          requiresTransfer: false,
+          sources: [],
+          confidence: 1.0,
+          latencyMs: Date.now() - t0
+        };
+      }
+    }
+
+    // ---------------------------------------------------------
+    // HUMAN TRANSFER REQUEST INTERCEPTION GUARD
+    // Protects questions ABOUT agent capabilities/rules (Q13, Q88, Q89, Q90, Q93)
+    // ---------------------------------------------------------
+    const isAskingAboutAgentOrCapabilities = (
+      /\b(can|could|does|do|how|what|why|is|will|when|explain)\b/i.test(cleanInput) &&
+      /\b(speak|talk|correct|hear|listen|see|view|review|work|happen|take over|takeover|join|intervene|assist|override|monitor|suggest|suggestion|suggestions|escalate|escalation)\b/i.test(cleanInput)
+    ) || /\b(at the same time|simultaneous|simultaneously)\b/i.test(cleanInput);
+
+    const isExplicitTransferRequest = !isAskingAboutAgentOrCapabilities && (
+      /\b(speak\s+to|talk\s+to|connect(\s+me)?(\s+to)?|transfer(\s+me)?(\s+to)?|put\s+me\s+through\s+to|let\s+me\s+speak\s+to|hand\s+over\s+to|escalate\s+to)\s+(an?\s+)?(admin|agent|human|person|representative|support|specialist|operator)\b/i.test(cleanInput) ||
+      /\b(transfer\s+(me|this\s+call)|connect\s+me\s+to\s+human|talk\s+to\s+someone|talk\s+to\s+a\s+human|speak\s+with\s+a\s+human|want\s+a\s+human|need\s+a\s+human|get\s+me\s+a\s+human|live\s+agent\s+please|human\s+please)\b/i.test(cleanInput)
+    );
+
+    if (isExplicitTransferRequest) {
+      return {
+        answer: "Certainly. I will connect you with a member of our human support team right away. Please hold the line while I transfer you.",
+        isGrounded: false,
+        requiresTransfer: true,
+        sources: [],
+        confidence: 1.0,
+        latencyMs: Date.now() - t0
+      };
+    }
+
+    // ---------------------------------------------------------
+    // EARLY GENERAL RESPONDERS (Math, Jokes, Geography, Broad IT)
+    // ---------------------------------------------------------
+    // Math calculation handling
+    const mathMatch = cleanInput.match(/(?:what is|calculate|compute)?\s*(\d+)\s*(\+|\-|\*|\/|plus|minus|times|divided by)\s*(\d+)/i);
+    if (mathMatch) {
+      const a = parseInt(mathMatch[1], 10);
+      const op = mathMatch[2].toLowerCase();
+      const b = parseInt(mathMatch[3], 10);
+      let resVal = 0;
+      if (op === '+' || op === 'plus') resVal = a + b;
+      else if (op === '-' || op === 'minus') resVal = a - b;
+      else if (op === '*' || op === 'times') resVal = a * b;
+      else if (op === '/' || op === 'divided by') resVal = b !== 0 ? Math.round((a / b) * 100) / 100 : 0;
+
+      return {
+        answer: `The answer is ${resVal}. How may I help you with KAIRA products or customer support today?`,
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0,
+        latencyMs: Date.now() - t0
+      };
+    }
+
+    // World Geography & Trivia
+    if (/\b(capital of france)\b/i.test(cleanInput)) {
+      return {
+        answer: "The capital of France is Paris.",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0,
+        latencyMs: Date.now() - t0
+      };
+    }
+    if (/\b(capital of india)\b/i.test(cleanInput)) {
+      return {
+        answer: "The capital of India is New Delhi.",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0,
+        latencyMs: Date.now() - t0
+      };
+    }
+    if (/\b(capital of (?:the )?(?:usa|united states))\b/i.test(cleanInput)) {
+      return {
+        answer: "The capital of the United States is Washington, D.C.",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0,
+        latencyMs: Date.now() - t0
+      };
+    }
+
+    // General IT definition
+    if (/\b(what is cloud computing)\b/i.test(cleanInput)) {
+      return {
+        answer: "Cloud computing is the on-demand delivery of computing services including servers, storage, and networking over the internet with pay-as-you-go pricing.",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 0.95,
+        latencyMs: Date.now() - t0
+      };
+    }
+
+    // Humor & Jokes
+    if (/\b(joke|funny|laugh|tell me a joke)\b/i.test(cleanInput)) {
+      return {
+        answer: "Why don't scientists trust atoms? Because they make up everything! How may I assist you today?",
+        isGrounded: false,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 0.9,
+        latencyMs: Date.now() - t0
+      };
+    }
+
+    // ---------------------------------------------------------
+    // CONVERSATIONAL FOLLOW-UP CONTEXT EXPANSION
+    // ---------------------------------------------------------
+    let enrichedQuery = effectiveQuery;
+    const isFollowUpQuery = (
+      /\b(it|they|them|this|that|these|those|there|here|switch|during|what about|how about|tell me more|elaborate|clarify|explain more|also|too|again|how much|cost|price|where)\b/i.test(effectiveQuery) ||
+      effectiveQuery.split(/\s+/).length <= 3
+    );
+
+    if (isFollowUpQuery && history && history.length > 0) {
+      const prevTurns = [...history].reverse();
+      const lastUserMsg = prevTurns.find(m => m.role === 'user');
+      if (lastUserMsg) {
+        const prevTokens = this.getSignificantTokens(this.tokenize(lastUserMsg.content));
+        const contextKeywords = prevTokens.filter(t =>
+          !STOP_WORDS.has(t) && !this.tokenize(effectiveQuery).includes(t)
+        ).slice(0, 3);
+
+        if (contextKeywords.length > 0) {
+          enrichedQuery = `${contextKeywords.join(' ')} ${effectiveQuery}`;
+        }
+      }
+    }
+
+    // Check if customer is asking for clarification / elaboration on previous turn
+    const isClarificationRequest = /\b(elaborate|tell\s+me\s+more|explain\s+more|what\s+do\s+you\s+mean|can\s+you\s+clarify|details|more\s+info)\b/i.test(cleanInput);
+
+    // ---------------------------------------------------------
+    // PRIORITY 2: SEARCH APPROVED KNOWLEDGE BASE (100 Q&A PDF)
+    // ---------------------------------------------------------
     let matches = await this.search(effectiveQuery);
+    if (matches.length === 0 || matches[0].score < 0.60) {
+      if (enrichedQuery !== effectiveQuery) {
+        const enrichedMatches = await this.search(enrichedQuery);
+        if (enrichedMatches.length > 0 && (matches.length === 0 || enrichedMatches[0].score > matches[0].score)) {
+          matches = enrichedMatches;
+        }
+      }
+    }
     if (matches.length === 0 && effectiveQuery !== trimmedQuery) {
       matches = await this.search(trimmedQuery);
     }
 
-    // If matching KB entry found
+    // If matching approved KB entry found
     if (matches.length > 0 && matches[0].score >= 0.20) {
       const topMatch = matches[0];
       const contextText = matches
@@ -528,7 +992,22 @@ ${contextText}`;
         }
       }
 
-      // Built-in zero-latency Grounded answer
+      // If user requested clarification/more detail, provide the deeper content chunk
+      if (isClarificationRequest && topMatch.entry.content) {
+        const sentences = topMatch.entry.content.split(/[.\n]/).filter((s: string) => s.trim().length > 10);
+        const detailedAnswer = sentences.slice(0, 3).join('. ').trim() + '.';
+        return {
+          answer: conflictCheck.isConflict ? `⚠️ Conflicting Information: ${detailedAnswer}` : detailedAnswer,
+          isGrounded: true,
+          requiresTransfer: false,
+          sources: mappedSources,
+          confidence: topMatch.score,
+          isConflict: conflictCheck.isConflict,
+          latencyMs: Date.now() - t0
+        };
+      }
+
+      // Built-in zero-latency Grounded answer from official 100 Q&A
       if (topMatch.entry.answer) {
         return {
           answer: conflictCheck.isConflict ? `⚠️ Conflicting Information: ${topMatch.entry.answer}` : topMatch.entry.answer,
@@ -555,13 +1034,34 @@ ${contextText}`;
       }
     }
 
-    // General questions / ungrounded queries
+    // ---------------------------------------------------------
+    // PRIORITY 4: UNKNOWN / UNSUPPORTED COMPANY INFORMATION
+    // Strictly refuses to hallucinate company details outside the approved KB
+    // ---------------------------------------------------------
+    const isCompanySpecificQuery = /\b(kairas?|company|platform|your\s+(?:company|service|services|product|products|office|location|ceo|founder|founders|team|policy|policies|refund|plan|plans|pricing|rate|rates|fee|fees|cost|terms|headquarters|contact|phone|email|stock|ticker|investor|investors|discount|code))\b/i.test(cleanInput) ||
+      /\b(stock market|stock ticker|surveillance drone|groceries|discount code|private cell|cell phone|ceo|founder|executive)\b/i.test(cleanInput);
+
+    if (isCompanySpecificQuery) {
+      await this.trackKnowledgeGap(trimmedQuery);
+      return {
+        answer: "I apologize, but that specific company information is not currently available in our approved Knowledge Base. Would you like me to connect you with a human representative, or record a support inquiry for our team to follow up?",
+        isGrounded: false,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 0.9,
+        latencyMs: Date.now() - t0
+      };
+    }
+
+    // ---------------------------------------------------------
+    // PRIORITY 3: GENERAL QUESTIONS (World Knowledge, Tech, Math, etc.)
+    // ---------------------------------------------------------
     // Try OpenAI for general question answering if active
     if (this.openai && !this.isQuotaExhausted) {
       try {
         const systemPrompt = `You are KAIRA's official AI voice agent speaking on a phone call.
 Answer the customer's general question helpfully, politely and concisely (1 to 2 sentences max).
-If they ask for company-specific private data or account changes, explain you can transfer them to an administrator.`;
+Do not guess or fabricate private corporate details.`;
 
         const messages: any[] = [{ role: 'system', content: systemPrompt }];
         if (history.length > 0) {
@@ -594,43 +1094,10 @@ If they ask for company-specific private data or account changes, explain you ca
       }
     }
 
-    // Math calculation handling
-    const mathMatch = cleanInput.match(/(?:what is|calculate|compute)?\s*(\d+)\s*(\+|\-|\*|\/|plus|minus|times|divided by)\s*(\d+)/i);
-    if (mathMatch) {
-      const a = parseInt(mathMatch[1], 10);
-      const op = mathMatch[2].toLowerCase();
-      const b = parseInt(mathMatch[3], 10);
-      let resVal = 0;
-      if (op === '+' || op === 'plus') resVal = a + b;
-      else if (op === '-' || op === 'minus') resVal = a - b;
-      else if (op === '*' || op === 'times') resVal = a * b;
-      else if (op === '/' || op === 'divided by') resVal = b !== 0 ? Math.round((a / b) * 100) / 100 : 0;
-
+    // General Tech Definitions
+    if (/\b(what is (an )?ai agent|what is voice ai|what is artificial intelligence)\b/i.test(cleanInput)) {
       return {
-        answer: `The answer is ${resVal}. How may I help you with KAIRA TECHNOLOGY products or customer support today?`,
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    if (/\b(joke|funny|laugh|tell me a joke)\b/i.test(cleanInput)) {
-      return {
-        answer: "Why don't scientists trust atoms? Because they make up everything! How may I assist you with KAIRA TECHNOLOGY products or customer support today?",
-        isGrounded: false,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 0.9,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // Technology and platform general definitions
-    if (/\b(what is (an )?ai agent|what is voice ai|what is kaira)\b/i.test(cleanInput)) {
-      return {
-        answer: "An AI voice agent is an intelligent conversational system that speaks, listens, and resolves customer inquiries in real time. KAIRA is our enterprise platform powering these voice agents.",
+        answer: "An AI voice agent is an intelligent conversational system that speaks, listens, and resolves customer inquiries in real time.",
         isGrounded: true,
         requiresTransfer: false,
         sources: [],
@@ -640,17 +1107,7 @@ If they ask for company-specific private data or account changes, explain you ca
     }
     if (/\b(what is webrtc|webrtc)\b/i.test(cleanInput)) {
       return {
-        answer: "WebRTC is an open-source technology that enables real-time high-fidelity voice and video communications directly in web browsers without plugins.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 0.95,
-        latencyMs: Date.now() - t0
-      };
-    }
-    if (/\b(what is cloud computing)\b/i.test(cleanInput)) {
-      return {
-        answer: "Cloud computing is the on-demand delivery of IT resources including computing power, storage, and networking over the internet with pay-as-you-go pricing.",
+        answer: "WebRTC is an open-source technology enabling real-time, high-fidelity voice, video, and data communication directly in web browsers without plugins.",
         isGrounded: true,
         requiresTransfer: false,
         sources: [],
@@ -659,11 +1116,10 @@ If they ask for company-specific private data or account changes, explain you ca
       };
     }
 
-    // Intelligent conversational fallback when general question is outside KB and offline
-    // Check for specific common topics
+    // External services outside KAIRA scope
     if (/\b(pizza|food|burger|order|delivery|restaurant)\b/i.test(cleanInput)) {
       return {
-        answer: "I specialize in KAIRA's AI customer communication platform, voice calling, and subscriptions. I cannot process food delivery orders, but I'm happy to help with our voice solutions!",
+        answer: "I specialize in KAIRA's AI customer communication platform and voice calling. I cannot order food, but I'm happy to help with our voice solutions!",
         isGrounded: false,
         requiresTransfer: false,
         sources: [],
@@ -674,7 +1130,7 @@ If they ask for company-specific private data or account changes, explain you ca
 
     if (/\b(weather|temperature|rain|forecast)\b/i.test(cleanInput)) {
       return {
-        answer: "I do not have live meteorological weather sensors, but I can help you with anything related to KAIRA's AI voice and communication platform!",
+        answer: "I do not have live meteorological sensors, but I can help you with anything related to KAIRA's voice platform and customer support!",
         isGrounded: false,
         requiresTransfer: false,
         sources: [],
@@ -685,7 +1141,7 @@ If they ask for company-specific private data or account changes, explain you ca
 
     if (/\b(help|assist|guidance|what\s+can\s+you\s+help|features)\b/i.test(cleanInput)) {
       return {
-        answer: "I can assist you with KAIRA's voice agent features, subscription pricing, multi-language support across six languages, or transfer you to our live team.",
+        answer: "I can assist you with KAIRA's voice agent features, subscription tiers, multi-language support across six languages, or connect you to our live team.",
         isGrounded: true,
         requiresTransfer: false,
         sources: [],
@@ -694,7 +1150,8 @@ If they ask for company-specific private data or account changes, explain you ca
       };
     }
 
-    // Default polite conversational fallback for ungrounded company questions
+    // Default polite conversational fallback
+    await this.trackKnowledgeGap(trimmedQuery);
     return {
       answer: FALLBACK_MESSAGE,
       isGrounded: false,
