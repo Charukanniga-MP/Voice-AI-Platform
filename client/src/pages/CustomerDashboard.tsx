@@ -2101,7 +2101,7 @@ export const CustomerDashboard: React.FC = () => {
                   {history.map((call) => {
                     const resolution = call.intelligence?.resolutionStatus || call.conversationAnalysis?.resolutionStatus || 'resolved';
                     const summaryText = call.intelligence?.overallSummary || call.intelligence?.callReason || call.conversationAnalysis?.summary || call.customerQuestion || 'AI Voice support inquiry';
-                    const recUrl = call.recordingUrl || (call.recording ? `/api/recordings/file/${call.recording.id}` : `/api/calls/${call.callId}/recording`);
+                    const recUrl = call.recording?.id ? `/api/recordings/${encodeURIComponent(call.recording.id)}/stream` : call.recordingUrl || `/api/calls/${encodeURIComponent(call.callId)}/recording`;
 
                     return (
                       <tr key={call.id} className="hover:bg-slate-50/70 transition-colors">
@@ -2236,7 +2236,7 @@ export const CustomerDashboard: React.FC = () => {
               {history.map((call) => {
                 const resolution = call.intelligence?.resolutionStatus || call.conversationAnalysis?.resolutionStatus || 'resolved';
                 const summaryText = call.intelligence?.overallSummary || call.intelligence?.callReason || call.conversationAnalysis?.summary || call.customerQuestion || 'AI Voice support inquiry';
-                const recUrl = call.recordingUrl || (call.recording ? `/api/recordings/file/${call.recording.id}` : `/api/calls/${call.callId}/recording`);
+                const recUrl = call.recording?.id ? `/api/recordings/${encodeURIComponent(call.recording.id)}/stream` : call.recordingUrl || `/api/calls/${encodeURIComponent(call.callId)}/recording`;
 
                 return (
                   <div key={call.id} className="p-4 rounded-2xl border border-slate-200 bg-slate-50/50 space-y-3 shadow-2xs">
@@ -2373,7 +2373,7 @@ export const CustomerDashboard: React.FC = () => {
                 </div>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => handlePlayRecording(selectedHistoryCall.recordingUrl || `/api/calls/${selectedHistoryCall.callId}/recording`, selectedHistoryCall.id)}
+                    onClick={() => handlePlayRecording(selectedHistoryCall.recording?.id ? `/api/recordings/${encodeURIComponent(selectedHistoryCall.recording.id)}/stream` : selectedHistoryCall.recordingUrl || `/api/calls/${encodeURIComponent(selectedHistoryCall.callId)}/recording`, selectedHistoryCall.id)}
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer ${playingRecordingId === selectedHistoryCall.id
                       ? 'bg-red-600 text-white animate-pulse'
                       : 'bg-indigo-600 hover:bg-indigo-700 text-white'
@@ -2385,7 +2385,7 @@ export const CustomerDashboard: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => handleDownloadRecording(
-                      selectedHistoryCall.recordingUrl || `/api/calls/${selectedHistoryCall.callId}/recording`,
+                      selectedHistoryCall.recording?.id ? `/api/recordings/${encodeURIComponent(selectedHistoryCall.recording.id)}/download` : selectedHistoryCall.recordingUrl || `/api/calls/${encodeURIComponent(selectedHistoryCall.callId)}/recording?download=true`,
                       `call-${selectedHistoryCall.callId}.webm`
                     )}
                     className="p-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl cursor-pointer"

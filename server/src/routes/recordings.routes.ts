@@ -243,7 +243,7 @@ router.get(
 router.get(
   '/:id/stream',
   authenticate,
-  authorizeRoles('admin', 'agent'),
+  authorizeRoles('admin', 'agent', 'customer'),
   async (req: Request, res: Response) => {
     try {
       await recordingService.streamRecordingAudio(req.params.id, req, res, req.user);
@@ -260,7 +260,7 @@ router.get(
 router.get(
   '/:id/download',
   authenticate,
-  authorizeRoles('admin'),
+  authorizeRoles('admin', 'customer'),
   async (req: Request, res: Response) => {
     try {
       await recordingService.downloadRecording(req.params.id, req, res, req.user);
