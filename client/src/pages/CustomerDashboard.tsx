@@ -14,7 +14,7 @@ import {
   PhoneCall, PhoneOff, Mic, MicOff, Volume2, VolumeX,
   Clock, ShieldAlert, Sparkles, MessageSquare, History, User as UserIcon,
   Headphones, Globe, Star, Users, CheckCircle2, RefreshCw, Settings,
-  Send, Download, Lightbulb, Play, Pause, Bot, Radio, FileText, CheckCircle
+  Send, Download, Lightbulb, Play, Pause, Bot, Radio, FileText, CheckCircle, Trash2
 } from 'lucide-react';
 import { SentimentBadge } from '../components/SentimentBadge.js';
 import { LiveSentimentCard } from '../components/LiveSentimentCard.js';
@@ -95,6 +95,9 @@ export const CustomerDashboard: React.FC = () => {
   const [selectedIntelligenceCallId, setSelectedIntelligenceCallId] = useState<string | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(new Date());
+  const [deleteConfirmCallId, setDeleteConfirmCallId] = useState<string | null>(null);
+  const [isDeletingCall, setIsDeletingCall] = useState(false);
+  const [deleteToast, setDeleteToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [showAudioDeviceModal, setShowAudioDeviceModal] = useState(false);
   const [showRecordingConsentModal, setShowRecordingConsentModal] = useState(false);
   const [pendingRecordingCallType, setPendingRecordingCallType] = useState<'ai' | 'agent' | null>(null);
@@ -405,6 +408,32 @@ export const CustomerDashboard: React.FC = () => {
       console.error('Failed to load call history:', err);
     } finally {
       setTimeout(() => setLoadingHistory(false), 450);
+    }
+  };
+
+  const handleDeleteCall = async (id: string) => {
+    setIsDeletingCall(true);
+    try {
+      const res = await fetch(`/api/calls/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || t('history.delete_error'));
+      }
+      setDeleteConfirmCallId(null);
+      setDeleteToast({ type: 'success', message: t('history.delete_success') });
+      setTimeout(() => setDeleteToast(null), 4000);
+      fetchHistory();
+    } catch (err: any) {
+      console.error('Delete call record failed:', err);
+      setDeleteToast({ type: 'error', message: err.message || t('history.delete_error') });
+      setTimeout(() => setDeleteToast(null), 4000);
+    } finally {
+      setIsDeletingCall(false);
     }
   };
 
@@ -1267,25 +1296,10 @@ export const CustomerDashboard: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 sm:space-y-8">
-      {/* Welcome & Language Selection Banner */}
+      {/* Welcome Banner */}
       <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-indigo-800 rounded-3xl p-4 sm:p-6 lg:p-8 text-white shadow-xl shadow-blue-100 relative overflow-hidden">
         <div className="absolute -right-10 -bottom-10 w-72 h-72 rounded-full bg-white/10 blur-2xl pointer-events-none" />
-        <div className="relative z-10 max-w-3xl space-y-3.5 sm:space-y-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-rose-50 border border-rose-200 rounded-lg">
-              <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping" />
-              <span className="text-[10px] font-bold text-rose-700 uppercase tracking-wider">REC</span>
-            </div>
-
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-white/20 text-white backdrop-blur-xs border border-white/20">
-              <Sparkles className="w-3.5 h-3.5" />
-              {t('dashboard.platform_badge')}
-            </span>
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-400/20 text-emerald-200 border border-emerald-400/30">
-              {t('dashboard.supported_languages_badge')}
-            </span>
-          </div>
-
+        <div className="relative z-10 max-w-3xl space-y-3 sm:space-y-3.5">
           <h1 className="text-xl sm:text-2xl lg:text-3xl font-extrabold tracking-tight">
             {t('dashboard.welcome_user', { name: user?.name || 'Valued Customer' })}
           </h1>
@@ -1333,10 +1347,10 @@ export const CustomerDashboard: React.FC = () => {
             <button
               onClick={() => setShowAudioDeviceModal(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50 text-slate-700 hover:text-blue-700 rounded-xl text-xs font-semibold shadow-2xs transition-all cursor-pointer min-h-[36px]"
-              title="Audio & Microphone Settings"
+              title={t('device.modal_title')}
             >
               <Settings className="w-3.5 h-3.5 text-slate-500" />
-              <span className="hidden sm:inline">Audio Settings</span>
+              <span className="hidden sm:inline">{t('device.modal_title')}</span>
             </button>
 
             {/* Live Timer */}
@@ -1383,22 +1397,22 @@ export const CustomerDashboard: React.FC = () => {
 
                   <div>
                     <h3 className="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight">
-                      Call KAIRA AI Voice Agent
+                      {t('call.card_ai_title')}
                     </h3>
                     <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
-                      Instant, human-like voice conversation in <strong>{SUPPORTED_LANGUAGES[selectedLanguage]?.name} ({SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName})</strong>. Connect directly to our autonomous AI voice agent with zero wait time. Answers questions on products, pricing, policies, technical issues, account inquiries, and general topics with continuous dialogue and voice interruption.
+                      {t('call.card_ai_desc')}
                     </p>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 text-[10px] sm:text-[11px] font-semibold text-slate-500">
                     <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-emerald-700 flex items-center gap-1 shadow-2xs">
-                      ⚡ Ultra-fast speech (&lt;1.2s)
+                      ⚡ &lt;1.2s
                     </span>
                     <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 flex items-center gap-1 shadow-2xs">
-                      🌐 Multiple Languages Supported
+                      🌐 {SUPPORTED_LANGUAGES[selectedLanguage]?.name} ({SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName})
                     </span>
                     <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 flex items-center gap-1 shadow-2xs">
-                      🎙️ Voice Interruption
+                      🎙️ HD Voice
                     </span>
                   </div>
 
@@ -1407,7 +1421,7 @@ export const CustomerDashboard: React.FC = () => {
                     className="w-full min-h-[50px] sm:min-h-[54px] py-3.5 sm:py-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-green-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white font-extrabold text-sm sm:text-base shadow-xl shadow-emerald-600/30 hover:shadow-2xl hover:shadow-emerald-600/40 active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-2 sm:gap-3"
                   >
                     <PhoneCall className="w-5 h-5 animate-bounce" />
-                    <span>Call AI Voice Agent Now</span>
+                    <span>{t('call.card_ai_btn')}</span>
                   </button>
                 </div>
               </div>
@@ -1419,9 +1433,9 @@ export const CustomerDashboard: React.FC = () => {
                     <Headphones className="w-5 h-5" />
                   </div>
                   <div>
-                    <h4 className="text-xs font-bold text-slate-800">Prefer human assistance?</h4>
+                    <h4 className="text-xs font-bold text-slate-800">{t('call.card_agent_title')}</h4>
                     <p className="text-[11px] text-slate-500">
-                      Connect with an authorized customer support specialist.
+                      {t('call.card_agent_desc', { language: SUPPORTED_LANGUAGES[selectedLanguage]?.name, nativeName: SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName })}
                     </p>
                   </div>
                 </div>
@@ -1430,7 +1444,7 @@ export const CustomerDashboard: React.FC = () => {
                   className="px-4 py-2.5 rounded-xl border border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold cursor-pointer transition-colors flex items-center justify-center gap-2"
                 >
                   <PhoneCall className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Call Human Agent</span>
+                  <span>{t('call.card_agent_btn')}</span>
                 </button>
               </div>
             </div>
@@ -2051,13 +2065,21 @@ export const CustomerDashboard: React.FC = () => {
 
       {/* Customer Call History Table */}
       <div className="bg-white rounded-3xl shadow-xl shadow-slate-100 border border-slate-200/80 p-6 sm:p-8 space-y-4">
+        {deleteToast && (
+          <div className={`p-3 rounded-2xl text-xs font-semibold flex items-center justify-between ${deleteToast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'
+            }`}>
+            <span>{deleteToast.message}</span>
+            <button type="button" onClick={() => setDeleteToast(null)} className="text-slate-400 hover:text-slate-600 text-xs font-bold ml-2 cursor-pointer">✕</button>
+          </div>
+        )}
+
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <History className="w-5 h-5 text-indigo-600" />
-            <h2 className="text-lg font-bold text-slate-900">Call History & AI Summary</h2>
+            <h2 className="text-lg font-bold text-slate-900">{t('history.title')}</h2>
             {lastRefreshedAt && (
               <span className="hidden sm:inline-block text-[11px] text-slate-400 font-mono">
-                • Updated {lastRefreshedAt.toLocaleTimeString()}
+                • {t('history.updated_at', { time: lastRefreshedAt.toLocaleTimeString() })}
               </span>
             )}
           </div>
@@ -2086,15 +2108,15 @@ export const CustomerDashboard: React.FC = () => {
               <table className="w-full text-left text-xs text-slate-600">
                 <thead className="bg-slate-50 text-slate-700 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
                   <tr>
-                    <th className="py-3 px-4">Customer Details</th>
-                    <th className="py-3 px-4">Date & Time</th>
-                    <th className="py-3 px-4">Duration</th>
-                    <th className="py-3 px-4">Status</th>
-                    <th className="py-3 px-4">AI Agent Name</th>
-                    <th className="py-3 px-4">Call Summary</th>
-                    <th className="py-3 px-4">Resolution</th>
-                    <th className="py-3 px-4">Follow-Up</th>
-                    <th className="py-3 px-4 text-right">Actions & Summary</th>
+                    <th className="py-3 px-4">{t('history.col_customer')}</th>
+                    <th className="py-3 px-4">{t('history.col_datetime')}</th>
+                    <th className="py-3 px-4">{t('history.col_duration')}</th>
+                    <th className="py-3 px-4">{t('history.col_status')}</th>
+                    <th className="py-3 px-4">{t('history.col_agent_name')}</th>
+                    <th className="py-3 px-4">{t('history.col_summary')}</th>
+                    <th className="py-3 px-4">{t('history.col_resolution')}</th>
+                    <th className="py-3 px-4">{t('history.col_follow_up')}</th>
+                    <th className="py-3 px-4 text-right">{t('history.col_actions')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -2102,6 +2124,30 @@ export const CustomerDashboard: React.FC = () => {
                     const resolution = call.intelligence?.resolutionStatus || call.conversationAnalysis?.resolutionStatus || 'resolved';
                     const summaryText = call.intelligence?.overallSummary || call.intelligence?.callReason || call.conversationAnalysis?.summary || call.customerQuestion || 'AI Voice support inquiry';
                     const recUrl = call.recording?.id ? `/api/recordings/${encodeURIComponent(call.recording.id)}/stream` : call.recordingUrl || `/api/calls/${encodeURIComponent(call.callId)}/recording`;
+
+                    const statusBadgeLabel = call.status === 'completed'
+                      ? t('history.status_completed')
+                      : call.status === 'active'
+                        ? t('history.status_active')
+                        : call.status === 'rejected'
+                          ? t('history.status_rejected')
+                          : call.status === 'missed'
+                            ? t('history.status_missed')
+                            : call.status === 'transferred'
+                              ? t('history.status_transferred')
+                              : call.status === 'queued'
+                                ? t('history.status_queued')
+                                : call.status;
+
+                    const resolutionBadgeLabel = resolution === 'resolved'
+                      ? t('history.res_resolved')
+                      : resolution === 'partially_resolved'
+                        ? t('history.res_partially_resolved')
+                        : resolution === 'escalated_admin' || resolution === 'escalated'
+                          ? t('history.res_escalated')
+                          : resolution === 'unresolved'
+                            ? t('history.res_unresolved')
+                            : resolution.replace('_', ' ');
 
                     return (
                       <tr key={call.id} className="hover:bg-slate-50/70 transition-colors">
@@ -2113,7 +2159,7 @@ export const CustomerDashboard: React.FC = () => {
                             ID: #{call.customerId ? call.customerId.slice(-6).toUpperCase() : (user?.id ? user.id.slice(-6).toUpperCase() : 'CUST')}
                           </div>
                           <div className="text-[10px] text-slate-400">
-                            {call.customerPhone || call.customer?.phone || user?.phone || 'No phone'}
+                            {call.customerPhone || call.customer?.phone || user?.phone || t('history.no_phone')}
                           </div>
                         </td>
 
@@ -2135,7 +2181,7 @@ export const CustomerDashboard: React.FC = () => {
                                 : 'bg-slate-100 text-slate-700 border border-slate-200'
                               }`}
                           >
-                            {call.status}
+                            {statusBadgeLabel}
                           </span>
                         </td>
 
@@ -2160,27 +2206,27 @@ export const CustomerDashboard: React.FC = () => {
                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                               : resolution === 'partially_resolved'
                                 ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                : resolution === 'escalated_admin'
+                                : resolution === 'escalated_admin' || resolution === 'escalated'
                                   ? 'bg-purple-50 text-purple-700 border border-purple-200'
                                   : 'bg-amber-50 text-amber-700 border border-amber-200'
                               }`}
                           >
-                            {resolution.replace('_', ' ')}
+                            {resolutionBadgeLabel}
                           </span>
                         </td>
 
                         <td className="py-3.5 px-4">
                           {call.followUpTasks && call.followUpTasks.length > 0 ? (
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
-                              Follow-Up Pending
+                              {t('history.followup_pending')}
                             </span>
                           ) : call.intelligence?.requiresHumanSupport ? (
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
-                              Support Review
+                              {t('history.support_review')}
                             </span>
                           ) : (
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                              Complete
+                              {t('history.complete')}
                             </span>
                           )}
                         </td>
@@ -2194,7 +2240,7 @@ export const CustomerDashboard: React.FC = () => {
                               title="View full AI Summary & Resolution Report"
                             >
                               <Sparkles className="w-3.5 h-3.5" />
-                              <span className="hidden lg:inline">AI Summary</span>
+                              <span className="hidden lg:inline">{t('history.btn_ai_summary')}</span>
                             </button>
 
                             {/* Audio Playback button */}
@@ -2208,19 +2254,29 @@ export const CustomerDashboard: React.FC = () => {
                                 title={playingRecordingId === call.id ? 'Pause Recording' : 'Listen to Call Recording'}
                               >
                                 {playingRecordingId === call.id ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                                <span>{playingRecordingId === call.id ? 'Playing' : 'Listen'}</span>
+                                <span>{playingRecordingId === call.id ? t('history.btn_playing') : t('history.btn_listen')}</span>
                               </button>
                             ) : (
-                              <span className="text-[10px] text-slate-400 italic">No audio</span>
+                              <span className="text-[10px] text-slate-400 italic">{t('history.no_audio')}</span>
                             )}
 
                             {/* View Transcript modal button */}
                             <button
                               onClick={() => setSelectedHistoryCall(call)}
                               className="p-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-lg border border-slate-200 cursor-pointer shadow-2xs"
-                              title="View Transcript"
+                              title={t('history.view_transcript')}
                             >
                               <FileText className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* Delete Call Record Button */}
+                            <button
+                              type="button"
+                              onClick={() => setDeleteConfirmCallId(call.id)}
+                              className="p-1.5 bg-slate-50 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-lg border border-slate-200 hover:border-rose-200 cursor-pointer shadow-2xs transition-colors"
+                              title={t('history.btn_delete')}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         </td>
@@ -2288,33 +2344,42 @@ export const CustomerDashboard: React.FC = () => {
                         {resolution.replace('_', ' ')}
                       </span>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
                         <button
                           onClick={() => setSelectedIntelligenceCallId(call.callId || call.id)}
-                          className="min-h-[36px] px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+                          className="min-h-[36px] px-2.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
                           title="View AI Summary"
                         >
                           <Sparkles className="w-3.5 h-3.5" />
-                          <span>AI Summary</span>
+                          <span>{t('history.btn_ai_summary')}</span>
                         </button>
                         {(call.recordingUrl || call.recording || call.recordingStatus === 'completed' || call.duration > 2) && (
                           <button
                             onClick={() => handlePlayRecording(recUrl, call.id)}
-                            className={`min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${playingRecordingId === call.id
+                            className={`min-h-[36px] inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${playingRecordingId === call.id
                               ? 'bg-red-600 text-white animate-pulse'
                               : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
                               }`}
                           >
                             {playingRecordingId === call.id ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                            <span>{playingRecordingId === call.id ? 'Playing' : 'Listen'}</span>
+                            <span>{playingRecordingId === call.id ? t('history.btn_playing') : t('history.btn_listen')}</span>
                           </button>
                         )}
                         <button
                           onClick={() => setSelectedHistoryCall(call)}
-                          className="min-h-[36px] px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 rounded-xl border border-slate-200 text-xs font-semibold cursor-pointer shadow-2xs flex items-center gap-1"
+                          className="min-h-[36px] px-2.5 py-1.5 bg-white hover:bg-slate-100 text-slate-700 rounded-xl border border-slate-200 text-xs font-semibold cursor-pointer shadow-2xs flex items-center gap-1"
+                          title={t('history.view_transcript')}
                         >
                           <FileText className="w-3.5 h-3.5 text-slate-500" />
-                          <span>View</span>
+                          <span>{t('history.btn_view')}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteConfirmCallId(call.id)}
+                          className="min-h-[36px] p-2 bg-white hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-xl border border-slate-200 hover:border-rose-200 cursor-pointer shadow-2xs transition-colors"
+                          title={t('history.btn_delete')}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </div>
@@ -2330,6 +2395,45 @@ export const CustomerDashboard: React.FC = () => {
       <div className="bg-white rounded-3xl shadow-xl shadow-slate-100 border border-slate-200/80 p-6 sm:p-8 space-y-4">
         <SupportTickets isCustomerView={true} />
       </div>
+
+      {/* Delete Call Record Confirmation Modal */}
+      {deleteConfirmCallId && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center gap-3 text-rose-600">
+              <div className="w-10 h-10 rounded-2xl bg-rose-50 flex items-center justify-center shrink-0 border border-rose-100">
+                <Trash2 className="w-5 h-5 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-base">{t('history.delete_confirm_title')}</h3>
+                <p className="text-xs text-slate-500">Call Record #{deleteConfirmCallId.slice(-6).toUpperCase()}</p>
+              </div>
+            </div>
+            <p className="text-sm text-slate-600 leading-relaxed">
+              {t('history.delete_confirm_msg')}
+            </p>
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingCall}
+                onClick={() => setDeleteConfirmCallId(null)}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-semibold cursor-pointer transition-colors"
+              >
+                {t('history.delete_btn_cancel')}
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingCall}
+                onClick={() => handleDeleteCall(deleteConfirmCallId)}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md shadow-rose-200 cursor-pointer transition-all flex items-center gap-1.5 disabled:opacity-60"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeletingCall ? t('history.delete_deleting') : t('history.delete_btn_confirm')}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Transcript Modal for Historical Calls */}
       {selectedHistoryCall && (

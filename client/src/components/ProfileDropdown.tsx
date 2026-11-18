@@ -155,8 +155,8 @@ export const ProfileDropdown: React.FC<ProfileDropdownProps> = ({ className = ''
         {/* Active Online Status Indicator Dot */}
         <span
           className={`absolute bottom-0 right-0 sm:right-5 w-3 h-3 rounded-full border-2 border-white ${user.role === 'agent' && user.agentStatus === 'busy'
-              ? 'bg-amber-500'
-              : 'bg-emerald-500'
+            ? 'bg-amber-500'
+            : 'bg-emerald-500'
             }`}
           title={user.role === 'agent' ? `Status: ${user.agentStatus || 'available'}` : 'Active Session'}
         />
@@ -216,14 +216,14 @@ export const ProfileDropdown: React.FC<ProfileDropdownProps> = ({ className = ''
           {/* 2. User Profile Information Details */}
           <div className="px-4 py-2.5 space-y-2 text-xs">
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              Profile Information
+              {t('profile.info_title')}
             </div>
 
             {/* Contact / Phone */}
             <div className="flex items-center justify-between text-slate-600 py-1">
               <span className="flex items-center gap-2 text-slate-500">
                 <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                Phone:
+                {t('profile.phone_label')}
               </span>
               <span className="font-semibold text-slate-800 truncate max-w-[170px]">
                 {user.phone || '+1 (555) 018-9921'}
@@ -234,7 +234,7 @@ export const ProfileDropdown: React.FC<ProfileDropdownProps> = ({ className = ''
             <div className="flex items-center justify-between text-slate-600 py-1">
               <span className="flex items-center gap-2 text-slate-500">
                 <Globe className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                Language:
+                {t('profile.language_label')}
               </span>
               <span className="font-semibold text-slate-800">
                 {langMeta.name} ({langMeta.nativeName})
@@ -250,8 +250,8 @@ export const ProfileDropdown: React.FC<ProfileDropdownProps> = ({ className = ''
                 </span>
                 <span
                   className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-bold text-[10px] ${user.agentStatus === 'available'
-                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      : 'bg-amber-50 text-amber-700 border border-amber-200'
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                    : 'bg-amber-50 text-amber-700 border border-amber-200'
                     }`}
                 >
                   <span

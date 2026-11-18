@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Mic, Volume2, CheckCircle2, AlertCircle, Play, X, Headphones, RefreshCw } from 'lucide-react';
+import { useLanguage } from '../context/LanguageContext.js';
 import { audioDeviceManager, AudioDeviceInfo } from '../services/audioDevice.js';
 import { webrtcManager } from '../services/webrtc.js';
 import { voiceOutputController } from '../services/voiceOutputController.js';
@@ -15,6 +16,7 @@ export const AudioDeviceModal: React.FC<AudioDeviceModalProps> = ({
   onClose,
   onDeviceChange
 }) => {
+  const { t } = useLanguage();
   const [microphones, setMicrophones] = useState<AudioDeviceInfo[]>([]);
   const [speakers, setSpeakers] = useState<AudioDeviceInfo[]>([]);
   const [selectedMic, setSelectedMic] = useState<string>('default');
@@ -148,13 +150,14 @@ export const AudioDeviceModal: React.FC<AudioDeviceModalProps> = ({
               <Headphones className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-extrabold text-base text-slate-900">Audio & Device Settings</h3>
+              <h3 className="font-extrabold text-base text-slate-900">{t('device.modal_title')}</h3>
               <p className="text-xs text-slate-500">Configure your microphone, speaker, and test levels</p>
             </div>
           </div>
           <button
             onClick={() => { stopTests(); onClose(); }}
             className="p-1.5 rounded-xl hover:bg-slate-200/60 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+            title={t('device.close_btn')}
           >
             <X className="w-5 h-5" />
           </button>
@@ -166,7 +169,7 @@ export const AudioDeviceModal: React.FC<AudioDeviceModalProps> = ({
             <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start gap-2.5">
               <AlertCircle className="w-4 h-4 shrink-0 text-rose-500 mt-0.5" />
               <div>
-                <p className="font-bold">Microphone Unavailable</p>
+                <p className="font-bold">{t('device.permission_blocked')}</p>
                 <p className="mt-0.5 text-[11px] opacity-90">{permissionError}</p>
               </div>
             </div>
@@ -176,7 +179,7 @@ export const AudioDeviceModal: React.FC<AudioDeviceModalProps> = ({
           <div className="space-y-2">
             <label className="flex items-center justify-between text-xs font-bold text-slate-700">
               <span className="flex items-center gap-1.5">
-                <Mic className="w-3.5 h-3.5 text-indigo-600" /> Microphone (Audio Input)
+                <Mic className="w-3.5 h-3.5 text-indigo-600" /> {t('device.mic_label')}
               </span>
               <span className="text-[10px] text-slate-400">{microphones.length} detected</span>
             </label>
@@ -199,9 +202,9 @@ export const AudioDeviceModal: React.FC<AudioDeviceModalProps> = ({
             {/* Live Microphone Level Bar */}
             <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100 space-y-1.5">
               <div className="flex items-center justify-between text-[11px] text-slate-500">
-                <span>Mic Input Level Test:</span>
+                <span>{t('device.mic_level')}:</span>
                 <span className="font-mono text-xs font-bold text-slate-700">
-                  {micLevel > 0 ? `${micLevel}%` : 'Speak into mic...'}
+                  {micLevel > 0 ? `${micLevel}%` : t('device.testing_mic')}
                 </span>
               </div>
               <div className="w-full h-3 rounded-full bg-slate-200 overflow-hidden p-0.5">
@@ -219,7 +222,7 @@ export const AudioDeviceModal: React.FC<AudioDeviceModalProps> = ({
           <div className="space-y-2">
             <label className="flex items-center justify-between text-xs font-bold text-slate-700">
               <span className="flex items-center gap-1.5">
-                <Volume2 className="w-3.5 h-3.5 text-indigo-600" /> Speaker / Headphones (Audio Output)
+                <Volume2 className="w-3.5 h-3.5 text-indigo-600" /> {t('device.speaker_label')}
               </span>
               <span className="text-[10px] text-slate-400">{speakers.length} detected</span>
             </label>
@@ -241,10 +244,10 @@ export const AudioDeviceModal: React.FC<AudioDeviceModalProps> = ({
                 onClick={handleTestSpeaker}
                 disabled={testingSpeaker}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs border border-slate-200 transition-all cursor-pointer disabled:opacity-50"
-                title="Play a test chime"
+                title={t('device.test_speaker')}
               >
                 <Play className={`w-3.5 h-3.5 ${testingSpeaker ? 'animate-bounce text-indigo-600' : ''}`} />
-                Test
+                {testingSpeaker ? t('device.playing_test') : t('device.test_speaker')}
               </button>
             </div>
           </div>
@@ -257,7 +260,7 @@ export const AudioDeviceModal: React.FC<AudioDeviceModalProps> = ({
             onClick={loadDevices}
             className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-slate-800 cursor-pointer"
           >
-            <RefreshCw className="w-3.5 h-3.5" /> Re-scan Devices
+            <RefreshCw className="w-3.5 h-3.5" /> Re-scan
           </button>
 
           <button
@@ -267,10 +270,10 @@ export const AudioDeviceModal: React.FC<AudioDeviceModalProps> = ({
           >
             {savedSuccess ? (
               <>
-                <CheckCircle2 className="w-4 h-4" /> Saved!
+                <CheckCircle2 className="w-4 h-4" /> {t('device.saved_notice')}
               </>
             ) : (
-              'Save & Apply'
+              t('device.save_btn')
             )}
           </button>
         </div>

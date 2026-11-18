@@ -1278,6 +1278,51 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
   }
 });
 
+// 8.1. Delete Call Record (Customer can delete own calls, Admin can delete any call)
+router.delete('/:id', authenticate, async (req: Request, res: Response) => {
+  try {
+    const call = await prisma.callRecord.findUnique({
+      where: { id: req.params.id }
+    });
+
+    if (!call) {
+      res.status(404).json({ error: 'Call record not found.' });
+      return;
+    }
+
+    const user = req.user!;
+    if (user.role === 'customer') {
+      let isOwner = call.customerId === user.id;
+      if (!isOwner) {
+        const dbUser = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { phone: true, name: true }
+        });
+        if (dbUser && ((dbUser.phone && call.customerPhone === dbUser.phone) || (dbUser.name && call.customerName === dbUser.name))) {
+          isOwner = true;
+        }
+      }
+
+      if (!isOwner) {
+        res.status(403).json({ error: 'Access denied: You can only delete your own call records.' });
+        return;
+      }
+    } else if (user.role !== 'admin') {
+      res.status(403).json({ error: 'Access denied.' });
+      return;
+    }
+
+    await prisma.callRecord.delete({
+      where: { id: req.params.id }
+    });
+
+    res.json({ success: true, message: 'Call record deleted successfully.', id: req.params.id });
+  } catch (err: any) {
+    console.error('[CallRoute] Failed to delete call record:', err);
+    res.status(500).json({ error: 'Failed to delete call record.' });
+  }
+});
+
 
 // ==========================================
 // CALL RECORDING STORAGE & PLAYBACK ENDPOINTS
