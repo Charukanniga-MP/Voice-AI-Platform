@@ -180,6 +180,11 @@ export class VoiceService {
       return;
     }
 
+    if (this.vadTimer) {
+      clearTimeout(this.vadTimer);
+      this.vadTimer = null;
+    }
+    this.lastInterimTranscript = '';
     this.activeOnResult = onResult;
     this.activeOnError = onError;
     this.isListening = true;
@@ -209,36 +214,34 @@ export class VoiceService {
       const spokenText = (finalTranscript || interim).trim();
       if (!spokenText) return;
 
-      // 1. ACOUSTIC ECHO SUPPRESSION & INTELLIGENT BARGE-IN
-      // When the AI is speaking through speakers, the microphone often picks up the AI's own voice.
-      // We must suppress acoustic feedback so the agent does not interrupt itself or treat its own voice as customer speech.
-      if (this.isSpeaking()) {
-        const currentAiSpoken = voiceOutputController.getCurrentText().toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').trim();
-        const detectedSpeech = spokenText.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').trim();
+      // Filter out noise-only artifacts (clicks, breath, non-word characters)
+      const hasWordCharacters = /[\p{L}\p{N}]/u.test(spokenText);
+      if (!hasWordCharacters || spokenText.length < 2) return;
 
-        const isEcho = (() => {
-          if (!currentAiSpoken || !detectedSpeech) return false;
-          // Direct substring match: detected speech is part of the AI's current utterance
-          if (currentAiSpoken.includes(detectedSpeech)) return true;
-          // Word-level overlap: if >= 50% of the recognized words appear in the AI utterance
-          const detectedWords = detectedSpeech.split(/\s+/).filter(w => w.length > 1);
-          if (detectedWords.length > 0) {
-            const matchCount = detectedWords.filter(w => currentAiSpoken.includes(w)).length;
-            if (matchCount / detectedWords.length >= 0.5) return true;
-          }
-          return false;
-        })();
-
-        if (isEcho) {
-          console.log(`[VoiceService] Acoustic echo suppressed: microphone heard AI speech ("${spokenText}"). Ignoring.`);
-          return;
+      // 1. ACOUSTIC ECHO SUPPRESSION (Multi-layer against current & recent AI utterances)
+      // When AI voice plays through speakers, the microphone captures speech recognition output.
+      // We must completely suppress acoustic echo so the agent does NOT self-trigger or create phantom customer speech.
+      const isEcho = voiceOutputController.isAcousticEcho(spokenText);
+      if (isEcho) {
+        console.log(`[VoiceService] Acoustic echo suppressed (${this.isSpeaking() ? 'during' : 'after'} AI speech): "${spokenText.slice(0, 50)}...". Ignoring.`);
+        this.lastInterimTranscript = '';
+        if (this.vadTimer) {
+          clearTimeout(this.vadTimer);
+          this.vadTimer = null;
         }
+        return;
+      }
 
-        // Genuine customer barge-in: Customer spoke different words while AI was speaking
-        console.log(`[VoiceService] Genuine customer barge-in detected ("${spokenText}"). Halting voice output.`);
-        this.cancelSpeech();
-        if (this.onInterruption) {
-          this.onInterruption();
+      // 2. INTELLIGENT BARGE-IN
+      // If AI is currently speaking and detected speech is genuine customer input (NOT echo), allow customer interruption.
+      if (this.isSpeaking()) {
+        const cleanWords = spokenText.split(/\s+/).filter(w => w.length >= 2);
+        if (spokenText.length >= 3 && cleanWords.length >= 1) {
+          console.log(`[VoiceService] Genuine customer barge-in detected ("${spokenText}"). Halting voice output.`);
+          this.cancelSpeech();
+          if (this.onInterruption) {
+            this.onInterruption();
+          }
         }
       }
 
@@ -292,6 +295,12 @@ export class VoiceService {
             if (this.lastInterimTranscript && this.isListening) {
               const textToEmit = this.lastInterimTranscript.trim();
               this.lastInterimTranscript = '';
+
+              if (voiceOutputController.isAcousticEcho(textToEmit)) {
+                console.log('[VoiceService] Suppressing VAD emission of acoustic echo:', textToEmit);
+                return;
+              }
+
               const now = Date.now();
               const cleanText = textToEmit.toLowerCase();
 
@@ -382,6 +391,29 @@ export class VoiceService {
       try {
         this.recognition.stop();
       } catch { }
+    }
+  }
+
+  // Explicitly pause listening during AI voice playback to ensure zero self-pickup
+  public pauseListening() {
+    this.isListening = false;
+    this.isActuallyRunning = false;
+    if (this.vadTimer) {
+      clearTimeout(this.vadTimer);
+      this.vadTimer = null;
+    }
+    this.lastInterimTranscript = '';
+    if (this.recognition) {
+      try {
+        this.recognition.stop();
+      } catch { }
+    }
+  }
+
+  // Resume listening after AI playback completes and cooldown buffer has expired
+  public resumeListening() {
+    if (this.activeOnResult) {
+      this.startListening(this.activeOnResult, this.activeOnError);
     }
   }
 

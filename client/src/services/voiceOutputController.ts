@@ -41,6 +41,7 @@ export class VoiceOutputController {
   private currentVolume: number = 1.0;
   private audioUnlocked: boolean = false;
   private cachedVoices: SpeechSynthesisVoice[] = [];
+  private recentUtterances: Array<{ text: string; timestamp: number }> = [];
 
   private constructor() {
     if (typeof window !== 'undefined') {
@@ -99,6 +100,121 @@ export class VoiceOutputController {
 
   public getCurrentText(): string {
     return this.currentSpokenText;
+  }
+
+  /**
+   * Record an AI utterance in the history buffer for acoustic echo suppression
+   */
+  public recordUtterance(text: string): void {
+    const clean = (text || '').trim();
+    if (!clean) return;
+    const now = Date.now();
+    this.recentUtterances.push({ text: clean, timestamp: now });
+    // Keep entries within last 20 seconds, max 20 items
+    this.recentUtterances = this.recentUtterances.filter(u => (now - u.timestamp) < 20000).slice(-20);
+  }
+
+  public getRecentUtterances(): Array<{ text: string; timestamp: number }> {
+    const now = Date.now();
+    return this.recentUtterances.filter(u => (now - u.timestamp) < 20000);
+  }
+
+  /**
+   * Highly robust acoustic echo detector:
+   * Compares candidate transcribed speech against currently playing and recently spoken AI utterances.
+   * Tolerates phonetic speech recognition mistranscriptions, dropped words, punctuation differences,
+   * and trailing/preceding noise tokens.
+   */
+  public isAcousticEcho(candidateText: string, windowMs: number = 15000): boolean {
+    const candidate = (candidateText || '').trim();
+    if (!candidate || candidate.length < 2) return false;
+
+    const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+    const candNorm = norm(candidate);
+    if (!candNorm) return false;
+
+    const candWords = candNorm.split(/\s+/).filter(w => w.length >= 2);
+    if (candWords.length === 0) return false;
+
+    // If AI is not actively speaking, short conversational customer answers (<= 8 words and < 45 chars)
+    // are genuine responses (e.g. "Yes speaking, tell me more about Kaira"), never acoustic feedback
+    if (!this.isSpeaking() && candWords.length <= 8 && candNorm.length < 45) {
+      return false;
+    }
+
+    // Collect all AI utterances to compare against:
+    // 1. Currently active spoken text
+    // 2. Recent utterances in the window
+    // 3. Last spoken text
+    const targets: string[] = [];
+    if (this.currentSpokenText) targets.push(this.currentSpokenText);
+    if (this.lastSpokenText && !targets.includes(this.lastSpokenText)) targets.push(this.lastSpokenText);
+
+    const now = Date.now();
+    for (const u of this.recentUtterances) {
+      if ((now - u.timestamp) <= windowMs && !targets.includes(u.text)) {
+        targets.push(u.text);
+      }
+    }
+
+    if (targets.length === 0) return false;
+
+    for (const target of targets) {
+      const targetNorm = norm(target);
+      if (!targetNorm) continue;
+
+      // 1. Direct substring matching
+      if (targetNorm.includes(candNorm) || (candNorm.length >= 10 && candNorm.includes(targetNorm))) {
+        return true;
+      }
+
+      // 2. Continuous shingle substring match (16+ characters)
+      if (candNorm.length >= 16) {
+        for (let i = 0; i <= candNorm.length - 16; i += 5) {
+          const slice = candNorm.substring(i, i + 16);
+          if (targetNorm.includes(slice)) {
+            return true;
+          }
+        }
+      }
+
+      const targetWords = new Set(targetNorm.split(/\s+/).filter(w => w.length >= 2));
+      if (targetWords.size === 0) continue;
+
+      // 3. 3-word n-gram (trigram) matching
+      // If ANY 3-word phrase in candidate appears consecutively in target text
+      if (candWords.length >= 3) {
+        let trigramMatches = 0;
+        for (let i = 0; i <= candWords.length - 3; i++) {
+          const trigram = `${candWords[i]} ${candWords[i + 1]} ${candWords[i + 2]}`;
+          if (targetNorm.includes(trigram)) {
+            trigramMatches++;
+          }
+        }
+        // If 2 or more trigrams match, or 1 trigram matches for short candidate (<= 6 words)
+        if (trigramMatches >= 2 || (candWords.length <= 6 && trigramMatches >= 1)) {
+          return true;
+        }
+      }
+
+      // 4. Token overlap ratio (Jaccard-like)
+      const matchingWords = candWords.filter(w => targetWords.has(w));
+      const matchRatio = matchingWords.length / candWords.length;
+
+      // When AI is actively playing: threshold is more sensitive (30% overlap or 2 words)
+      if (this.isSpeaking()) {
+        if (matchRatio >= 0.30 && matchingWords.length >= 2) {
+          return true;
+        }
+      } else {
+        // Cooldown period after AI speech: require at least 3 matching words and >= 40% ratio
+        if (matchRatio >= 0.40 && matchingWords.length >= 3) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   public getVolume(): number {
@@ -198,9 +314,10 @@ export class VoiceOutputController {
         return;
       }
 
-      // Record deduplication markers
+      // Record deduplication markers and echo suppression buffer
       this.lastSpokenText = cleanText;
       this.lastSpokenTime = now;
+      this.recordUtterance(cleanText);
       if (options.responseId) {
         this.lastResponseId = options.responseId;
       }

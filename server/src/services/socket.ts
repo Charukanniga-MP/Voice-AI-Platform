@@ -34,12 +34,64 @@ export interface CallSessionState {
   humanSpeakerId: string | null;
   humanSpeakerName: string | null;
   greetingPlayed: boolean;
+  greeting?: string;
   processedUtteranceIds: Set<string>;
   createdAt: number;
   awaitingCallbackConfirmation?: boolean;
   pendingHandoverReason?: HandoverReason;
   lastHandoverQuery?: string;
   suggestedCallbackPhone?: string;
+}
+
+/**
+ * Server-Side Acoustic Echo Detection Shield
+ * Prevents client microphone feedback (e.g. speakers playing greeting or AI response)
+ * from ever triggering an AI query or polluting database transcripts.
+ */
+function isServerSideAcousticEcho(queryText: string, recentAiUtterances: string[]): boolean {
+  if (!queryText || queryText.length < 2) return false;
+  const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+  const candNorm = norm(queryText);
+  if (!candNorm) return false;
+
+  const candWords = candNorm.split(/\s+/).filter(w => w.length >= 2);
+  // Short conversational customer answers (<= 8 words and < 45 chars) are genuine replies (e.g., "Yes speaking, tell me more about Kaira"), never acoustic feedback
+  if (candWords.length <= 8 && candNorm.length < 45) return false;
+
+  for (const target of recentAiUtterances) {
+    if (!target) continue;
+    const targetNorm = norm(target);
+    if (!targetNorm) continue;
+
+    // 1. Direct match: candidate is a substantial substring of AI utterance (>= 30 chars)
+    if (targetNorm.includes(candNorm) && candNorm.length >= 30) {
+      return true;
+    }
+
+    // 2. High 3-gram match count (at least 2 matching 3-word shingles for longer text)
+    if (candWords.length >= 6) {
+      let trigramMatches = 0;
+      for (let i = 0; i <= candWords.length - 3; i++) {
+        const trigram = `${candWords[i]} ${candWords[i + 1]} ${candWords[i + 2]}`;
+        if (targetNorm.includes(trigram)) {
+          trigramMatches++;
+        }
+      }
+      if (trigramMatches >= 2) {
+        return true;
+      }
+    }
+
+    // 3. High word overlap (at least 6 matching words AND >= 60% overlap)
+    const targetWords = new Set(targetNorm.split(/\s+/).filter(w => w.length >= 2));
+    const matchingWords = candWords.filter(w => targetWords.has(w));
+    const matchRatio = matchingWords.length / candWords.length;
+    if (matchingWords.length >= 6 && matchRatio >= 0.60) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export const callSessions = new Map<string, CallSessionState>();
@@ -987,6 +1039,11 @@ export function initSocketServer(io: SocketIOServer) {
           greeting = await translationService.translateText(greeting, callLang, 'en');
         }
 
+        const activeSession = callSessions.get(data.callId);
+        if (activeSession) {
+          activeSession.greeting = greeting;
+        }
+
         if (isNewCall) {
           await prisma.callTranscript.create({
             data: {
@@ -1164,12 +1221,38 @@ export function initSocketServer(io: SocketIOServer) {
     }) => {
       try {
         const queryText = (data.query || '').trim();
-        if (!queryText) return;
+        if (!queryText || queryText.length < 2) return;
+
+        // Reject noise-only queries (non-word characters, clicks, empty pauses)
+        if (!/[\p{L}\p{N}]/u.test(queryText)) {
+          console.log(`[AICall] Dropped noise-only query on ${data.callId}: "${queryText}"`);
+          return;
+        }
 
         // Verify single active AI voice speaker per call
         const session = callSessions.get(data.callId);
         if (session && session.speakerType !== 'ai') {
           console.log(`[AICall] Dropped call:query on ${data.callId}: active speaker is human agent ${session.humanSpeakerName}`);
+          return;
+        }
+
+        // Server-Side Acoustic Echo Shield
+        // Check if query is an acoustic echo of the AI's greeting or recent AI responses
+        const recentAiUtterances: string[] = [];
+        if (session && session.greeting) {
+          recentAiUtterances.push(session.greeting);
+        }
+        const callCtx = activeCallContexts.get(data.callId);
+        if (callCtx) {
+          for (const item of callCtx) {
+            if (item.sender === 'ai' && item.text) {
+              recentAiUtterances.push(item.text);
+            }
+          }
+        }
+
+        if (isServerSideAcousticEcho(queryText, recentAiUtterances)) {
+          console.warn(`[AICall Echo Shield] Blocked call:query on ${data.callId}: detected acoustic echo of AI utterance. Query: "${queryText}"`);
           return;
         }
 

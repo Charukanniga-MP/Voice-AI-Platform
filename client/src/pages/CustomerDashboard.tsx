@@ -53,6 +53,36 @@ export const CustomerDashboard: React.FC = () => {
   const [interimText, setInterimText] = useState('');
   const [aiIsSpeaking, setAiIsSpeaking] = useState(false);
   const aiIsSpeakingRef = useRef(false);
+
+  // Strict Conversation State Machine:
+  // IDLE -> LISTENING -> SPEECH_DETECTED -> PROCESSING_TRANSCRIPT -> GENERATING_RESPONSE -> PLAYING_RESPONSE -> LISTENING
+  const [conversationState, setConversationState] = useState<
+    'IDLE' | 'LISTENING' | 'SPEECH_DETECTED' | 'PROCESSING_TRANSCRIPT' | 'GENERATING_RESPONSE' | 'PLAYING_RESPONSE'
+  >('IDLE');
+  const conversationStateRef = useRef<
+    'IDLE' | 'LISTENING' | 'SPEECH_DETECTED' | 'PROCESSING_TRANSCRIPT' | 'GENERATING_RESPONSE' | 'PLAYING_RESPONSE'
+  >('IDLE');
+  const lastSyncedLanguageRef = useRef<string>('');
+
+  const transitionState = (
+    newState: 'IDLE' | 'LISTENING' | 'SPEECH_DETECTED' | 'PROCESSING_TRANSCRIPT' | 'GENERATING_RESPONSE' | 'PLAYING_RESPONSE',
+    reason: string
+  ) => {
+    console.log(`[ConversationStateMachine] ${conversationStateRef.current} -> ${newState} (${reason})`);
+    conversationStateRef.current = newState;
+    setConversationState(newState);
+
+    if (newState === 'PLAYING_RESPONSE') {
+      setAiVisualState('speaking');
+    } else if (newState === 'GENERATING_RESPONSE') {
+      setAiVisualState('thinking');
+    } else if (newState === 'LISTENING' || newState === 'SPEECH_DETECTED') {
+      setAiVisualState('listening');
+    } else if (newState === 'IDLE') {
+      setAiVisualState('idle');
+    }
+  };
+
   const [isCustomerSpeaking, setIsCustomerSpeaking] = useState(false);
   const [wasInterrupted, setWasInterrupted] = useState(false);
   const [liveLatency, setLiveLatency] = useState<number | null>(null);
@@ -344,8 +374,12 @@ export const CustomerDashboard: React.FC = () => {
   useEffect(() => {
     voiceService.setLanguage(selectedLanguage);
     if (callId && callStatus !== 'idle') {
-      const socket = getSocket();
-      socket.emit('call:change_language', { callId, language: selectedLanguage });
+      const syncKey = `${callId}_${selectedLanguage}`;
+      if (lastSyncedLanguageRef.current !== syncKey) {
+        lastSyncedLanguageRef.current = syncKey;
+        const socket = getSocket();
+        socket.emit('call:change_language', { callId, language: selectedLanguage });
+      }
     }
   }, [selectedLanguage, callId, callStatus]);
 
@@ -356,8 +390,12 @@ export const CustomerDashboard: React.FC = () => {
 
     // If call is active, sync with backend call session in real-time
     if (callId && callStatus !== 'idle') {
-      const socket = getSocket();
-      socket.emit('call:change_language', { callId, language: lang });
+      const syncKey = `${callId}_${lang}`;
+      if (lastSyncedLanguageRef.current !== syncKey) {
+        lastSyncedLanguageRef.current = syncKey;
+        const socket = getSocket();
+        socket.emit('call:change_language', { callId, language: lang });
+      }
     }
 
     if (token) {
@@ -576,9 +614,6 @@ export const CustomerDashboard: React.FC = () => {
       }
       setActivePartner({ name: 'KAIRA AI', role: 'ai', language: data.language });
 
-      // Start listening right away so customer can interrupt or speak naturally
-      startSpeechRecognition(data.callId, false);
-
       // Enforce single greeting per call session
       if (greetedCallsRef.current.has(data.callId) || data.greetingPlayed || !data.greeting) {
         console.log('[Customer] Greeting already played or suppressed for call:', data.callId);
@@ -586,6 +621,11 @@ export const CustomerDashboard: React.FC = () => {
       }
 
       greetedCallsRef.current.add(data.callId);
+
+      // Mute/stop microphone recognition completely during the initial greeting
+      // to eliminate any possibility of acoustic echo pickup through device speakers
+      voiceService.stopListening();
+      transitionState('PLAYING_RESPONSE', 'Playing initial KAIRA greeting introduction');
 
       setTranscripts(prev => [
         ...prev,
@@ -604,12 +644,22 @@ export const CustomerDashboard: React.FC = () => {
       currentAiSpeechTextRef.current = data.greeting;
       lastAiSpokenTextRef.current = data.greeting;
       lastAiSpokenTimeRef.current = Date.now();
+      voiceOutputController.recordUtterance(data.greeting);
 
       voiceService.speak(data.greeting, () => {
         setAiIsSpeaking(false);
         aiIsSpeakingRef.current = false;
         currentAiSpeechTextRef.current = '';
         lastAiSpokenTimeRef.current = Date.now();
+        console.log('[Customer] Initial greeting finished. 400ms acoustic cooldown buffer started...');
+
+        // 400ms cooldown buffer allows room speaker reverberation to dissipate before opening microphone
+        setTimeout(() => {
+          if (callStatusRef.current === 'active_ai' || callStatusRef.current === 'ringing') {
+            transitionState('LISTENING', 'Greeting completed, opening microphone for customer voice');
+            startSpeechRecognition(data.callId, false);
+          }
+        }, 400);
       }, data.language, undefined, data.responseId);
     });
 
@@ -643,11 +693,13 @@ export const CustomerDashboard: React.FC = () => {
         voiceService.setLanguage(data.language);
       }
 
+      transitionState('PLAYING_RESPONSE', 'AI response received, playing speech');
       setAiIsSpeaking(true);
       aiIsSpeakingRef.current = true;
       currentAiSpeechTextRef.current = data.answer;
       lastAiSpokenTextRef.current = data.answer;
       lastAiSpokenTimeRef.current = Date.now();
+      voiceOutputController.recordUtterance(data.answer);
 
       setTranscripts(prev => {
         const isDuplicate = prev.some(t =>
@@ -676,17 +728,22 @@ export const CustomerDashboard: React.FC = () => {
         setCallStatus('transferring');
       }
 
-      // Ensure listening stays active for continuous dialogue, barge-in, or callback confirmation
-      if (!data.isTransferring || (data as any).isOfferingCallback) {
-        startSpeechRecognition(callIdRef.current || '', false);
-      }
-
       // Play synthesized natural speech in customer's preferred language with SINGLE VOICE GUARANTEE
       voiceService.speak(data.answer, () => {
         setAiIsSpeaking(false);
         aiIsSpeakingRef.current = false;
         currentAiSpeechTextRef.current = '';
         lastAiSpokenTimeRef.current = Date.now();
+        console.log('[Customer] AI response playback completed. 350ms acoustic cooldown buffer started...');
+
+        setTimeout(() => {
+          if (callStatusRef.current === 'active_ai') {
+            transitionState('LISTENING', 'AI finished speaking, microphone listening for customer turn');
+            if (!data.isTransferring || (data as any).isOfferingCallback) {
+              startSpeechRecognition(callIdRef.current || '', false);
+            }
+          }
+        }, 350);
       }, data.language || selectedLanguageRef.current, undefined, data.responseId);
     });
 
@@ -698,6 +755,7 @@ export const CustomerDashboard: React.FC = () => {
       setAiIsSpeaking(false);
       aiIsSpeakingRef.current = false;
       currentAiSpeechTextRef.current = '';
+      transitionState('SPEECH_DETECTED', 'Speech interrupted by customer barge-in');
     });
 
     // 8. Admin / Specialist transfer connected
@@ -789,20 +847,34 @@ export const CustomerDashboard: React.FC = () => {
       ]);
     });
 
-    // 8D. Mid-call language change confirmation
+    // 8D. Mid-call language change confirmation (deduplicated)
     socket.on('call:language_changed', (data: { callId: string; language: LanguageCode; languageName: string }) => {
       setSelectedLanguage(data.language);
       voiceService.setLanguage(data.language);
-      setTranscripts(prev => [
-        ...prev,
-        {
-          id: 't_' + Date.now(),
-          sender: 'system',
-          senderName: 'System',
-          text: `Conversation language set to ${data.languageName}.`,
-          timestamp: new Date().toISOString()
+      lastSyncedLanguageRef.current = `${data.callId}_${data.language}`;
+      setTranscripts(prev => {
+        const newText = `Conversation language set to ${data.languageName}.`;
+        const lastMsg = prev[prev.length - 1];
+        if (lastMsg && lastMsg.sender === 'system' && lastMsg.text === newText) {
+          return prev;
         }
-      ]);
+        const recentDup = prev.some(t =>
+          t.sender === 'system' &&
+          t.text === newText &&
+          (Date.now() - new Date(t.timestamp).getTime()) < 4000
+        );
+        if (recentDup) return prev;
+        return [
+          ...prev,
+          {
+            id: 't_' + Date.now(),
+            sender: 'system',
+            senderName: 'System',
+            text: newText,
+            timestamp: new Date().toISOString()
+          }
+        ];
+      });
     });
 
     // 9. Live human speech transcript relay & translation (with deduplication)
@@ -922,12 +994,16 @@ export const CustomerDashboard: React.FC = () => {
       currentAiSpeechTextRef.current = '';
       setWasInterrupted(true);
       setTimeout(() => setWasInterrupted(false), 2500);
+      transitionState('SPEECH_DETECTED', 'AI speech interrupted by customer barge-in');
       const socket = getSocket();
       socket.emit('call:interrupt', { callId: activeCallId });
     };
 
     voiceService.onSpeechStart = () => {
       if (isMutedRef.current || isCallHeldRef.current) return;
+      if (conversationStateRef.current === 'LISTENING') {
+        transitionState('SPEECH_DETECTED', 'Customer voice activity detected');
+      }
       setIsCustomerSpeaking(true);
     };
 
@@ -946,44 +1022,63 @@ export const CustomerDashboard: React.FC = () => {
         socket.emit('call:set_language', { callId: activeCallId, language: detected });
       }
 
-      // --- ECHO GUARD & NATURAL VOICE INTERRUPTION (BARGE-IN) ---
-      const currentAiText = (currentAiSpeechTextRef.current || '').toLowerCase().trim();
-      const recentAiText = (lastAiSpokenTextRef.current || '').toLowerCase().trim();
-      const timeSinceAiSpoke = Date.now() - lastAiSpokenTimeRef.current;
-      const lowerTrimmed = trimmed.toLowerCase();
+      // --- CENTRALIZED ACOUSTIC ECHO SUPPRESSION & INTELLIGENT BARGE-IN ---
+      const isAiEcho = voiceOutputController.isAcousticEcho(trimmed);
 
-      // Check if recognized speech matches what AI is currently speaking or spoke within last 2.5s (acoustic echo prevention)
-      const isAiEcho = (currentAiText.length > 0 && (currentAiText.includes(lowerTrimmed) || lowerTrimmed.includes(currentAiText))) ||
-        (timeSinceAiSpoke < 2500 && recentAiText.length > 0 && (recentAiText.includes(lowerTrimmed) || lowerTrimmed.includes(recentAiText)));
-
+      // Natural Voice Interruption (Barge-in): only if AI is speaking AND NOT an echo
       if (!isHumanCall && trimmed.length > 0 && (aiIsSpeakingRef.current || (typeof window !== 'undefined' && window.speechSynthesis?.speaking))) {
         if (!isAiEcho) {
+          console.log('[CustomerDashboard] Genuine barge-in speech detected:', trimmed);
           voiceService.cancelSpeech();
           setAiIsSpeaking(false);
           aiIsSpeakingRef.current = false;
           currentAiSpeechTextRef.current = '';
           setWasInterrupted(true);
           setTimeout(() => setWasInterrupted(false), 2500);
+          transitionState('SPEECH_DETECTED', 'Customer interrupted AI speech');
           const socket = getSocket();
           socket.emit('call:interrupt', { callId: activeCallId });
+        } else {
+          console.log('[CustomerDashboard] Suppressed acoustic feedback during AI playback:', trimmed);
+          return;
         }
       }
 
       if (!isFinal) {
+        if (isAiEcho) return;
         setInterimText(text);
+        if (conversationStateRef.current === 'LISTENING') {
+          transitionState('SPEECH_DETECTED', 'Interim speech streaming');
+        }
       } else {
+        transitionState('PROCESSING_TRANSCRIPT', 'Validating finalized customer utterance');
         setInterimText('');
         setIsCustomerSpeaking(false);
-        if (!trimmed) return;
 
-        // Acoustic Echo Guard on final speech: suppress if this is an echo of AI speech
-        if (isAiEcho) {
-          console.log('[CustomerDashboard] Suppressed acoustic echo of AI speech:', trimmed);
+        // Validation 1: Non-empty check
+        if (!trimmed || trimmed.length < 2) {
+          console.log('[CustomerDashboard] Dropped empty/short speech transcript:', trimmed);
+          transitionState('LISTENING', 'Empty transcript dropped, returning to listening');
           return;
         }
 
-        // Deduplicate customer utterance dispatch
+        // Validation 2: Must contain genuine word characters (filter out clicks, breathing, noise)
+        if (!/[\p{L}\p{N}]/u.test(trimmed)) {
+          console.log('[CustomerDashboard] Dropped noise-only speech transcript:', trimmed);
+          transitionState('LISTENING', 'Noise-only speech dropped, returning to listening');
+          return;
+        }
+
+        // Validation 3: Multi-layer acoustic echo suppression
+        if (isAiEcho) {
+          console.log('[CustomerDashboard] Suppressed acoustic echo of AI speech:', trimmed);
+          transitionState('LISTENING', 'Acoustic echo suppressed, returning to listening');
+          return;
+        }
+
+        // Validation 4: Deduplicate customer utterance dispatch
         if (utteranceId && dispatchedUtteranceIdsRef.current.has(utteranceId)) {
+          transitionState('LISTENING', 'Duplicate utterance ID, returning to listening');
           return;
         }
         if (utteranceId) {
@@ -1000,6 +1095,7 @@ export const CustomerDashboard: React.FC = () => {
           (now - lastSentQueryRef.current.time) < 2500
         ) {
           console.log('[CustomerDashboard] Suppressed duplicate speech query within 2500ms:', trimmed);
+          transitionState('LISTENING', 'Duplicate speech query within 2.5s, returning to listening');
           return;
         }
         lastSentQueryRef.current = { text: trimmed, time: now };
@@ -1024,6 +1120,8 @@ export const CustomerDashboard: React.FC = () => {
             }
           ];
         });
+
+        transitionState('GENERATING_RESPONSE', 'Query dispatched to AI response engine');
 
         const clientMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
         const socket = getSocket();
@@ -1222,6 +1320,7 @@ export const CustomerDashboard: React.FC = () => {
   };
 
   const cleanupCall = () => {
+    transitionState('IDLE', 'Call cleanup and reset');
     setCallStatus('idle');
     setCallId(null);
     setAiIsSpeaking(false);
@@ -1880,6 +1979,24 @@ export const CustomerDashboard: React.FC = () => {
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                     Live Sync Active
                   </span>
+                  {callStatus !== 'idle' && (
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                      conversationState === 'PLAYING_RESPONSE'
+                        ? 'bg-indigo-50 text-indigo-700 border-indigo-200 animate-pulse'
+                        : conversationState === 'GENERATING_RESPONSE'
+                        ? 'bg-amber-50 text-amber-700 border-amber-200 animate-pulse'
+                        : conversationState === 'SPEECH_DETECTED' || conversationState === 'PROCESSING_TRANSCRIPT'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-slate-50 text-slate-600 border-slate-200'
+                    }`}>
+                      {conversationState === 'PLAYING_RESPONSE' && 'KAIRA Speaking'}
+                      {conversationState === 'GENERATING_RESPONSE' && 'AI Generating Response'}
+                      {conversationState === 'SPEECH_DETECTED' && 'Speech Detected'}
+                      {conversationState === 'PROCESSING_TRANSCRIPT' && 'Processing Utterance'}
+                      {conversationState === 'LISTENING' && 'Listening for Speech'}
+                      {conversationState === 'IDLE' && 'Ready'}
+                    </span>
+                  )}
                 </div>
                 <p className="text-[11px] text-slate-500">
                   Instant real-time transcription, language detection, and audio synchronization
