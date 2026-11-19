@@ -1348,6 +1348,34 @@ export function initSocketServer(io: SocketIOServer) {
               }
             });
 
+            // Prevent duplicate callback follow-up tasks and register in FollowUpTasksManager
+            const existingCallbackTask = await prisma.followUpTask.findFirst({
+              where: {
+                callRecordId: call.id,
+                title: { startsWith: 'Priority Callback' }
+              }
+            });
+
+            if (!existingCallbackTask) {
+              await prisma.followUpTask.create({
+                data: {
+                  callRecordId: call.id,
+                  customerId: call.customerId,
+                  customerName: call.customerName,
+                  customerPhone: detectedPhone,
+                  customerEmail: call.customerPhone || null,
+                  title: `Priority Callback: ${session.pendingHandoverReason || 'Customer Support Escalation'}`,
+                  unresolvedQuestion: session.lastHandoverQuery || queryText,
+                  previousSummary: `Customer confirmed priority callback to ${detectedPhone}. Reason: ${session.pendingHandoverReason || 'Escalation'}. Ticket #${ticket.id.slice(-6).toUpperCase()}`,
+                  actionRequired: `Call customer back at ${detectedPhone}`,
+                  priority: 'urgent',
+                  status: 'pending',
+                  language: callLang,
+                  notes: `Scheduled during call ${data.callId}. Ticket ID: ${ticket.id}`
+                }
+              }).catch(e => console.error('[AICall] Error creating followUpTask for callback:', e));
+            }
+
             await prisma.callRecord.update({
               where: { id: call.id },
               data: {

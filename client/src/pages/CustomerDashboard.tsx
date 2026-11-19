@@ -31,6 +31,21 @@ const SUGGESTED_QUESTIONS = [
   'Connect me to an Admin'
 ];
 
+// Strict 11-State Conversation State Machine:
+// IDLE -> CONNECTING -> GREETING -> LISTENING -> PROCESSING -> SPEAKING -> INTERRUPTED -> TRANSFERRING -> HUMAN_CONNECTED -> ENDED -> ERROR
+export type ConversationState =
+  | 'IDLE'
+  | 'CONNECTING'
+  | 'GREETING'
+  | 'LISTENING'
+  | 'PROCESSING'
+  | 'SPEAKING'
+  | 'INTERRUPTED'
+  | 'TRANSFERRING'
+  | 'HUMAN_CONNECTED'
+  | 'ENDED'
+  | 'ERROR';
+
 export const CustomerDashboard: React.FC = () => {
   const { user, token } = useAuth();
 
@@ -54,31 +69,27 @@ export const CustomerDashboard: React.FC = () => {
   const [aiIsSpeaking, setAiIsSpeaking] = useState(false);
   const aiIsSpeakingRef = useRef(false);
 
-  // Strict Conversation State Machine:
-  // IDLE -> LISTENING -> SPEECH_DETECTED -> PROCESSING_TRANSCRIPT -> GENERATING_RESPONSE -> PLAYING_RESPONSE -> LISTENING
-  const [conversationState, setConversationState] = useState<
-    'IDLE' | 'LISTENING' | 'SPEECH_DETECTED' | 'PROCESSING_TRANSCRIPT' | 'GENERATING_RESPONSE' | 'PLAYING_RESPONSE'
-  >('IDLE');
-  const conversationStateRef = useRef<
-    'IDLE' | 'LISTENING' | 'SPEECH_DETECTED' | 'PROCESSING_TRANSCRIPT' | 'GENERATING_RESPONSE' | 'PLAYING_RESPONSE'
-  >('IDLE');
+  // Conversation state tracking with strict 11-state machine
+  const [conversationState, setConversationState] = useState<ConversationState>('IDLE');
+  const conversationStateRef = useRef<ConversationState>('IDLE');
   const lastSyncedLanguageRef = useRef<string>('');
 
   const transitionState = (
-    newState: 'IDLE' | 'LISTENING' | 'SPEECH_DETECTED' | 'PROCESSING_TRANSCRIPT' | 'GENERATING_RESPONSE' | 'PLAYING_RESPONSE',
+    newState: ConversationState,
     reason: string
   ) => {
+    if (conversationStateRef.current === newState) return;
     console.log(`[ConversationStateMachine] ${conversationStateRef.current} -> ${newState} (${reason})`);
     conversationStateRef.current = newState;
     setConversationState(newState);
 
-    if (newState === 'PLAYING_RESPONSE') {
+    if (newState === 'SPEAKING' || newState === 'GREETING') {
       setAiVisualState('speaking');
-    } else if (newState === 'GENERATING_RESPONSE') {
+    } else if (newState === 'PROCESSING' || newState === 'TRANSFERRING' || newState === 'CONNECTING') {
       setAiVisualState('thinking');
-    } else if (newState === 'LISTENING' || newState === 'SPEECH_DETECTED') {
+    } else if (newState === 'LISTENING' || newState === 'INTERRUPTED') {
       setAiVisualState('listening');
-    } else if (newState === 'IDLE') {
+    } else if (newState === 'IDLE' || newState === 'ENDED' || newState === 'ERROR' || newState === 'HUMAN_CONNECTED') {
       setAiVisualState('idle');
     }
   };
@@ -625,7 +636,7 @@ export const CustomerDashboard: React.FC = () => {
       // Mute/stop microphone recognition completely during the initial greeting
       // to eliminate any possibility of acoustic echo pickup through device speakers
       voiceService.stopListening();
-      transitionState('PLAYING_RESPONSE', 'Playing initial KAIRA greeting introduction');
+      transitionState('GREETING', 'Playing initial KAIRA greeting introduction');
 
       setTranscripts(prev => [
         ...prev,
@@ -693,7 +704,7 @@ export const CustomerDashboard: React.FC = () => {
         voiceService.setLanguage(data.language);
       }
 
-      transitionState('PLAYING_RESPONSE', 'AI response received, playing speech');
+      transitionState('SPEAKING', 'AI response received, playing speech');
       setAiIsSpeaking(true);
       aiIsSpeakingRef.current = true;
       currentAiSpeechTextRef.current = data.answer;
@@ -726,6 +737,7 @@ export const CustomerDashboard: React.FC = () => {
 
       if (data.isTransferring && !(data as any).isOfferingCallback) {
         setCallStatus('transferring');
+        transitionState('TRANSFERRING', 'Escalating call to human specialist');
       }
 
       // Play synthesized natural speech in customer's preferred language with SINGLE VOICE GUARANTEE
@@ -755,7 +767,7 @@ export const CustomerDashboard: React.FC = () => {
       setAiIsSpeaking(false);
       aiIsSpeakingRef.current = false;
       currentAiSpeechTextRef.current = '';
-      transitionState('SPEECH_DETECTED', 'Speech interrupted by customer barge-in');
+      transitionState('INTERRUPTED', 'Speech interrupted by customer barge-in');
     });
 
     // 8. Admin / Specialist transfer connected
@@ -765,6 +777,7 @@ export const CustomerDashboard: React.FC = () => {
       setActivePartner({ id: data.adminId, name: data.adminName, role: 'agent' });
       setCallId(data.callId);
       callIdRef.current = data.callId;
+      transitionState('HUMAN_CONNECTED', `Connected with human specialist ${data.adminName}`);
 
       setTranscripts(prev => [
         ...prev,
@@ -914,6 +927,7 @@ export const CustomerDashboard: React.FC = () => {
 
     // 11. Call ended
     socket.on('call:ended', (data: { callId: string; duration?: number }) => {
+      transitionState('ENDED', 'Remote peer ended call');
       setRatingComment('');
       setRatingVal(5);
       setRatingSubmitted(false);
@@ -994,15 +1008,15 @@ export const CustomerDashboard: React.FC = () => {
       currentAiSpeechTextRef.current = '';
       setWasInterrupted(true);
       setTimeout(() => setWasInterrupted(false), 2500);
-      transitionState('SPEECH_DETECTED', 'AI speech interrupted by customer barge-in');
+      transitionState('INTERRUPTED', 'AI speech interrupted by customer barge-in');
       const socket = getSocket();
       socket.emit('call:interrupt', { callId: activeCallId });
     };
 
     voiceService.onSpeechStart = () => {
       if (isMutedRef.current || isCallHeldRef.current) return;
-      if (conversationStateRef.current === 'LISTENING') {
-        transitionState('SPEECH_DETECTED', 'Customer voice activity detected');
+      if (conversationStateRef.current === 'SPEAKING' || conversationStateRef.current === 'GREETING') {
+        transitionState('INTERRUPTED', 'Customer barge-in detected');
       }
       setIsCustomerSpeaking(true);
     };
@@ -1035,7 +1049,7 @@ export const CustomerDashboard: React.FC = () => {
           currentAiSpeechTextRef.current = '';
           setWasInterrupted(true);
           setTimeout(() => setWasInterrupted(false), 2500);
-          transitionState('SPEECH_DETECTED', 'Customer interrupted AI speech');
+          transitionState('INTERRUPTED', 'Customer interrupted AI speech');
           const socket = getSocket();
           socket.emit('call:interrupt', { callId: activeCallId });
         } else {
@@ -1047,11 +1061,8 @@ export const CustomerDashboard: React.FC = () => {
       if (!isFinal) {
         if (isAiEcho) return;
         setInterimText(text);
-        if (conversationStateRef.current === 'LISTENING') {
-          transitionState('SPEECH_DETECTED', 'Interim speech streaming');
-        }
       } else {
-        transitionState('PROCESSING_TRANSCRIPT', 'Validating finalized customer utterance');
+        transitionState('PROCESSING', 'Validating finalized customer utterance');
         setInterimText('');
         setIsCustomerSpeaking(false);
 
@@ -1121,7 +1132,7 @@ export const CustomerDashboard: React.FC = () => {
           ];
         });
 
-        transitionState('GENERATING_RESPONSE', 'Query dispatched to AI response engine');
+        transitionState('PROCESSING', 'Query dispatched to AI response engine');
 
         const clientMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
         const socket = getSocket();
@@ -1188,6 +1199,7 @@ export const CustomerDashboard: React.FC = () => {
       voiceService.unlockAudio();
       webrtcManager.unlockAudio();
       setCallStatus('connecting');
+      transitionState('CONNECTING', 'Initiating human specialist voice call');
       setDuration(0);
       setTranscripts([]);
       setActivePartner(null);
@@ -1211,6 +1223,7 @@ export const CustomerDashboard: React.FC = () => {
       });
     } catch (err) {
       console.error('Microphone access denied:', err);
+      transitionState('ERROR', 'Microphone access denied or audio device error');
       setCallStatus('idle');
       setShowAudioDeviceModal(true);
     }
@@ -1231,6 +1244,7 @@ export const CustomerDashboard: React.FC = () => {
       voiceService.unlockAudio();
       webrtcManager.unlockAudio();
       setCallStatus('connecting');
+      transitionState('CONNECTING', 'Initiating AI voice assistant call');
       setDuration(0);
       setTranscripts([]);
       setActivePartner(null);
@@ -1254,6 +1268,7 @@ export const CustomerDashboard: React.FC = () => {
       });
     } catch (err) {
       console.error('Microphone access denied:', err);
+      transitionState('ERROR', 'Microphone access denied or audio device error');
       setCallStatus('idle');
       setShowAudioDeviceModal(true);
     }
@@ -1308,6 +1323,7 @@ export const CustomerDashboard: React.FC = () => {
   // 4. End Call
   const handleEndCall = () => {
     if (callId) {
+      transitionState('ENDED', 'Customer ended call');
       const socket = getSocket();
       socket.emit('call:end', { callId, duration, endedBy: 'customer' });
       setRatingComment('');
@@ -1320,7 +1336,7 @@ export const CustomerDashboard: React.FC = () => {
   };
 
   const cleanupCall = () => {
-    transitionState('IDLE', 'Call cleanup and reset');
+    transitionState('ENDED', 'Call cleanup and reset');
     setCallStatus('idle');
     setCallId(null);
     setAiIsSpeaking(false);
@@ -1342,6 +1358,7 @@ export const CustomerDashboard: React.FC = () => {
     voiceService.stopListening();
     webrtcManager.endCall();
     recordingConsentRef.current = 'not_requested';
+    transitionState('IDLE', 'Call cleanup complete, reset to idle');
     setTimeout(fetchHistory, 600);
   };
 
@@ -1980,20 +1997,33 @@ export const CustomerDashboard: React.FC = () => {
                     Live Sync Active
                   </span>
                   {callStatus !== 'idle' && (
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                      conversationState === 'PLAYING_RESPONSE'
+                    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                      conversationState === 'SPEAKING' || conversationState === 'GREETING'
                         ? 'bg-indigo-50 text-indigo-700 border-indigo-200 animate-pulse'
-                        : conversationState === 'GENERATING_RESPONSE'
+                        : conversationState === 'PROCESSING' || conversationState === 'CONNECTING'
                         ? 'bg-amber-50 text-amber-700 border-amber-200 animate-pulse'
-                        : conversationState === 'SPEECH_DETECTED' || conversationState === 'PROCESSING_TRANSCRIPT'
+                        : conversationState === 'TRANSFERRING'
+                        ? 'bg-purple-50 text-purple-700 border-purple-200 animate-pulse'
+                        : conversationState === 'HUMAN_CONNECTED'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : conversationState === 'INTERRUPTED'
+                        ? 'bg-rose-50 text-rose-700 border-rose-200'
+                        : conversationState === 'ERROR'
+                        ? 'bg-red-50 text-red-700 border-red-200'
+                        : conversationState === 'LISTENING'
                         ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                         : 'bg-slate-50 text-slate-600 border-slate-200'
                     }`}>
-                      {conversationState === 'PLAYING_RESPONSE' && 'KAIRA Speaking'}
-                      {conversationState === 'GENERATING_RESPONSE' && 'AI Generating Response'}
-                      {conversationState === 'SPEECH_DETECTED' && 'Speech Detected'}
-                      {conversationState === 'PROCESSING_TRANSCRIPT' && 'Processing Utterance'}
+                      {conversationState === 'CONNECTING' && 'Connecting...'}
+                      {conversationState === 'GREETING' && 'KAIRA Greeting'}
                       {conversationState === 'LISTENING' && 'Listening for Speech'}
+                      {conversationState === 'PROCESSING' && 'AI Processing Speech'}
+                      {conversationState === 'SPEAKING' && 'KAIRA Speaking'}
+                      {conversationState === 'INTERRUPTED' && 'Barge-In Interrupted'}
+                      {conversationState === 'TRANSFERRING' && 'Transferring to Specialist'}
+                      {conversationState === 'HUMAN_CONNECTED' && 'Human Specialist Connected'}
+                      {conversationState === 'ENDED' && 'Call Ended'}
+                      {conversationState === 'ERROR' && 'Call Error'}
                       {conversationState === 'IDLE' && 'Ready'}
                     </span>
                   )}

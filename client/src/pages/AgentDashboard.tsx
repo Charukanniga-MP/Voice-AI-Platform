@@ -20,7 +20,7 @@ import {
   Smartphone, AlertCircle, CheckCircle2, Radio, Info,
   Globe, Sparkles, MessageSquare, Pause, Play, Send, Copy, Users, Settings, ListTodo,
   HeartPulse, Flame, Mail, Phone, ShieldAlert, RefreshCw, ArrowRight, Lightbulb, AlertTriangle,
-  ThumbsUp, ThumbsDown, FileText, ExternalLink, ShieldCheck, Check, X
+  ThumbsUp, ThumbsDown, FileText, ExternalLink, ShieldCheck, Check, X, XCircle
 } from 'lucide-react';
 import { SentimentBadge } from '../components/SentimentBadge.js';
 import { LiveSentimentCard } from '../components/LiveSentimentCard.js';
@@ -559,10 +559,26 @@ export const AgentDashboard: React.FC = () => {
     socket.on('ai_call:ended', handleAiCallEnded);
     socket.on('active_ai_calls:list', handleActiveAiCallsList);
 
+    const handleCallbackRequested = (data: any) => {
+      console.log('[Agent] Priority callback requested:', data);
+      setLogs(prev => [
+        ...prev,
+        {
+          id: 'cb_' + Date.now(),
+          sender: 'system',
+          senderName: 'System',
+          text: `Priority callback requested by ${data.customerName || 'Customer'} (${data.phone || 'N/A'}). Reason: ${data.reason || 'Escalation'}. Ticket #${(data.ticketId || '').slice(-6).toUpperCase()}`,
+          timestamp: new Date().toLocaleTimeString()
+        }
+      ]);
+    };
+    socket.on('callback:requested', handleCallbackRequested);
+
     // Initial query for active AI calls
     socket.emit('active_ai_calls:get');
 
     return () => {
+      socket.off('callback:requested', handleCallbackRequested);
       socket.off('call:live_insights', handleLiveInsights);
       socket.off('call:intelligence_ready', handleIntelligenceReady);
       socket.off('agent:incoming_call');
@@ -796,6 +812,19 @@ export const AgentDashboard: React.FC = () => {
     } catch (err) {
       console.error('Failed accessing mic on call takeover:', err);
     }
+  };
+
+  // Reject incoming escalation transfer
+  const handleRejectEscalation = (esc: any) => {
+    if (!esc) return;
+    ringtoneService.stop();
+    const socket = getSocket();
+    socket.emit('transfer:reject', {
+      transferId: esc.transferId,
+      adminId: user?.id,
+      reason: 'Agent declined transfer'
+    });
+    setEscalationAlert(null);
   };
 
   // Toggle Hold / Resume
@@ -1418,13 +1447,11 @@ export const AgentDashboard: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() => {
-                ringtoneService.stop();
-                setEscalationAlert(null);
-              }}
-              className="px-3 py-2 bg-white hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-xl text-xs font-semibold transition cursor-pointer"
+              onClick={() => handleRejectEscalation(escalationAlert)}
+              className="min-h-[44px] px-4 py-2 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5"
             >
-              Dismiss
+              <XCircle className="w-4 h-4" />
+              <span>Decline / Reject</span>
             </button>
           </div>
         </div>
