@@ -154,6 +154,7 @@ app.use(
       }
     },
     crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
     crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
     hsts:
       env.NODE_ENV === 'production'

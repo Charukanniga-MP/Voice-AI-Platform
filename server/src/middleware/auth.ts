@@ -60,19 +60,18 @@ export function generateToken(user: AuthUser, expiresIn = env.JWT_EXPIRES_IN): s
  * Enforces HS256 algorithm, checks token expiration, and validates payload integrity and DB state.
  */
 export async function authenticate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  let token: string | undefined;
+
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({
-      error: 'Authentication required. No token provided.',
-      code: 'NO_TOKEN'
-    });
-    return;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.slice(7).trim();
+  } else if (req.query?.token && typeof req.query.token === 'string') {
+    token = req.query.token.trim();
   }
 
-  const token = authHeader.slice(7).trim();
   if (!token) {
     res.status(401).json({
-      error: 'Authentication required. Empty token provided.',
+      error: 'Authentication required. No token provided.',
       code: 'NO_TOKEN'
     });
     return;

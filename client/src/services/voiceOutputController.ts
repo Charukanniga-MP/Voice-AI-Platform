@@ -93,7 +93,7 @@ export class VoiceOutputController {
   public isSpeaking(): boolean {
     if (this.isCurrentlySpeaking) return true;
     if (this.currentAudio && !this.currentAudio.paused && !this.currentAudio.ended) return true;
-    if (typeof window !== 'undefined' && window.speechSynthesis && window.speechSynthesis.speaking) return true;
+    if (this.currentUtterance !== null && typeof window !== 'undefined' && window.speechSynthesis && window.speechSynthesis.speaking) return true;
     return false;
   }
 
@@ -217,10 +217,15 @@ export class VoiceOutputController {
 
       // Primary Engine: High-fidelity Server-generated Audio Stream (MP3)
       const audioUrl = `/api/voice/tts?text=${encodeURIComponent(cleanText)}&lang=${targetLang}`;
-      const audio = new Audio(audioUrl);
+      const audio = new Audio();
+      audio.crossOrigin = 'anonymous';
+      audio.src = audioUrl;
       this.currentAudio = audio;
       audio.volume = options.volume !== undefined ? options.volume : this.currentVolume;
       audioDeviceManager.applySpeakerToAudioElement(audio);
+
+      // Connect AI TTS audio element into active call recording mixer
+      webrtcManager.mixAudioElement(audio);
 
       let hasStarted = false;
       let hasResolved = false;

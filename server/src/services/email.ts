@@ -53,6 +53,11 @@ export function getTransporter(): Transporter | null {
     host,
     port,
     secure: port === 465, // SSL/TLS direct on port 465
+    pool: true, // Use pooled connections to avoid rapid SSL handshake bursts
+    maxConnections: 3,
+    maxMessages: 100,
+    rateDelta: 1000,
+    rateLimit: 5,
     auth: {
       user,
       pass
@@ -117,29 +122,60 @@ export async function sendEmail(payload: EmailPayload): Promise<{ delivered: boo
     return { delivered: false, error: errorMsg };
   }
 
-  try {
-    const sender = (env.EMAIL_USER || process.env.EMAIL_USER || '').trim();
-    const fromAddress = env.EMAIL_FROM || process.env.EMAIL_FROM || `"KAIRA Voice AI" <${sender}>`;
+  const sender = (env.EMAIL_USER || process.env.EMAIL_USER || '').trim();
+  const fromAddress = env.EMAIL_FROM || process.env.EMAIL_FROM || `"KAIRA Voice AI" <${sender}>`;
 
-    console.log(`[Email Service] Dispatching SMTP email to ${payload.to} via ${env.EMAIL_HOST || 'smtp.gmail.com'}:${env.EMAIL_PORT || 465}...`);
+  const maxAttempts = 3;
+  let lastError: any = null;
 
-    const info = await mailer.sendMail({
-      from: fromAddress,
-      to: payload.to,
-      subject: payload.subject,
-      text: payload.text,
-      html: payload.html
-    });
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      console.log(`[Email Service] Dispatching SMTP email to ${payload.to} via ${env.EMAIL_HOST || 'smtp.gmail.com'}:${env.EMAIL_PORT || 465}${attempt > 1 ? ` (Attempt ${attempt}/${maxAttempts})` : ''}...`);
 
-    console.log(`[Email Service] ✓ Real email delivered successfully to ${payload.to}! MessageId: ${info.messageId}`);
-    return { delivered: true, messageId: info.messageId };
-  } catch (err: any) {
-    console.error(`[Email Service] ❌ SMTP delivery failed for ${payload.to}:`, err.message);
-    if (err.code === 'EAUTH') {
-      console.error('[Email Service] ❌ Gmail Authentication Error: Invalid Gmail address or Google App Password.');
+      const info = await mailer.sendMail({
+        from: fromAddress,
+        to: payload.to,
+        subject: payload.subject,
+        text: payload.text,
+        html: payload.html
+      });
+
+      console.log(`[Email Service] ✓ Real email delivered successfully to ${payload.to}! MessageId: ${info.messageId}`);
+      return { delivered: true, messageId: info.messageId };
+    } catch (err: any) {
+      lastError = err;
+      const errMsg = String(err?.message || '');
+      const respCode = err?.responseCode;
+      const isTransient =
+        respCode === 451 ||
+        respCode === 421 ||
+        respCode === 450 ||
+        respCode === 452 ||
+        errMsg.includes('451') ||
+        errMsg.includes('421') ||
+        errMsg.includes('temporarily rejected') ||
+        errMsg.includes('ETIMEDOUT') ||
+        errMsg.includes('ECONNRESET');
+
+      console.error(`[Email Service] ⚠️ SMTP delivery attempt ${attempt} failed for ${payload.to}:`, errMsg);
+
+      if (isTransient && attempt < maxAttempts) {
+        const backoffMs = attempt * 1500;
+        console.log(`[Email Service] Transient SMTP limit/error detected (451/network). Retrying in ${backoffMs}ms...`);
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        // Reset cached transporter on transient socket failure so fresh connection is established
+        resetTransporter();
+      } else {
+        break;
+      }
     }
-    return { delivered: false, error: err.message };
   }
+
+  if (lastError?.code === 'EAUTH') {
+    console.error('[Email Service] ❌ Gmail Authentication Error: Invalid Gmail address or Google App Password.');
+  }
+
+  return { delivered: false, error: lastError?.message || 'Email delivery failed' };
 }
 
 /**

@@ -114,7 +114,7 @@ export interface CallRecord {
   callNotes?: string | null;
   endedBy?: string | null;
   rating?: number | null;
-  overallSentiment?: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL' | 'FRUSTRATED' | null;
+  overallSentiment?: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL' | 'FRUSTRATED' | 'CONFUSED' | 'URGENT' | null;
   sentimentScore?: number | null;
   requiresAssistance?: boolean;
   assistanceReason?: string | null;
@@ -491,7 +491,7 @@ export interface CustomerInteractionHistory {
   unresolvedIssues: Array<{ callId: string; date: string; issue: string; status: string }>;
 }
 
-export type SentimentType = 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL' | 'FRUSTRATED';
+export type SentimentType = 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL' | 'FRUSTRATED' | 'CONFUSED' | 'URGENT';
 
 export interface SentimentRecord {
   id: string;

@@ -35,6 +35,7 @@ export const ResetPasswordPage: React.FC<ResetPasswordProps> = ({ onBackToLogin 
   const [requestLoading, setRequestLoading] = useState<boolean>(false);
   const [requestSuccess, setRequestSuccess] = useState<string | null>(null);
   const [devDirectToken, setDevDirectToken] = useState<string | null>(null);
+  const [devDirectLink, setDevDirectLink] = useState<string | null>(null);
 
   // Manual token input state
   const [manualToken, setManualToken] = useState<string>('');

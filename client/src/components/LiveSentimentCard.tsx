@@ -44,6 +44,12 @@ export const LiveSentimentCard: React.FC<LiveSentimentCardProps> = ({
         ? 'bg-emerald-50/50 border-emerald-200'
         : sentiment === 'NEGATIVE'
         ? 'bg-amber-50/50 border-amber-200'
+        : sentiment === 'CONFUSED'
+        ? 'bg-purple-50/50 border-purple-200'
+        : sentiment === 'URGENT'
+        ? 'bg-orange-50/60 border-orange-300'
+        : sentiment === 'FRUSTRATED'
+        ? 'bg-rose-50/60 border-rose-200'
         : 'bg-slate-50 border-slate-200'
     }`}>
       {/* Top Header Bar */}

@@ -29,6 +29,9 @@ export class WebRTCManager {
   private recordingConsent: 'granted' | 'declined' | 'not_requested' = 'not_requested';
   private remoteStream: MediaStream | null = null;
   private audioContext: AudioContext | null = null;
+  private recordingDestination: MediaStreamAudioDestinationNode | null = null;
+  private localAudioSource: MediaStreamAudioSourceNode | null = null;
+  private remoteAudioSource: MediaStreamAudioSourceNode | null = null;
   private pendingCandidates: RTCIceCandidateInit[] = [];
 
 
@@ -442,7 +445,20 @@ export class WebRTCManager {
       console.log('[WebRTC] Received remote audio stream track');
       const stream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
       this.remoteStream = stream;
-      if (this.recordingConsent === 'granted') this.startRecording();
+      if (this.recordingConsent === 'granted' && !this.isRecording) {
+        this.startRecording();
+      } else if (this.isRecording && this.audioContext && this.recordingDestination) {
+        try {
+          if (this.remoteAudioSource) {
+            this.remoteAudioSource.disconnect();
+          }
+          this.remoteAudioSource = this.audioContext.createMediaStreamSource(stream);
+          this.remoteAudioSource.connect(this.recordingDestination);
+          console.log('[WebRTC Recording] Connected transferred remote stream to active recording.');
+        } catch (err) {
+          console.warn('[WebRTC Recording] Could not attach remote stream to active recording:', err);
+        }
+      }
       const audio = this.getAudioElement();
       audio.srcObject = stream;
       audio.play().catch(e => console.warn('[WebRTC] Audio auto-play blocked by browser:', e));
@@ -749,6 +765,10 @@ export class WebRTCManager {
     }
   }
 
+  public setCallId(id: string | null): void {
+    this.callId = id;
+  }
+
   public getCallId(): string | null {
     return this.callId;
   }
@@ -771,22 +791,33 @@ export class WebRTCManager {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioCtx) return;
 
-      this.audioContext = new AudioCtx();
-      const dest = this.audioContext.createMediaStreamDestination();
+      if (!this.audioContext || this.audioContext.state === 'closed') {
+        this.audioContext = new AudioCtx();
+      }
+      if (this.audioContext.state === 'suspended') {
+        this.audioContext.resume().catch(() => {});
+      }
 
+      this.recordingDestination = this.audioContext.createMediaStreamDestination();
+      const dest = this.recordingDestination;
+
+      // 1. Connect local microphone audio track to recording mixer
       if (this.localStream && this.localStream.getAudioTracks().length > 0) {
         try {
-          const localSource = this.audioContext.createMediaStreamSource(this.localStream);
-          localSource.connect(dest);
+          this.localAudioSource = this.audioContext.createMediaStreamSource(this.localStream);
+          this.localAudioSource.connect(dest);
+          console.log('[WebRTC Recording] Local microphone connected to recording stream.');
         } catch (e) {
           console.warn('[WebRTC Recording] Could not mix local track:', e);
         }
       }
 
+      // 2. Connect remote peer audio track (human agent/specialist) to recording mixer
       if (this.remoteStream && this.remoteStream.getAudioTracks().length > 0) {
         try {
-          const remoteSource = this.audioContext.createMediaStreamSource(this.remoteStream);
-          remoteSource.connect(dest);
+          this.remoteAudioSource = this.audioContext.createMediaStreamSource(this.remoteStream);
+          this.remoteAudioSource.connect(dest);
+          console.log('[WebRTC Recording] Remote peer audio connected to recording stream.');
         } catch (e) {
           console.warn('[WebRTC Recording] Could not mix remote track:', e);
         }
@@ -807,9 +838,70 @@ export class WebRTCManager {
       this.mediaRecorder.start(1000);
       this.recordingStartTime = Date.now();
       this.isRecording = true;
-      console.log(`[WebRTC Recording] Recording started for call ${this.callId} (${mimeType})`);
+      console.log(`[WebRTC Recording] Bidirectional call recording started for ${this.callId} (${mimeType})`);
     } catch (err) {
       console.warn('[WebRTC Recording] Could not start recording:', err);
+    }
+  }
+
+  /**
+   * Mix an HTMLAudioElement (AI agent TTS voice) into the recording stream
+   * so it is captured simultaneously with the user's microphone.
+   * Also connects to speaker output so the user hears the AI in real time.
+   */
+  public mixAudioElement(audioElement: HTMLAudioElement): boolean {
+    if (!this.isRecording || !this.audioContext || !this.recordingDestination) {
+      return false;
+    }
+
+    try {
+      if (this.audioContext.state === 'suspended') {
+        this.audioContext.resume().catch(() => {});
+      }
+
+      if ((audioElement as any).__kairaMediaSourceConnected) {
+        return true;
+      }
+
+      // Allow cross-origin audio streaming through Web Audio API
+      audioElement.crossOrigin = 'anonymous';
+
+      const aiSource = this.audioContext.createMediaElementSource(audioElement);
+      (audioElement as any).__kairaMediaSourceConnected = true;
+
+      const aiGain = this.audioContext.createGain();
+      aiGain.gain.value = audioElement.volume !== undefined ? audioElement.volume : 1.0;
+
+      audioElement.addEventListener('volumechange', () => {
+        if (aiGain && typeof audioElement.volume === 'number') {
+          aiGain.gain.value = audioElement.volume;
+        }
+      });
+
+      // 1. Connect to recording destination (MediaRecorder captures AI agent voice)
+      aiSource.connect(aiGain);
+      aiGain.connect(this.recordingDestination);
+
+      // 2. Connect to system audio destination (speakers) so customer hears the AI live
+      aiGain.connect(this.audioContext.destination);
+
+      // Clean up Web Audio node connections when element finishes playing
+      const onEndOrError = () => {
+        audioElement.removeEventListener('ended', onEndOrError);
+        audioElement.removeEventListener('error', onEndOrError);
+        try {
+          aiGain.disconnect();
+          aiSource.disconnect();
+        } catch { }
+      };
+      audioElement.addEventListener('ended', onEndOrError);
+      audioElement.addEventListener('error', onEndOrError);
+
+      console.log('[WebRTC Recording] Successfully mixed AI agent voice into recording destination.');
+      return true;
+    } catch (err) {
+      console.warn('[WebRTC Recording] Could not mix AI voice element into recording:', err);
+      return false;
     }
   }
 

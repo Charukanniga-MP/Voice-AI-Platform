@@ -28,9 +28,29 @@ router.post(
         return res.status(400).json({ error: 'A granted or declined recording decision is required.' });
       }
 
-      const call = await prisma.callRecord.findUnique({ where: { callId } });
-      if (!call) return res.status(404).json({ error: 'Call record not found.' });
-      if (call.customerId !== req.user!.id) return res.status(403).json({ error: 'Access denied.' });
+      let call = await prisma.callRecord.findUnique({ where: { callId } });
+      if (!call) {
+        try {
+          call = await prisma.callRecord.create({
+            data: {
+              callId,
+              customerId: req.user!.id,
+              customerName: req.user!.name || 'Customer',
+              customerPhone: '',
+              status: 'connecting',
+              type: 'ai_voice',
+              direction: 'incoming',
+              startTime: new Date()
+            }
+          });
+        } catch (createErr) {
+          call = await prisma.callRecord.findUnique({ where: { callId } });
+        }
+      }
+      if (!call) {
+        return res.status(404).json({ error: 'Call record not found.' });
+      }
+      if (call.customerId !== req.user!.id && req.user!.role !== 'admin') return res.status(403).json({ error: 'Access denied.' });
 
       const existing = await prisma.callRecording.findUnique({ where: { callRecordId: call.id } });
       if (existing?.storagePath) {
@@ -108,9 +128,22 @@ router.post(
         return res.status(400).json({ error: 'Audio upload requires a saved consent grant and a recording file.' });
       }
 
-      const call = await prisma.callRecord.findUnique({ where: { callId } });
-      if (!call) return res.status(404).json({ error: 'Call record not found.' });
-      if (call.customerId !== user.id) return res.status(403).json({ error: 'Access denied.' });
+      let call = await prisma.callRecord.findUnique({ where: { callId } });
+      if (!call) {
+        call = await prisma.callRecord.create({
+          data: {
+            callId,
+            customerId: user.id,
+            customerName: user.name || 'Customer',
+            customerPhone: '',
+            status: 'completed',
+            type: 'ai_voice',
+            direction: 'incoming',
+            startTime: new Date()
+          }
+        });
+      }
+      if (call.customerId !== user.id && user.role !== 'admin') return res.status(403).json({ error: 'Access denied.' });
 
       const consentRecord = await prisma.callRecording.findUnique({ where: { callRecordId: call.id } });
       if (consentRecord?.consentStatus !== 'granted') {
@@ -241,9 +274,9 @@ router.get(
 
 // Stream recording audio (HTTP 206 Partial Content with Range support)
 router.get(
-  '/:id/stream',
+  ['/:id/stream', '/file/:id'],
   authenticate,
-  authorizeRoles('admin', 'agent'),
+  authorizeRoles('admin', 'agent', 'customer'),
   async (req: Request, res: Response) => {
     try {
       await recordingService.streamRecordingAudio(req.params.id, req, res, req.user);

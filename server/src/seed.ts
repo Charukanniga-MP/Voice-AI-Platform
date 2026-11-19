@@ -139,7 +139,7 @@ export const DEFAULT_KNOWLEDGE_ENTRIES = [
     question: 'What is KAIRA and what does the company do?',
     answer: 'KAIRA is an AI-powered enterprise customer communication and autonomous voice agent platform. We enable businesses to deploy ultra-low-latency, bidirectional AI voice agents that resolve customer queries autonomously while providing seamless real-time escalation to human administrators when needed.',
     content: 'KAIRA was established in 2024 to modernize enterprise voice communications. Our proprietary voice core achieves sub-second response latency, integrates with CRM systems, and ensures 100% grounded answers using verified corporate knowledge bases.',
-    keywords: 'kaira, company, mission, overview, voice agent, communication, about'
+    keywords: 'kaira, company, mission, overview, voice agent, communication, about, automate, automation, automated calls, handling calls, customer communication'
   },
   {
     title: 'Official Headquarters & Global Offices',
@@ -171,7 +171,7 @@ export const DEFAULT_KNOWLEDGE_ENTRIES = [
     question: 'What products does KAIRA offer?',
     answer: 'KAIRA offers three primary products: KAIRA VoiceCore (autonomous bidirectional AI voice agent), KAIRA LiveEscalate (real-time voice call transfer to human administrators and agents), and KAIRA Omnichannel Hub (centralized call analytics, tickets, and monitoring).',
     content: '1. KAIRA VoiceCore: Natural conversational voice AI handling inbound customer calls with natural speech recognition and grounded responses.\n2. KAIRA LiveEscalate: Zero-drop audio transfer protocol that connects customers directly to Admin when the AI encounters ungrounded questions.\n3. KAIRA Omnichannel Hub: Real-time transcript inspection, customer management, and compliance auditing.',
-    keywords: 'products, voicecore, liveescalate, omnichannel, capabilities, voice agent, features'
+    keywords: 'products, voicecore, liveescalate, omnichannel, capabilities, voice agent, features, automate, automate calls, call automation, solutions'
   },
   {
     title: 'How Does the AI Voice Agent Work?',
@@ -179,7 +179,15 @@ export const DEFAULT_KNOWLEDGE_ENTRIES = [
     question: 'How does the KAIRA AI voice agent work behind the scenes?',
     answer: 'KAIRA captures your voice using WebRTC and Web Speech recognition, grounds the query against verified company knowledge, and generates conversational speech in under 400 milliseconds. If the answer is unverified, it automatically transfers the call to a human administrator.',
     content: 'The system uses bidirectional WebSockets, neural speech recognition, strict retrieval-augmented grounding (RAG), and WebRTC audio pipelines to guarantee zero hallucinations and instantaneous live voice response.',
-    keywords: 'how works, technology, voice agent, architecture, ai voice, speech recognition'
+    keywords: 'how works, technology, voice agent, architecture, ai voice, speech recognition, how it works, automate calls, process calls'
+  },
+  {
+    title: 'Customer Communication & Call Automation',
+    category: 'products',
+    question: 'How does KAIRA help businesses automate customer calls and communication?',
+    answer: 'KAIRA helps businesses automate customer calls using autonomous AI voice agents that understand natural speech, deliver grounded responses in under 400 milliseconds, support 5 regional languages, and seamlessly escalate complex issues to human agents.',
+    content: 'Businesses use KAIRA to automate tier-1 inbound support, reduce call wait times to zero, handle routine queries 24/7, and automatically log transcripts and sentiment into CRM systems like Salesforce and Zendesk.',
+    keywords: 'automate, automation, automate calls, call automation, customer communication, support calls, handle calls, how automate, phone calls'
   },
   {
     title: 'Multilingual Voice Support & Regional Languages',

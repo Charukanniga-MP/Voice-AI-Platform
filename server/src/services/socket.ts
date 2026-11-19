@@ -914,12 +914,18 @@ export function initSocketServer(io: SocketIOServer) {
         });
 
         let validCustomerId: string | null = null;
+        let dbCustomer: any = null;
         if (data.customerId) {
-          const userExists = await prisma.user.findUnique({
+          dbCustomer = await prisma.user.findUnique({
             where: { id: data.customerId }
           });
-          if (userExists) validCustomerId = userExists.id;
+          if (dbCustomer) validCustomerId = dbCustomer.id;
         }
+
+        // Dynamically resolve the authenticated / logged-in customer's name
+        const socketUser = connectedUsers.get(socket.id);
+        const resolvedCustomerName = (dbCustomer?.name || socketUser?.name || data.customerName || '').trim();
+        const cleanDisplayName = resolvedCustomerName.replace(/\s*\((?:customer|client|user)\)/i, '').trim();
 
         const isNewCall = !call;
         const callLang = data.language || 'en';
@@ -929,7 +935,7 @@ export function initSocketServer(io: SocketIOServer) {
             data: {
               callId: data.callId,
               customerId: validCustomerId,
-              customerName: data.customerName,
+              customerName: cleanDisplayName || 'Customer',
               customerPhone: data.customerPhone || null,
               agentName: 'KAIRA AI Support Specialist',
               type: 'ai_voice',
@@ -945,7 +951,7 @@ export function initSocketServer(io: SocketIOServer) {
         callSessions.set(data.callId, {
           callId: data.callId,
           customerId: validCustomerId,
-          customerName: data.customerName,
+          customerName: cleanDisplayName || 'Customer',
           customerSocketId: socket.id,
           language: callLang,
           speakerType: 'ai',
@@ -956,8 +962,22 @@ export function initSocketServer(io: SocketIOServer) {
           createdAt: Date.now()
         });
 
-        // Welcome greeting in customer's preferred language (generated only ONCE per session)
-        let greeting = "Hello! Welcome to KAIRA TECHNOLOGY Customer Support. Thank you for calling us. I'm your AI support assistant. How may I help you today?";
+        // KAIRA AI Calling Agent Introduction (dynamically addresses whoever is logged in)
+        const hasSpecificName = Boolean(
+          cleanDisplayName &&
+          cleanDisplayName.toLowerCase() !== 'customer' &&
+          cleanDisplayName.toLowerCase() !== 'user' &&
+          cleanDisplayName.toLowerCase() !== 'null' &&
+          cleanDisplayName.toLowerCase() !== 'undefined'
+        );
+
+        let greeting: string;
+        if (hasSpecificName) {
+          greeting = `Hello! Am I speaking with ${cleanDisplayName}? I'm calling from Kaira, an AI-powered customer communication platform. We help businesses manage customer interactions through intelligent AI voice agents. I'm reaching out to tell you a little about Kaira and understand how your business currently handles customer communication. Is this a good time to talk?`;
+        } else {
+          greeting = `Hello! I'm calling from Kaira, an AI-powered customer communication platform. We help businesses manage customer interactions through intelligent AI voice agents. I'm reaching out to tell you a little about Kaira and understand how your business currently handles customer communication. Is this a good time to talk?`;
+        }
+
         if (callLang !== 'en') {
           greeting = await translationService.translateText(greeting, callLang, 'en');
         }
@@ -1385,6 +1405,7 @@ export function initSocketServer(io: SocketIOServer) {
 
           const transferResponseId = `resp_tr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
           socket.emit('call:ai_response', {
+            callId: data.callId,
             responseId: transferResponseId,
             clientMessageId: data.clientMessageId,
             answer: transferNotice,
@@ -1527,6 +1548,7 @@ export function initSocketServer(io: SocketIOServer) {
 
           const aiResponseId = `resp_ai_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
           socket.emit('call:ai_response', {
+            callId: data.callId,
             responseId: aiResponseId,
             clientMessageId: data.clientMessageId,
             utteranceId: data.utteranceId,

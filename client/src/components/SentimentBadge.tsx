@@ -1,5 +1,5 @@
 import React from 'react';
-import { Smile, Frown, Meh, AlertTriangle, Flame } from 'lucide-react';
+import { Smile, Frown, Meh, AlertTriangle, Flame, HelpCircle } from 'lucide-react';
 import { SentimentType } from '../types.js';
 
 interface SentimentBadgeProps {
@@ -50,6 +50,20 @@ export const SentimentBadge: React.FC<SentimentBadgeProps> = ({
           icon: <Flame className="w-3.5 h-3.5 text-rose-600 animate-pulse" />,
           label: 'Frustrated',
           dot: 'bg-rose-500 animate-ping'
+        };
+      case 'CONFUSED':
+        return {
+          bg: 'bg-purple-50 text-purple-800 border-purple-200',
+          icon: <HelpCircle className="w-3.5 h-3.5 text-purple-600" />,
+          label: 'Confused',
+          dot: 'bg-purple-500'
+        };
+      case 'URGENT':
+        return {
+          bg: 'bg-orange-50 text-orange-800 border-orange-300 shadow-xs',
+          icon: <AlertTriangle className="w-3.5 h-3.5 text-orange-600 animate-bounce" />,
+          label: 'Urgent',
+          dot: 'bg-orange-500 animate-ping'
         };
       case 'NEUTRAL':
       default:

@@ -294,10 +294,12 @@ export const AdminDashboard: React.FC = () => {
   const [gapCategory, setGapCategory] = useState('general');
   const [savingGap, setSavingGap] = useState(false);
 
-  // Auto-scroll transcript
+  // Auto-scroll transcript (container only, never the window)
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (transcriptEndRef.current?.parentElement) {
+      transcriptEndRef.current.parentElement.scrollTop = transcriptEndRef.current.parentElement.scrollHeight;
+    }
   }, [transcripts]);
 
   // Duration timer
@@ -5093,7 +5095,10 @@ export const AdminDashboard: React.FC = () => {
                 </div>
                 <audio
                   controls
-                  src={selectedCallDetails.recordingUrl}
+                  src={token && !selectedCallDetails.recordingUrl.includes('token=')
+                    ? `${selectedCallDetails.recordingUrl}${selectedCallDetails.recordingUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
+                    : selectedCallDetails.recordingUrl
+                  }
                   className="w-full h-8 rounded-lg outline-none"
                   preload="metadata"
                 />

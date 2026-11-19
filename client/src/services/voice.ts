@@ -9,7 +9,7 @@ declare global {
 import { voiceOutputController } from './voiceOutputController.js';
 
 export const LANGUAGE_BCP47: Record<string, string> = {
-  en: 'en-US',
+  en: 'en-IN',
   ta: 'ta-IN',
   te: 'te-IN',
   ml: 'ml-IN',
@@ -35,6 +35,7 @@ export const LANGUAGE_BCP47: Record<string, string> = {
 export class VoiceService {
   private recognition: any = null;
   private isListening: boolean = false;
+  private isActuallyRunning: boolean = false;
   private currentLang: string = 'en-US';
   private vadTimer: any = null;
   private lastInterimTranscript: string = '';
@@ -120,6 +121,9 @@ export class VoiceService {
       }
       this.recognition.lang = bcp47;
       console.log(`[VoiceService] Recognition language set to: ${bcp47}`);
+      if (wasListening && this.activeOnResult) {
+        this.startListening(this.activeOnResult, this.activeOnError);
+      }
     }
   }
 
@@ -136,6 +140,35 @@ export class VoiceService {
     return voiceOutputController.isSpeaking();
   }
 
+  // Ensure speech recognition is actively listening (called right after AI speaks)
+  public ensureListening(
+    onResult?: (text: string, isFinal: boolean, utteranceId?: string) => void,
+    onError?: (err: any) => void
+  ) {
+    if (onResult) this.activeOnResult = onResult;
+    if (onError) this.activeOnError = onError;
+    this.isListening = true;
+
+    if (!this.recognition) return;
+
+    if (!this.isActuallyRunning) {
+      try {
+        this.recognition.start();
+        console.log(`[VoiceService] Active speech listener confirmed (${this.currentLang}).`);
+      } catch (err: any) {
+        if (err?.name === 'InvalidStateError') {
+          this.isActuallyRunning = true;
+        } else {
+          setTimeout(() => {
+            if (this.isListening && !this.isActuallyRunning) {
+              try { this.recognition.start(); } catch {}
+            }
+          }, 200);
+        }
+      }
+    }
+  }
+
   // Start speech recognition with deduplicated VAD and automatic interruption support
   public startListening(
     onResult: (text: string, isFinal: boolean, utteranceId?: string) => void,
@@ -149,16 +182,60 @@ export class VoiceService {
 
     this.activeOnResult = onResult;
     this.activeOnError = onError;
+    this.isListening = true;
 
-    if (this.isListening) {
-      // Recognition is already running; active callback seamlessly updated
-      return;
-    }
+    this.recognition.onstart = () => {
+      this.isActuallyRunning = true;
+      console.log(`[VoiceService] Speech recognition session active (${this.currentLang})`);
+    };
 
     this.recognition.onresult = (event: any) => {
-      // 1. BARGE-IN: If customer speaks while AI is speaking, cut off AI speech immediately!
+      let interim = '';
+      let isFinalResult = false;
+      let finalTranscript = '';
+
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        const item = event.results[i];
+        if (!item || !item[0]) continue;
+        const transcript = item[0].transcript;
+        if (item.isFinal) {
+          isFinalResult = true;
+          finalTranscript += (finalTranscript ? ' ' : '') + transcript.trim();
+        } else {
+          interim += (interim ? ' ' : '') + transcript.trim();
+        }
+      }
+
+      const spokenText = (finalTranscript || interim).trim();
+      if (!spokenText) return;
+
+      // 1. ACOUSTIC ECHO SUPPRESSION & INTELLIGENT BARGE-IN
+      // When the AI is speaking through speakers, the microphone often picks up the AI's own voice.
+      // We must suppress acoustic feedback so the agent does not interrupt itself or treat its own voice as customer speech.
       if (this.isSpeaking()) {
-        console.log('[VoiceService] Barge-in triggered: customer spoke while AI speaking. Halting voice.');
+        const currentAiSpoken = voiceOutputController.getCurrentText().toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').trim();
+        const detectedSpeech = spokenText.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').trim();
+
+        const isEcho = (() => {
+          if (!currentAiSpoken || !detectedSpeech) return false;
+          // Direct substring match: detected speech is part of the AI's current utterance
+          if (currentAiSpoken.includes(detectedSpeech)) return true;
+          // Word-level overlap: if >= 50% of the recognized words appear in the AI utterance
+          const detectedWords = detectedSpeech.split(/\s+/).filter(w => w.length > 1);
+          if (detectedWords.length > 0) {
+            const matchCount = detectedWords.filter(w => currentAiSpoken.includes(w)).length;
+            if (matchCount / detectedWords.length >= 0.5) return true;
+          }
+          return false;
+        })();
+
+        if (isEcho) {
+          console.log(`[VoiceService] Acoustic echo suppressed: microphone heard AI speech ("${spokenText}"). Ignoring.`);
+          return;
+        }
+
+        // Genuine customer barge-in: Customer spoke different words while AI was speaking
+        console.log(`[VoiceService] Genuine customer barge-in detected ("${spokenText}"). Halting voice output.`);
         this.cancelSpeech();
         if (this.onInterruption) {
           this.onInterruption();
@@ -169,22 +246,7 @@ export class VoiceService {
         this.onSpeechStart();
       }
 
-      let interim = '';
-      let isFinalResult = false;
-      let finalTranscript = '';
-
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          isFinalResult = true;
-          finalTranscript = transcript.trim();
-        } else {
-          interim += transcript;
-        }
-      }
-
       // Automatic Language Identification from live speech
-      const spokenText = (finalTranscript || interim).trim();
       if (spokenText) {
         const detected = this.detectScriptLanguage(spokenText);
         if (detected && detected !== this.currentLang.slice(0, 2) && this.onLanguageDetected) {
@@ -200,7 +262,7 @@ export class VoiceService {
         }
         this.lastInterimTranscript = '';
 
-        // Check if recently finalized by VAD to prevent double invocation
+        // Check if recently finalized by VAD with identical text to prevent double invocation
         const cleanFinal = finalTranscript.toLowerCase().trim();
         const now = Date.now();
         if (
@@ -222,8 +284,8 @@ export class VoiceService {
           this.activeOnResult(this.lastInterimTranscript, false);
         }
 
-        // Fast Voice Activity Detection (VAD) Debounce:
-        // Finalize after 320ms pause on a meaningful utterance
+        // Voice Activity Detection (VAD) Debounce:
+        // Allow a comfortable 1350ms natural conversational pause before finalizing turn
         if (this.vadTimer) clearTimeout(this.vadTimer);
         if (this.lastInterimTranscript.length >= 2) {
           this.vadTimer = setTimeout(() => {
@@ -242,18 +304,26 @@ export class VoiceService {
 
               this.lastFinalUtterance = { text: cleanText, timestamp: now };
               const utteranceId = 'utt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-              console.log('[VoiceService] Fast VAD detected end of speech (finalized):', textToEmit);
+              console.log('[VoiceService] VAD detected end of speech (finalized):', textToEmit);
               if (this.activeOnResult) {
                 this.activeOnResult(textToEmit, true, utteranceId);
               }
             }
-          }, 320);
+          }, 1350);
         }
       }
     };
 
     this.recognition.onerror = (event: any) => {
       if (event.error === 'no-speech' || event.error === 'aborted') {
+        // Natural pause: safely keep listener alive
+        if (this.isListening && !this.isActuallyRunning) {
+          setTimeout(() => {
+            if (this.isListening && !this.isActuallyRunning) {
+              try { this.recognition.start(); } catch {}
+            }
+          }, 150);
+        }
         return;
       }
       console.warn('[VoiceService] Recognition error:', event.error);
@@ -265,36 +335,44 @@ export class VoiceService {
     };
 
     this.recognition.onend = () => {
+      this.isActuallyRunning = false;
       // Automatically restart with safe debounce to maintain continuous dialogue
       if (this.isListening) {
         setTimeout(() => {
-          if (!this.isListening) return;
+          if (!this.isListening || this.isActuallyRunning) return;
           try {
             this.recognition.start();
           } catch (err: any) {
-            // Already started or restart race is safe
             if (err?.name !== 'InvalidStateError') {
               console.warn('[VoiceService] Could not restart speech recognition:', err);
               if (this.activeOnError) this.activeOnError({ error: 'restart-failed', userMessage: 'Restarting speech listener...', cause: err });
+            } else {
+              this.isActuallyRunning = true;
             }
           }
-        }, 250);
+        }, 150);
       }
     };
 
-    try {
-      this.isListening = true;
-      this.recognition.start();
-      console.log(`[VoiceService] Speech recognition started (${this.currentLang})`);
-    } catch (err) {
-      console.error('[VoiceService] Could not start speech recognition:', err);
-      if (this.activeOnError) this.activeOnError({ error: 'start-failed', cause: err });
+    if (!this.isActuallyRunning) {
+      try {
+        this.recognition.start();
+        console.log(`[VoiceService] Speech recognition started (${this.currentLang})`);
+      } catch (err: any) {
+        if (err?.name === 'InvalidStateError') {
+          this.isActuallyRunning = true;
+        } else {
+          console.error('[VoiceService] Could not start speech recognition:', err);
+          if (this.activeOnError) this.activeOnError({ error: 'start-failed', cause: err });
+        }
+      }
     }
   }
 
   // Stop speech recognition
   public stopListening() {
     this.isListening = false;
+    this.isActuallyRunning = false;
     if (this.vadTimer) {
       clearTimeout(this.vadTimer);
       this.vadTimer = null;

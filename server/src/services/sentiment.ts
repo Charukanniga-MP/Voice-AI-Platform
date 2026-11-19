@@ -1,6 +1,6 @@
 import { prisma } from '../db.js';
 
-export type SentimentCategory = 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL' | 'FRUSTRATED';
+export type SentimentCategory = 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL' | 'FRUSTRATED' | 'CONFUSED' | 'URGENT';
 
 export interface SentimentAnalysisResult {
   sentiment: SentimentCategory;
@@ -24,6 +24,8 @@ export interface CallSentimentSummary {
     negative: number;
     neutral: number;
     frustrated: number;
+    confused: number;
+    urgent: number;
   };
 }
 
@@ -49,6 +51,19 @@ const activeCallStates = new Map<string, CallSentimentState>();
 const LEXICONS = {
   // English
   en: {
+    urgent: [
+      'urgent', 'urgently', 'emergency', 'immediately', 'immediate', 'asap',
+      'right now', 'at once', 'straight away', 'life or death', 'critical',
+      'high priority', 'time sensitive', 'hurry up', 'hurry', 'fast please',
+      'cannot wait', 'can\'t wait', 'need help now'
+    ],
+    confused: [
+      'don\'t understand', 'do not understand', 'confused', 'confusing',
+      'what do you mean', 'makes no sense', 'not clear', 'unclear', 'puzzled',
+      'lost', 'didn\'t get that', 'could you explain', 'what does that mean',
+      'i\'m not following', 'cannot follow', 'can\'t follow', 'hard to understand',
+      'what are you saying', 'repeat that', 'explain again', 'what is this about'
+    ],
     frustrated: [
       'very frustrating', 'extremely frustrating', 'frustrated', 'frustrating',
       'nobody is helping', 'no one is helping', 'no one helps', 'nobody helps',
@@ -57,30 +72,41 @@ const LEXICONS = {
       'horrible service', 'fed up', 'sick and tired', 'angry', 'ridiculous',
       'unacceptable', 'pathetic', 'scam', 'fraud', 'shouting', 'speak to a human',
       'connect me to a person', 'transfer to human', 'talk to real person',
-      'useless bot', 'useless', 'so annoying', 'disaster'
+      'useless bot', 'useless', 'so annoying', 'disaster', 'furious', 'so furious',
+      'livid', 'fuming', 'infuriated', 'can you please shut up', 'shut up', 'stop talking'
     ],
     negative: [
       'not satisfied', 'dissatisfied', 'bad', 'poor', 'slow', 'delayed',
       'problem', 'issue', 'broken', 'error', 'wrong', 'mistake', 'not working',
       'complaint', 'complain', 'failed', 'failure', 'disappointed', 'unhappy',
-      'cancel', 'refund', 'not good', 'late', 'difficulty', 'trouble'
+      'cancel', 'refund', 'not good', 'late', 'difficulty', 'trouble',
+      'not resolved', 'unresolved', 'has not been resolved', 'cannot log in', 'can\'t log in'
     ],
     positive: [
-      'thank you', 'thanks', 'very helpful', 'helpful', 'great', 'excellent',
-      'wonderful', 'satisfied', 'satisfying', 'awesome', 'amazing', 'perfect',
-      'good job', 'love this', 'appreciated', 'resolved', 'brilliant',
-      'superb', 'best service', 'pleased', 'delighted', 'fantastic', 'glad'
+      'thank you so much', 'thank you', 'thanks', 'very helpful', 'really helpful',
+      'helpful', 'great', 'excellent', 'wonderful', 'satisfied', 'satisfying',
+      'awesome', 'amazing', 'perfect', 'good job', 'love this', 'appreciated',
+      'resolved', 'brilliant', 'superb', 'best service', 'pleased', 'delighted',
+      'fantastic', 'glad'
     ],
     neutral: [
       'status of my order', 'order status', 'where is my', 'what is',
       'how much', 'pricing', 'price', 'tell me', 'information', 'details',
       'how to', 'can i', 'check', 'balance', 'account', 'hours', 'location',
-      'address', 'contact', 'query', 'know more'
+      'address', 'contact', 'query', 'know more', 'what products does'
     ]
   },
 
   // Tamil (தமிழ்)
   ta: {
+    urgent: [
+      'உடனடியாக', 'அவசரம்', 'அவசரமாக', 'இப்போதே', 'சீக்கிரம்', 'முக்கியமானது',
+      'உடனே', 'உடனடி உதவி', 'உடனே வேண்டும்'
+    ],
+    confused: [
+      'புரியவில்லை', 'விளங்கவில்லை', 'என்ன சொல்கிறீர்கள்', 'குழப்பமாக இருக்கிறது',
+      'தெளிவாக இல்லை', 'மீண்டும் சொல்லுங்கள்', 'அர்த்தம் புரியவில்லை', 'புரியல'
+    ],
     frustrated: [
       'மிகவும் எரிச்சலூட்டுகிறது', 'எரிச்சலூட்டுகிறது', 'யாரும் உதவவில்லை',
       'மோசமான சேவை', 'நேர விரயம்', 'நேரத்தை வீணடிக்கிறீர்கள்',
@@ -104,8 +130,44 @@ const LEXICONS = {
     ]
   },
 
+  // Malayalam (മലയാളം)
+  ml: {
+    urgent: [
+      'അടിയന്തിരമായി', 'അടിയന്തിരം', 'ഉടൻ തന്നെ', 'പെട്ടെന്ന്', 'ഇപ്പോൾ തന്നെ',
+      'അടിയന്തിര', 'പ്രധാനം'
+    ],
+    confused: [
+      'മനസ്സിലായില്ല', 'എന്താണ് ഉദ്ദേശിച്ചത്', 'വ്യക്തമല്ല', 'കുഴപ്പത്തിലായി',
+      'വീണ്ടും പറയൂ', 'മനസ്സിലാകുന്നില്ല', 'എനിക്ക് മനസ്സിലായില്ല'
+    ],
+    frustrated: [
+      'വളരെ നിരാശാജനകമാണ്', 'നിരാശ', 'ആരും സഹായിക്കുന്നില്ല',
+      'മോശം സേവനം', 'സമയം പാഴാക്കൽ', 'പലതവണ വിളിച്ചു',
+      'വീണ്ടും വീണ്ടും വിളിക്കുന്നു', 'ദേഷ്യം വരുന്നു', 'വെറുത്തുപോയി',
+      'ഒരു മനുഷ്യനോട് സംസാരിക്കണം', 'ഉപകാരമില്ല'
+    ],
+    negative: [
+      'തൃപ്തിയില്ല', 'പ്രശ്നം', 'താമസം', 'ശരിയല്ല',
+      'വർക്ക് ചെയ്യുന്നില്ല', 'തെറ്റാണ്', 'പരാതി', 'റദ്ദാക്കുക'
+    ],
+    positive: [
+      'നന്ദി', 'വളരെ നന്ദി', 'വളരെ സഹായകരമായി', 'വളരെ നല്ലത്',
+      'മികച്ചത്', 'സന്തോഷം', 'തൃപ്തികരമാണ്', 'കൊള്ളാം'
+    ],
+    neutral: [
+      'നില എന്താണ്', 'ഓർഡർ നില', 'വിവരം വേണം',
+      'വിശദാംശങ്ങൾ', 'വില എത്ര', 'എവിടെയാണ്', 'സമയം'
+    ]
+  },
+
   // Hindi (हिन्दी)
   hi: {
+    urgent: [
+      'तुरंत', 'जल्दी', 'आपातकालीन', 'अति आवश्यक', 'अभी के अभी', 'फौरन'
+    ],
+    confused: [
+      'समझ नहीं आया', 'समझ नहीं आ रहा', 'क्या मतलब है', 'उलझन में हूँ', 'स्पष्ट नहीं है', 'फिर से बताएं'
+    ],
     frustrated: [
       'बहुत परेशान', 'परेशान', 'कोई मदद नहीं कर रहा', 'कोई सहायता नहीं',
       'घटिया सेवा', 'समय की बर्बादी', 'समय बर्बाद', 'कई बार कॉल किया',
@@ -128,6 +190,12 @@ const LEXICONS = {
 
   // Telugu (తెలుగు)
   te: {
+    urgent: [
+      'వెంటనే', 'అత్యవసరం', 'ఇప్పుడే', 'త్వరగా', 'ముఖ్యమైనది'
+    ],
+    confused: [
+      'అర్థం కాలేదు', 'ఏమిటి అర్థం', 'స్పష్టంగా లేదు', 'మళ్ళీ చెప్పండి', 'గందరగోళంగా ఉంది'
+    ],
     frustrated: [
       'చాలా విసుగుగా ఉంది', 'విసుగు', 'ఎవరూ సహాయం చేయడం లేదు',
       'చెత్త సేవ', 'సమయం వృధా', 'చాలా సార్లు కాల్ చేశాను',
@@ -148,29 +216,14 @@ const LEXICONS = {
     ]
   },
 
-  // Malayalam (മലയാളം)
-  ml: {
-    frustrated: [
-      'വളരെ നിരാശാജനകമാണ്', 'നിരാശ', 'ആരും സഹായിക്കുന്നില്ല',
-      'മോശം സേവനം', 'സമയം പാഴാക്കൽ', 'പലതവണ വിളിച്ചു',
-      'വീണ്ടും വീണ്ടും വിളിക്കുന്നു', 'ദേഷ്യം വരുന്നു', 'വെറുത്തുപോയി',
-      'ഒരു മനുഷ്യനോട് സംസാരിക്കണം', 'ഉപകാരമില്ല'
-    ],
-    negative: [
-      'തൃപ്തിയില്ല', 'പ്രശ്നം', 'താമസം', 'ശരിയല്ല',
-      'വർക്ക് ചെയ്യുന്നില്ല', 'തെറ്റാണ്', 'പരാതി', 'റദ്ദാക്കുക'
-    ],
-    positive: [
-      'നന്ദി', 'വളരെ നന്ദി', 'വളരെ സഹായകരമായി', 'വളരെ നല്ലത്',
-      'മികച്ചത്', 'സന്തോഷം', 'തൃപ്തികരമാണ്', 'കൊള്ളാം'
-    ],
-    neutral: [
-      'നില എന്താണ്', 'ഓർഡർ നില', 'വിവരം വേണം',
-      'വിശദാംശങ്ങൾ', 'വില എത്ര', 'എവിടെയാണ്', 'സമയം'
-    ]
-  },
   // Kannada (ಕನ್ನಡ)
   kn: {
+    urgent: [
+      'ತುರ್ತು', 'ತಕ್ಷಣ', 'ಈಗಲೇ', 'ಬೇಗ', 'ತುರ್ತಾಗಿ'
+    ],
+    confused: [
+      'ಅರ್ಥವಾಗುತ್ತಿಲ್ಲ', 'ಅರ್ಥವಾಗಿಲ್ಲ', 'ಏನು ಹೇಳುತ್ತಿದ್ದೀರಿ', 'ಗೊಂದಲದಲ್ಲಿದ್ದೇನೆ', 'ಸ್ಪಷ್ಟವಿಲ್ಲ'
+    ],
     frustrated: [
       'ತುಂಬಾ ಬೇಸರವಾಗಿದೆ', 'ಬೇಸರವಾಗಿದೆ', 'ಯಾರೂ ಸಹಾಯ ಮಾಡುತ್ತಿಲ್ಲ', 'ಯಾರೂ ಸಹಾಯ ಮಾಡಲ್ಲ',
       'ಕೆಟ್ಟ ಸೇವೆ', 'ಸಮಯ ವ್ಯರ್ಥ', 'ಸಮಯ ವ್ಯರ್ಥ ಮಾಡುತ್ತಿದ್ದೀರಿ', 'ಹಲವು ಬಾರಿ ಕರೆ ಮಾಡಿದೆ',
@@ -190,7 +243,6 @@ const LEXICONS = {
       'ಬೆಲೆ ಎಷ್ಟು', 'ಎಲ್ಲಿದೆ', 'ಸಮಯ ಏನು', 'ಹೇಗೆ ಮಾಡುವುದು', 'ಖಾತೆ ವಿವರ', 'ವಿಚಾರಣೆ'
     ]
   }
-
 };
 
 export class SentimentAnalysisService {
@@ -219,6 +271,8 @@ export class SentimentAnalysisService {
     const enLexicon = LEXICONS.en;
 
     // 1. Scoring buckets
+    let urgentScore = 0;
+    let confusedScore = 0;
     let frustratedScore = 0;
     let negativeScore = 0;
     let positiveScore = 0;
@@ -226,7 +280,8 @@ export class SentimentAnalysisService {
     const matchedPhrases: string[] = [];
 
     // Check language-specific + English fallback patterns
-    const checkPhrases = (phrases: string[], weight: number, callback: (match: string) => void) => {
+    const checkPhrases = (phrases: string[] | undefined, weight: number, callback: (match: string) => void) => {
+      if (!phrases) return;
       for (const phrase of phrases) {
         if (cleanText.includes(phrase.toLowerCase())) {
           matchedPhrases.push(phrase);
@@ -234,6 +289,31 @@ export class SentimentAnalysisService {
         }
       }
     };
+
+    // --- Urgent Detection ---
+    checkPhrases((lexicon as any).urgent, 4.0, () => {
+      urgentScore += 4.0;
+    });
+    if (langKey !== 'en') {
+      checkPhrases(enLexicon.urgent, 3.5, () => {
+        urgentScore += 3.5;
+      });
+    }
+
+    // --- Confused Detection ---
+    checkPhrases((lexicon as any).confused, 3.2, () => {
+      confusedScore += 3.2;
+    });
+    if (langKey !== 'en') {
+      checkPhrases(enLexicon.confused, 3.0, () => {
+        confusedScore += 3.0;
+      });
+    }
+
+    // Question patterns indicating confusion: "what do you mean?", "what are you saying?"
+    if (/\bwhat\s+(do\s+you\s+mean|are\s+you\s+saying|does\s+that\s+mean)\b/i.test(cleanText)) {
+      confusedScore += 3.0;
+    }
 
     // --- Frustration Detection ---
     checkPhrases(lexicon.frustrated, 3.5, () => {
@@ -278,13 +358,16 @@ export class SentimentAnalysisService {
     }
 
     // Negation flipping: "not satisfied" should boost negative, "not bad" boosts positive
-    if (/\b(not|never|no)\s+(satisfied|happy|good|helpful)/i.test(cleanText)) {
+    if (/\b(not|never|no)\s+(satisfied|happy|good|helpful|resolved)/i.test(cleanText)) {
       negativeScore += 2.5;
       positiveScore = Math.max(0, positiveScore - 2.0);
     }
     if (/\b(not|no)\s+(bad|problem|issue)/i.test(cleanText)) {
       positiveScore += 1.5;
       negativeScore = Math.max(0, negativeScore - 1.5);
+    }
+    if (/\b(not|no)\s+(urgent|emergency)/i.test(cleanText)) {
+      urgentScore = 0;
     }
 
     // --- Neutral Detection ---
@@ -298,7 +381,11 @@ export class SentimentAnalysisService {
     let reason = 'Inquiry or informational conversation without strong sentiment markers.';
     let isStrongFrustration = false;
 
-    if (frustratedScore >= 3.0) {
+    if (urgentScore >= 3.0) {
+      sentiment = 'URGENT';
+      confidence = Math.min(0.98, 0.82 + (urgentScore * 0.04));
+      reason = `Customer expressed urgent or emergency need for immediate assistance (matched: "${matchedPhrases.slice(0, 2).join('", "')}").`;
+    } else if (frustratedScore >= 3.0) {
       sentiment = 'FRUSTRATED';
       confidence = Math.min(0.98, 0.78 + (frustratedScore * 0.05));
       isStrongFrustration = frustratedScore >= 4.0;
@@ -307,6 +394,10 @@ export class SentimentAnalysisService {
       sentiment = 'FRUSTRATED';
       confidence = 0.85;
       reason = 'Combined negative and exasperation markers detected.';
+    } else if (confusedScore >= 2.5) {
+      sentiment = 'CONFUSED';
+      confidence = Math.min(0.96, 0.78 + (confusedScore * 0.05));
+      reason = `Customer indicated confusion or difficulty understanding information (matched: "${matchedPhrases.slice(0, 2).join('", "')}").`;
     } else if (negativeScore > positiveScore && negativeScore >= 1.8) {
       sentiment = 'NEGATIVE';
       confidence = Math.min(0.95, 0.75 + (negativeScore * 0.06));
@@ -378,7 +469,10 @@ export class SentimentAnalysisService {
     let requiresHumanAssistance = false;
     let assistanceReason = '';
 
-    if (state.frustrationCount >= 2) {
+    if (analysis.sentiment === 'URGENT') {
+      requiresHumanAssistance = true;
+      assistanceReason = `Urgent customer request or critical emergency situation detected: "${text.slice(0, 75)}"`;
+    } else if (state.frustrationCount >= 2) {
       requiresHumanAssistance = true;
       assistanceReason = `Repeated frustration signals detected (${state.frustrationCount} complaints in call).`;
     } else if (analysis.isStrongFrustration && analysis.confidenceScore >= 0.82) {
@@ -473,7 +567,9 @@ export class SentimentAnalysisService {
       positive: 0,
       negative: 0,
       neutral: 0,
-      frustrated: 0
+      frustrated: 0,
+      confused: 0,
+      urgent: 0
     };
 
     records.forEach(r => {
@@ -489,7 +585,11 @@ export class SentimentAnalysisService {
     let frustrationDetected = breakdown.frustrated > 0;
     let humanAssistanceRecommended = call.requiresAssistance || (state?.assistanceTriggered ?? false);
 
-    if (
+    if (breakdown.urgent >= 1) {
+      overallSentiment = 'URGENT';
+      customerExperience = 'Customer required urgent immediate assistance for an emergency or critical issue.';
+      humanAssistanceRecommended = true;
+    } else if (
       breakdown.frustrated >= 2 ||
       (breakdown.frustrated >= 1 && (call.requiresAssistance || (state?.assistanceTriggered ?? false) || breakdown.frustrated >= breakdown.negative)) ||
       (total > 0 && breakdown.frustrated / total >= 0.33)
@@ -498,6 +598,9 @@ export class SentimentAnalysisService {
       customerExperience = 'Customer experienced notable frustration or repeated unresolved issues.';
       frustrationDetected = true;
       humanAssistanceRecommended = true;
+    } else if (breakdown.confused > breakdown.positive && breakdown.confused >= 2) {
+      overallSentiment = 'CONFUSED';
+      customerExperience = 'Customer expressed confusion and needed clarification on complex information.';
     } else if (breakdown.negative > breakdown.positive && breakdown.negative >= 1) {
       overallSentiment = 'NEGATIVE';
       customerExperience = 'Customer expressed dissatisfaction or issues during the interaction.';

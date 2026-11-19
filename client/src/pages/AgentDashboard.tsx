@@ -193,10 +193,12 @@ export const AgentDashboard: React.FC = () => {
   const [kbSearch, setKbSearch] = useState('');
   const [loadingKb, setLoadingKb] = useState(false);
 
-  // Log auto-scroll
+  // Log auto-scroll (container only, never the window)
   const logEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (logEndRef.current?.parentElement) {
+      logEndRef.current.parentElement.scrollTop = logEndRef.current.parentElement.scrollHeight;
+    }
   }, [logs]);
 
   // Check telephony provider status on load

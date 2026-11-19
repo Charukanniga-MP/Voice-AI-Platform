@@ -315,6 +315,41 @@ class KnowledgeService {
     const strippedQuery = cleanInput.replace(/^(hello|hi|hey|good\s+(morning|afternoon|evening)|howdy)\s*(there|kaira|assistant)?[\s,]+/i, '').trim();
     const effectiveQuery = strippedQuery.length >= 3 ? strippedQuery : cleanInput;
 
+    // 0. Call Introduction Context Check & Dynamic Conversational Continuity
+    const lastAssistantMsg = [...history].reverse().find(m => m.role === 'assistant')?.content?.toLowerCase() || '';
+    const isRespondingToCallIntro = lastAssistantMsg.includes('good time to talk') || lastAssistantMsg.includes('calling from kaira') || lastAssistantMsg.includes('speaking with');
+
+    // 0A. Customer declines call timing ("not a good time", "busy right now", "call back later", etc.)
+    if (
+      /\b(not\s+(?:a\s+)?good\s+time|busy|busy\s+right\s+now|cant\s+talk|cannot\s+talk|call\s+(?:me\s+)?back\s+later|not\s+now|no\s+time)\b/i.test(cleanInput) ||
+      (isRespondingToCallIntro && /^(no|nope|nah|not\s+really)$/i.test(cleanInput))
+    ) {
+      return {
+        answer: "No problem at all! I completely understand. When would be a more convenient time for our team to follow up with you?",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0,
+        latencyMs: Date.now() - t0
+      };
+    }
+
+    // 0B. Customer responds affirmatively or confirms identity to call introduction
+    if (
+      /\b(tell\s+me\s+(?:more\s+)?about\s+kaira|what\s+is\s+kaira|what\s+does\s+kaira\s+do|about\s+kaira)\b/i.test(cleanInput) ||
+      /^(yes\s+speaking|speaking|this\s+is\s+[\w\s]+|yes\s+it\s+is|it\s+is|good\s+time|i\s+can\s+talk|tell\s+me\s+more|go\s+ahead|sure\s+go\s+ahead)$/i.test(cleanInput) ||
+      (isRespondingToCallIntro && /^(yes|yeah|yep|sure|ok|okay|alright|fine|sounds\s+good|hi|hello)(?:\s+speaking)?(?:\s*,\s*.*)?$/i.test(cleanInput))
+    ) {
+      return {
+        answer: "Wonderful! KAIRA is an AI-powered enterprise customer communication platform. We deploy autonomous, bidirectional AI voice agents with sub-second latency and seamless human escalation. How does your business currently handle customer calls?",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [{ id: 'kaira-overview', title: 'Company Overview & Mission', category: 'company' }],
+        confidence: 1.0,
+        latencyMs: Date.now() - t0
+      };
+    }
+
     // 1. Explicit request to speak with a human / Admin
     const isAskingHowItWorks = /\b(how\s+does|how\s+do|what\s+is|explain|tell\s+me\s+about|details\s+on)\b/i.test(cleanInput);
     if (
@@ -358,7 +393,32 @@ class KnowledgeService {
       }
     }
 
-    // 3. Customer Profile / Account Details Inquiry (Live DB Grounded)
+    // 3. Account Assistance Request ("I need help with my account", "account help", etc.)
+    if (/\b(help\s+(?:me\s+)?with\s+(?:my\s+)?account|account\s+(?:help|assistance|support|issue|problem)|need\s+(?:some\s+)?help\s+(?:with\s+)?(?:my\s+)?account|problem\s+with\s+(?:my\s+)?account)\b/i.test(effectiveQuery)) {
+      return {
+        answer: "Certainly. Could you please explain what issue you are facing with your account?",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0,
+        latencyMs: Date.now() - t0
+      };
+    }
+
+    // 3B. Login / Sign-In Issues ("I cannot log in", "can't login", "login issue", etc.)
+    if (/\b(cannot\s+log\s*in|cant\s+log\s*in|unable\s+to\s+log\s*in|trouble\s+logging\s+in|login\s+issue|login\s+problem|having\s+trouble\s+with\s+login|failed\s+to\s+log\s*in|not\s+able\s+to\s+log\s*in)\b/i.test(effectiveQuery) ||
+      (history.some((h: any) => /account/i.test(h.content || '')) && /\b(login|log\s*in|sign\s*in|access)\b/i.test(effectiveQuery))) {
+      return {
+        answer: "I can help you with that. Let me understand the login issue.",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0,
+        latencyMs: Date.now() - t0
+      };
+    }
+
+    // 3C. Customer Profile / Account Details Inquiry (Live DB Grounded)
     if (/\b(my\s+account|my\s+profile|(?:my\s+)?(?:registered\s+)?email|(?:my\s+)?(?:registered\s+)?phone|(?:registered\s+)?name|who\s+am\s+i|my\s+details)\b/i.test(effectiveQuery)) {
       if (customerContext && (customerContext.customerName || customerContext.customerEmail)) {
         return {
@@ -372,7 +432,7 @@ class KnowledgeService {
       }
     }
 
-    // 4. Greetings (Strictly when input is only a greeting)
+    // 4. Greetings (Strictly when input is only a standalone greeting)
     const isPureGreeting = /^(hi|hello|hey|good\s+(morning|afternoon|evening)|howdy)(\s+(there|kaira|assistant))?$/i.test(cleanInput) ||
       cleanInput === 'hi' || cleanInput === 'hello' || cleanInput === 'hey';
 
