@@ -21,6 +21,7 @@ import { LiveSentimentCard } from '../components/LiveSentimentCard.js';
 import { PostCallSentimentSummary } from '../components/PostCallSentimentSummary.js';
 import { SentimentType } from '../types.js';
 import { CallIntelligenceModal } from '../components/CallIntelligenceModal.js';
+import { DataRequestCenter } from '../components/DataRequestCenter.js';
 
 const SUGGESTED_QUESTIONS = [
   'What are your pricing plans?',
@@ -2559,6 +2560,8 @@ export const CustomerDashboard: React.FC = () => {
           </>
         )}
       </div>
+
+      <DataRequestCenter token={token} />
 
       {/* Customer Support Tickets Section */}
       <div className="bg-white rounded-3xl shadow-xl shadow-slate-100 border border-slate-200/80 p-6 sm:p-8 space-y-4">

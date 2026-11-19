@@ -28,6 +28,7 @@ import { SentimentBadge } from '../components/SentimentBadge.js';
 import { PostCallSentimentSummary } from '../components/PostCallSentimentSummary.js';
 import { LiveSentimentCard } from '../components/LiveSentimentCard.js';
 import { BiReportsSection } from '../components/BiReportsSection.js';
+import { DataRequestCenter } from '../components/DataRequestCenter.js';
 
 // Pure deduplication utility function
 function deduplicate<T>(items: T[], keyFn: (item: T) => string): T[] {
@@ -3009,7 +3010,7 @@ export const AdminDashboard: React.FC = () => {
           <div className="space-y-6">
             <div>
               <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Settings &amp; Policies</h1>
-              <p className="mt-1 text-sm text-slate-500">Control how long customer call recordings and transcripts are retained.</p>
+              <p className="mt-1 text-sm text-slate-500">Manage call data retention and review customer data export or deletion requests.</p>
             </div>
 
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-5">
@@ -3063,6 +3064,8 @@ export const AdminDashboard: React.FC = () => {
                 })}
               </div>
             </section>
+
+            <DataRequestCenter token={token} admin />
           </div>
         )}
 
