@@ -11,7 +11,12 @@ interface DataRequest {
   createdAt: string;
   updatedAt: string;
   resolvedAt?: string | null;
-  customer?: { id: string; name: string; email: string };
+  customerDeleted?: boolean;
+  customer?: { id: string; name: string; email: string } | null;
+}
+interface DeletionPreview {
+  customer: { name: string; email: string };
+  counts: Record<string, number>;
 }
 interface AuditEntry {
   id: string;
@@ -38,6 +43,11 @@ export const DataRequestCenter: React.FC<Props> = ({ token, admin = false }) => 
   const [notice, setNotice] = useState('');
   const [drafts, setDrafts] = useState<Record<string, { status: RequestStatus; resolutionNote: string }>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [exportingId, setExportingId] = useState<string | null>(null);
+  const [previewingId, setPreviewingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletionPreviews, setDeletionPreviews] = useState<Record<string, DeletionPreview>>({});
+  const [confirmationWords, setConfirmationWords] = useState<Record<string, string>>({});
 
   const loadRequests = useCallback(async () => {
     if (!token) { setLoading(false); return; }
@@ -98,6 +108,63 @@ export const DataRequestCenter: React.FC<Props> = ({ token, admin = false }) => 
     finally { setSavingId(null); }
   };
 
+  const generateExport = async (row: DataRequest) => {
+    if (!token) return;
+    setExportingId(row.id); setError(''); setNotice('');
+    try {
+      const response = await fetch(`/api/data-requests/${row.id}/export`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Could not generate the customer export.');
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `customer-data-${row.id}.json`;
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl; link.download = filename; link.click();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      setNotice('Customer export downloaded. The request and export action were audited.');
+      await loadRequests();
+    } catch (err: any) { setError(err.message || 'Could not generate the customer export.'); }
+    finally { setExportingId(null); }
+  };
+
+  const previewDeletion = async (id: string) => {
+    if (!token) return;
+    setPreviewingId(id); setError(''); setNotice('');
+    try {
+      const response = await fetch(`/api/data-requests/${id}/deletion-preview`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not prepare deletion preview.');
+      setDeletionPreviews(current => ({ ...current, [id]: data }));
+      setConfirmationWords(current => ({ ...current, [id]: '' }));
+    } catch (err: any) { setError(err.message || 'Could not prepare deletion preview.'); }
+    finally { setPreviewingId(null); }
+  };
+
+  const fulfillDeletion = async (id: string) => {
+    if (!token || confirmationWords[id] !== 'DELETE') return;
+    setDeletingId(id); setError(''); setNotice('');
+    try {
+      const response = await fetch(`/api/data-requests/${id}/fulfill-deletion`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmation: confirmationWords[id] })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not delete customer data.');
+      setDeletionPreviews(current => { const next = { ...current }; delete next[id]; return next; });
+      setNotice('Customer account data deleted. The request and fulfillment audit remain available.');
+      await loadRequests();
+    } catch (err: any) { setError(err.message || 'Could not delete customer data.'); }
+    finally { setDeletingId(null); }
+  };
+
   return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
     <div className="flex items-start gap-3">
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-50 text-purple-700">
@@ -106,7 +173,7 @@ export const DataRequestCenter: React.FC<Props> = ({ token, admin = false }) => 
       <div>
         <h2 className="text-base font-bold text-slate-900">{admin ? 'Customer data requests' : 'Your data requests'}</h2>
         <p className="mt-1 text-xs text-slate-500">{admin
-          ? 'Review customer export and deletion requests. Record the action taken and its outcome.'
+        ? 'Generate customer exports or preview and confirm deletion requests. Every action is audited.'
           : 'Request a copy of your account data or ask for your account data to be deleted. You can track progress here.'}</p>
       </div>
       <button type="button" onClick={() => void loadRequests()} disabled={loading} aria-label="Refresh requests"
@@ -142,28 +209,66 @@ export const DataRequestCenter: React.FC<Props> = ({ token, admin = false }) => 
             <time className="ml-auto text-xs text-slate-400">Submitted {new Date(row.createdAt).toLocaleString()}</time>
           </div>
           {admin ? <>
-            <div className="text-xs text-slate-600">{row.customer?.name} · {row.customer?.email}</div>
+            <div className="text-xs text-slate-600">{row.customerDeleted ? 'Customer account deleted' : `${row.customer?.name || 'Customer'} · ${row.customer?.email || 'No account email'}`}</div>
             <div className="grid gap-2 sm:grid-cols-[180px_1fr_auto]">
-              <select aria-label="Request status" value={drafts[row.id]?.status || row.status}
+              <select aria-label="Request status" value={drafts[row.id]?.status || row.status} disabled={row.status === 'completed'}
                 onChange={e => setDrafts(current => ({ ...current, [row.id]: { ...current[row.id], status: e.target.value as RequestStatus } }))}
                 className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs">
-                {Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                {Object.entries(statusLabels).filter(([value]) => value !== 'completed').map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                {row.status === 'completed' && <option value="completed">Completed</option>}
               </select>
               <input aria-label="Resolution note" maxLength={1000} placeholder="Action taken / resolution note"
-                value={drafts[row.id]?.resolutionNote || ''}
+                disabled={row.status === 'completed'} value={drafts[row.id]?.resolutionNote || ''}
                 onChange={e => setDrafts(current => ({ ...current, [row.id]: { ...current[row.id], resolutionNote: e.target.value } }))}
                 className="rounded-lg border border-slate-300 px-3 py-2 text-xs" />
-              <button type="button" onClick={() => void saveRequest(row.id)} disabled={savingId === row.id}
+              <button type="button" onClick={() => void saveRequest(row.id)} disabled={savingId === row.id || row.status === 'completed'}
                 className="rounded-lg bg-purple-600 px-3 py-2 text-xs font-semibold text-white hover:bg-purple-700 disabled:opacity-50">
                 {savingId === row.id ? 'Saving…' : 'Save update'}
               </button>
             </div>
+            {row.requestType === 'export' && row.status !== 'rejected' && <button type="button" onClick={() => void generateExport(row)} disabled={exportingId === row.id || row.customerDeleted}
+              className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50">
+              <Download className="h-3.5 w-3.5" />{exportingId === row.id ? 'Preparing export…' : 'Generate & download export'}
+            </button>}
+            {row.requestType === 'deletion' && !['completed', 'rejected'].includes(row.status) && !row.customerDeleted && <div className="space-y-3">
+              {!deletionPreviews[row.id] ? <button type="button" onClick={() => void previewDeletion(row.id)} disabled={previewingId === row.id}
+                className="inline-flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-50">
+                <Trash2 className="h-3.5 w-3.5" />{previewingId === row.id ? 'Preparing preview…' : 'Preview deletion'}
+              </button> : <div className="space-y-3 rounded-xl border border-rose-200 bg-rose-50/70 p-4">
+                <div>
+                  <p className="text-sm font-bold text-rose-900">Review records before permanent deletion</p>
+                  <p className="mt-1 text-xs text-rose-800">Account: {deletionPreviews[row.id].customer.name} · {deletionPreviews[row.id].customer.email}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {Object.entries(deletionPreviews[row.id].counts).map(([key, count]) => <div key={key} className="rounded-lg bg-white px-3 py-2">
+                    <div className="text-lg font-bold text-slate-900">{count}</div>
+                    <div className="text-[11px] capitalize text-slate-500">{key.replace(/([A-Z])/g, ' $1')}</div>
+                  </div>)}
+                </div>
+                <p className="text-xs font-medium text-rose-900">This permanently removes the account, calls, transcripts, recordings, tickets, and linked customer data. The request audit remains.</p>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <input aria-label="Type DELETE to confirm" value={confirmationWords[row.id] || ''}
+                    onChange={e => setConfirmationWords(current => ({ ...current, [row.id]: e.target.value }))}
+                    placeholder="Type DELETE to confirm" className="min-w-0 flex-1 rounded-lg border border-rose-300 bg-white px-3 py-2 text-xs" />
+                  <button type="button" onClick={() => void fulfillDeletion(row.id)} disabled={deletingId === row.id || confirmationWords[row.id] !== 'DELETE'}
+                    className="rounded-lg bg-rose-700 px-3 py-2 text-xs font-bold text-white hover:bg-rose-800 disabled:opacity-50">
+                    {deletingId === row.id ? 'Deleting…' : 'Confirm permanent deletion'}
+                  </button>
+                  <button type="button" onClick={() => setDeletionPreviews(current => { const next = { ...current }; delete next[row.id]; return next; })}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700">Cancel</button>
+                </div>
+              </div>}
+            </div>}
             {row.handledBy && <p className="text-[11px] text-slate-400">Last handled by {row.handledBy}{row.resolvedAt ? ` · ${new Date(row.resolvedAt).toLocaleString()}` : ''}</p>}
             <details className="text-xs text-slate-500">
               <summary className="cursor-pointer font-medium">Audit history ({auditHistory.filter(entry => entry.requestId === row.id).length})</summary>
               <div className="mt-2 space-y-2 border-l-2 border-slate-200 pl-3">
                 {auditHistory.filter(entry => entry.requestId === row.id).map(entry => <div key={entry.id}>
-                  <p className="font-medium text-slate-700">{entry.eventType.endsWith('CREATED') ? 'Request submitted' : `Status: ${entry.details.previousStatus || '—'} → ${entry.details.status || 'updated'}`}</p>
+                  <p className="font-medium text-slate-700">{entry.eventType === 'CUSTOMER_DATA_REQUEST_CREATED' ? 'Request submitted'
+                    : entry.eventType === 'CUSTOMER_DATA_REQUEST_UPDATED' ? `Status: ${entry.details.previousStatus || '—'} → ${entry.details.status || 'updated'}`
+                    : entry.eventType === 'CUSTOMER_DATA_EXPORT_GENERATED' ? 'Customer export generated'
+                    : entry.eventType === 'CUSTOMER_DATA_DELETION_PREVIEWED' ? 'Deletion impact previewed'
+                    : 'Customer data deletion fulfilled'}</p>
                   <p>{entry.email || 'Account'} · {new Date(entry.createdAt).toLocaleString()}</p>
                   {entry.details.resolutionNote && <p>Note: {entry.details.resolutionNote}</p>}
                 </div>)}

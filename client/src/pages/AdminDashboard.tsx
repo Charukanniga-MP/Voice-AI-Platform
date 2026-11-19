@@ -3010,7 +3010,7 @@ export const AdminDashboard: React.FC = () => {
           <div className="space-y-6">
             <div>
               <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Settings &amp; Policies</h1>
-              <p className="mt-1 text-sm text-slate-500">Manage call data retention and review customer data export or deletion requests.</p>
+              <p className="mt-1 text-sm text-slate-500">Manage call data retention and fulfill customer export or deletion requests with an audit trail.</p>
             </div>
 
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-5">

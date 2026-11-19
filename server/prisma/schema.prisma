@@ -40,8 +40,9 @@ model User {
 
 model CustomerDataRequest {
   id             String   @id @default(cuid())
-  customerId     String
-  customer       User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId     String?
+  customer       User?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerDeleted Boolean @default(false)
   requestType    String   // "export" | "deletion"
   status         String   @default("pending") // "pending" | "in_progress" | "completed" | "rejected"
   resolutionNote String?
