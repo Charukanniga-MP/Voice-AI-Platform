@@ -1356,16 +1356,55 @@ export function initSocketServer(io: SocketIOServer) {
         const respLang = response.language || callLang;
         const aiText = response.answer || FALLBACK_MESSAGE;
 
-        if (response.requiresTransfer) {
-          console.log(`[AICall] Query explicitly requested transfer to Human Support/Admin: "${queryText}"`);
+        // Condition Check: If client is frustrated and the answer is not known to AI, forward to human
+        const sentimentCategory = (sentimentResult.sentiment || '').toUpperCase();
+        const isClientFrustrated = (
+          sentimentCategory === 'FRUSTRATED' ||
+          sentimentCategory === 'NEGATIVE' ||
+          Boolean(sentimentResult.requiresHumanAssistance) ||
+          (typeof sentimentResult.frustrationCount === 'number' && sentimentResult.frustrationCount > 0) ||
+          /\b(frustrated|frustrating|useless|terrible|horrible|angry|annoyed|ridiculous|worst|stupid|awful|waste of time|fed up|sick of this|damn|hate this|not helpful|unhelpful|nobody is helping|no one is helping|can't help|cannot help)\b/i.test(queryText)
+        );
+
+        const isAnswerUnknownToAI = (
+          !response.isGrounded ||
+          (typeof response.confidence === 'number' && response.confidence < 0.7 && !response.sources?.length) ||
+          response.answer === FALLBACK_MESSAGE ||
+          response.answer.includes(FALLBACK_MESSAGE) ||
+          response.answer.includes('not currently available in our approved Knowledge Base') ||
+          /i apologize, but (that specific company|i don't currently have|that information)/i.test(response.answer) ||
+          /i (do not|don't) currently have (information|details|access)/i.test(response.answer)
+        );
+
+        const shouldForwardDueToFrustration = isClientFrustrated && isAnswerUnknownToAI;
+        const shouldTransfer = response.requiresTransfer || shouldForwardDueToFrustration;
+
+        if (shouldTransfer) {
+          const transferReason = shouldForwardDueToFrustration
+            ? `Customer is frustrated and answer is unknown to AI: "${queryText}"`
+            : `Customer requested human assistance: "${queryText}"`;
+
+          console.log(`[AICall] Transferring call ${data.callId} to human support. Reason: ${transferReason}`);
+
+          if (shouldForwardDueToFrustration) {
+            // Track knowledge gap since the answer was unknown to AI
+            await knowledgeService.trackKnowledgeGap(queryText, respLang, call.id);
+            io.to('role:admin').emit('knowledge:gap_detected', {
+              question: queryText,
+              language: respLang,
+              callId: call.id
+            });
+          }
 
           await prisma.callRecord.update({
             where: { id: call.id },
             data: {
               transferred: true,
-              transferReason: `Customer requested human assistance: "${queryText}"`,
+              transferReason,
               customerQuestion: queryText,
-              type: 'admin_transfer'
+              type: 'admin_transfer',
+              requiresAssistance: true,
+              assistanceReason: transferReason
             }
           });
 
@@ -1384,13 +1423,21 @@ export function initSocketServer(io: SocketIOServer) {
                 customerName: call.customerName,
                 customerPhone: call.customerPhone,
                 question: queryText,
-                reason: 'Customer requested human assistance',
+                reason: transferReason,
                 status: 'ringing'
               }
             });
           }
 
-          let transferNotice = response.answer || "Certainly! I will connect you with a member of our human support team right away. Please hold for just a moment.";
+          let transferNotice: string;
+          if (shouldForwardDueToFrustration) {
+            transferNotice = "I understand your frustration, and I want to make sure your question is answered properly. Let me connect you directly with a member of our human support team right away. Please hold for just a moment.";
+            if (respLang !== 'en') {
+              transferNotice = await translationService.translateText(transferNotice, respLang, 'en');
+            }
+          } else {
+            transferNotice = response.answer || "Certainly! I will connect you with a member of our human support team right away. Please hold for just a moment.";
+          }
 
           // Record transfer announcement in DB transcript
           await prisma.callTranscript.create({
@@ -1427,6 +1474,24 @@ export function initSocketServer(io: SocketIOServer) {
             language: respLang,
             timestamp: new Date()
           });
+
+          // Broadcast urgent alert to staff
+          const forwardAlert = {
+            callId: data.callId,
+            customerName: call.customerName,
+            customerPhone: call.customerPhone || 'Not provided',
+            reason: transferReason,
+            question: queryText,
+            triggerText: queryText,
+            sentiment: sentimentResult.sentiment,
+            confidenceScore: sentimentResult.confidenceScore,
+            priority: 'urgent',
+            timestamp: new Date()
+          };
+          io.to('role:admin').emit('sentiment:assistance_alert', forwardAlert);
+          io.to('role:agent').emit('sentiment:assistance_alert', forwardAlert);
+          io.to('role:admin').emit('call:transfer_needed', forwardAlert);
+          io.to('role:agent').emit('call:transfer_needed', forwardAlert);
 
           // Intelligent ACD: Route ungrounded question directly to available Support Agent or Admin Operator
           const availableAgent = findAvailableAgent(respLang);
@@ -1485,7 +1550,7 @@ export function initSocketServer(io: SocketIOServer) {
               customerEmail: custEmail,
               customerPhone: call.customerPhone || 'Not provided',
               question: queryText,
-              reason: 'Customer requested human assistance',
+              reason: transferReason,
               duration: data.duration || 0,
               language: respLang,
               createdAt: transferReq.createdAt
@@ -1499,8 +1564,8 @@ export function initSocketServer(io: SocketIOServer) {
                   customerId: call.customerId,
                   customerName: call.customerName,
                   customerEmail: call.customerPhone || null,
-                  subject: `Live Transfer Request: ${queryText.substring(0, 50)}`,
-                  description: `Customer requested human assistance during AI voice call. Query: "${queryText}". Sentiment: ${sentimentResult.sentiment} (${sentimentResult.confidenceScore}%).`,
+                  subject: `Live Escalation: ${transferReason.substring(0, 50)}`,
+                  description: `Customer transferred to human support during AI voice call (${transferReason}). Query: "${queryText}". Sentiment: ${sentimentResult.sentiment} (${sentimentResult.confidenceScore}%).`,
                   priority: 'urgent',
                   status: 'open'
                 }

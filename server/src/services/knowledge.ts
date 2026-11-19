@@ -538,7 +538,9 @@ class KnowledgeService {
       };
     }
 
-    // 4. Greetings (Strictly when input is only a standalone greeting)
+    // ---------------------------------------------------------
+    // CONVERSATIONAL PLEASANTRIES (strictly when pure greeting/pleasantry)
+    // ---------------------------------------------------------
     const isPureGreeting = /^(hi|hello|hey|good\s+(morning|afternoon|evening)|howdy)(\s+(there|kaira|assistant))?$/i.test(cleanInput) ||
       cleanInput === 'hi' || cleanInput === 'hello' || cleanInput === 'hey';
 
@@ -553,90 +555,36 @@ class KnowledgeService {
       };
     }
 
-    if (/\b(how\s+are\s+you|how\s+are\s+things|hows\s+it\s+going|how\s+is\s+it\s+going)\b/i.test(cleanInput)) {
-      return {
-        answer: "I am doing great, thank you! How may I assist you with KAIRA's voice platform or customer communication today?",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    if (/\b(who\s+are\s+you|what\s+can\s+you\s+do|what\s+is\s+your\s+name|what\s+are\s+you)\b/i.test(cleanInput)) {
-      return {
-        answer: "I am KAIRA's real-time AI Voice Agent. I can help you explore our features, explain pricing tiers, answer support inquiries, or connect you with human staff if needed.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    if (/\b(thank\s+you|thanks|thank\s+you\s+so\s+much|appreciate\s+it|thx)\b/i.test(cleanInput)) {
-      return {
-        answer: "You are very welcome! Please let me know if you have any other questions.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    if (/^(ok|okay|got\s+it|alright|cool|great|sounds\s+good|perfect|sure|yes|yeah|yep)$/i.test(cleanInput)) {
-      return {
-        answer: "Great! Feel free to ask any other questions, or let me know what else I can assist you with.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    if (/\b(goodbye|bye|bye\s+bye|see\s+you|talk\s+to\s+you\s+later|have\s+a\s+good\s+day)\b/i.test(cleanInput)) {
-      return {
-        answer: "Thank you for calling KAIRA. Have a wonderful day ahead! Goodbye.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    if (/\b(repeat|say\s+that\s+again|pardon|what\s+did\s+you\s+say|once\s+more)\b/i.test(cleanInput)) {
-      const lastAiMessage = [...history].reverse().find(m => m.role === 'assistant');
-      return {
-        answer: lastAiMessage?.content || "Sure! I am here to assist you with KAIRA's voice platform, subscriptions, policies, and customer support inquiries.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // ---------------------------------------------------------
-    // PRIORITY 1: CUSTOMER-SPECIFIC QUESTIONS (Strict Database Grounding)
-    // ---------------------------------------------------------
-    // 1.1 Customer ID
-    if (/\b(my\s+(?:customer\s+)?id|what\s+is\s+my\s+id|my\s+account\s+id|my\s+customer\s+number)\b/i.test(effectiveQuery)) {
-      if (customerContext?.customerId) {
+    // 2. Support Ticket Status Inquiry (Live DB Grounded)
+    if (/\b(ticket|tickets|complaint|complaints|issue\s+status|ticket\s+status|check\s+my\s+ticket|my\s+request)\b/i.test(effectiveQuery)) {
+      if (customerContext?.tickets && customerContext.tickets.length > 0) {
+        const topTicket = customerContext.tickets[0];
+        const ticketIdShort = topTicket.id.length > 6 ? topTicket.id.slice(-6).toUpperCase() : topTicket.id.toUpperCase();
         return {
-          answer: `Your registered Customer ID is ${customerContext.customerId}.`,
+          answer: `I found your support ticket #${ticketIdShort} regarding "${topTicket.subject}". Its current status is ${topTicket.status} with ${topTicket.priority} priority.`,
           isGrounded: true,
           requiresTransfer: false,
-          sources: [{ id: customerContext.customerId, title: 'Customer Profile', category: 'account' }],
+          sources: [{ id: topTicket.id, title: topTicket.subject, category: 'support' }],
           confidence: 1.0,
           latencyMs: Date.now() - t0
         };
-      } else {
+      } else if (customerContext) {
         return {
-          answer: "To look up your specific Customer ID, please make sure you are signed in or verify your account details with our support team.",
+          answer: "You currently have no open support tickets on your account. If you are experiencing an issue, I can transfer you to our live support team or open a ticket for you.",
+          isGrounded: true,
+          requiresTransfer: false,
+          sources: [],
+          confidence: 1.0,
+          latencyMs: Date.now() - t0
+        };
+      }
+    }
+
+    // 3. Customer Profile / Account Details Inquiry (Live DB Grounded)
+    if (/\b(my\s+account|my\s+profile|(?:my\s+)?(?:registered\s+)?email|(?:my\s+)?(?:registered\s+)?phone|(?:registered\s+)?name|who\s+am\s+i|my\s+details)\b/i.test(effectiveQuery)) {
+      if (customerContext && (customerContext.customerName || customerContext.customerEmail)) {
+        return {
+          answer: `Your account is registered under ${customerContext.customerName || 'our records'}${customerContext.customerEmail ? ' with email ' + customerContext.customerEmail : ''}. How can I assist you with your account today?`,
           isGrounded: true,
           requiresTransfer: false,
           sources: [],
