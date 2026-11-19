@@ -8,6 +8,7 @@ import { conversationAnalysisService } from './conversationAnalysis.service.js';
 import { realtimeIntelligenceService } from './realtimeIntelligence.service.js';
 import { CallQualityAlert } from './callQualityAlerts.js';
 import { callReliabilityService } from './callReliability.js';
+import { handoverService, HandoverReason } from './handover.service.js';
 
 // Multi-turn conversational context memory for active calls
 const activeCallContexts = new Map<string, Array<{ sender: 'customer' | 'ai'; text: string; timestamp: Date }>>();
@@ -35,6 +36,10 @@ export interface CallSessionState {
   greetingPlayed: boolean;
   processedUtteranceIds: Set<string>;
   createdAt: number;
+  awaitingCallbackConfirmation?: boolean;
+  pendingHandoverReason?: HandoverReason;
+  lastHandoverQuery?: string;
+  suggestedCallbackPhone?: string;
 }
 
 export const callSessions = new Map<string, CallSessionState>();
@@ -1035,25 +1040,38 @@ export function initSocketServer(io: SocketIOServer) {
         });
         if (!call) return;
 
-        const reason = data.reason || 'Customer requested live human specialist';
+        const reason = 'Customer Explicitly Requested Human Support';
+        const detailedReason = data.reason || 'Customer manually clicked escalate to human specialist';
         const transferReq = await prisma.callTransferRequest.create({
           data: {
             callRecordId: call.id,
             customerId: call.customerId,
             customerName: call.customerName,
             customerPhone: call.customerPhone || 'Direct App Call',
-            question: reason,
+            question: detailedReason,
             reason,
             status: 'pending',
             priority: 'urgent'
           }
         });
 
+        await prisma.callRecord.update({
+          where: { id: call.id },
+          data: {
+            transferred: true,
+            transferReason: reason,
+            requiresAssistance: true,
+            assistanceReason: detailedReason
+          }
+        });
+
+        handoverService.registerTransferInitiated(data.callId, reason, transferReq.id);
+
         const respLang = call.language || 'en';
         const escalateNotice = respLang === 'ta'
           ? 'மனித நிபுணருடன் உங்களை இணைக்கிறேன், தயவுசெய்து காத்திருக்கவும்.'
           : respLang === 'te'
-            ? 'మిమ్మల్ని మానవ నిపుణుడితో కనెక్ట్ చేస్తున్నాను, దయచేసి వేచి ఉండండి.'
+            ? 'మిమ్మల్ని మానవ నిపుణుడితో కனெక్ట్ చేస్తున్నాను, దయచేసి వేచి ఉండండి.'
             : respLang === 'hi'
               ? 'मैं आपको मानव विशेषज्ञ से जोड़ रहा हूँ, कृपया प्रतीक्षा करें।'
               : respLang === 'ml'
@@ -1067,6 +1085,9 @@ export function initSocketServer(io: SocketIOServer) {
           responseId: escalateResponseId,
           answer: escalateNotice,
           isTransferring: true,
+          transferId: transferReq.id,
+          transferReason: reason,
+          supportPhoneNumber: handoverService.getThresholds().supportPhoneNumber,
           language: respLang,
           audioUrl: `/api/voice/tts?text=${encodeURIComponent(escalateNotice)}&lang=${respLang}`
         });
@@ -1078,7 +1099,7 @@ export function initSocketServer(io: SocketIOServer) {
           customerId: call.customerId,
           customerName: call.customerName,
           customerPhone: call.customerPhone || 'Not provided',
-          question: reason,
+          question: detailedReason,
           reason,
           duration: call.duration || 0,
           language: respLang,
@@ -1203,6 +1224,168 @@ export function initSocketServer(io: SocketIOServer) {
         }
 
         const callLang = data.language || call.language || 'en';
+
+        // 0A. Check if session is awaiting callback confirmation from caller
+        if (session?.awaitingCallbackConfirmation) {
+          const lowerQuery = queryText.toLowerCase().trim();
+          const phoneMatch = queryText.match(/(\+?[0-9\s\-\(\)]{7,15})/);
+          const detectedPhone = phoneMatch ? phoneMatch[0].trim() : (session.suggestedCallbackPhone || call.customerPhone || 'the registered number');
+
+          const isDeclined = /\b(no|nope|cancel|never\s*mind|don'?t|leave\s*it|not\s*needed)\b/i.test(lowerQuery);
+          const isConfirmed = !isDeclined && (
+            Boolean(phoneMatch) ||
+            /\b(yes|yeah|yep|sure|please|okay|ok|arrange|call\s*me|definitely|fine|great|schedule|confirm)\b/i.test(lowerQuery)
+          );
+
+          if (isConfirmed) {
+            session.awaitingCallbackConfirmation = false;
+            handoverService.updateTransferStatus(data.callId, 'callback_scheduled');
+
+            // Record customer utterance
+            await prisma.callTranscript.create({
+              data: {
+                callRecordId: call.id,
+                sender: 'customer',
+                senderName: call.customerName,
+                text: queryText,
+                language: callLang
+              }
+            }).catch(e => console.error('[AICall] Error saving customer transcript:', e));
+
+            // Create priority support ticket for callback
+            const ticket = await prisma.supportTicket.create({
+              data: {
+                customerId: call.customerId,
+                customerName: call.customerName,
+                customerEmail: call.customerPhone || null,
+                subject: `Priority Callback: ${session.pendingHandoverReason || 'Customer Support Escalation'}`,
+                description: `Customer confirmed callback during voice call (${data.callId}). Reason: ${session.pendingHandoverReason || 'Escalation'}. Contact number: ${detectedPhone}. Original issue: "${session.lastHandoverQuery || queryText}".`,
+                priority: 'urgent',
+                status: 'open'
+              }
+            });
+
+            await prisma.callRecord.update({
+              where: { id: call.id },
+              data: {
+                callNotes: `Priority callback scheduled to ${detectedPhone}. Ticket #${ticket.id.slice(-6).toUpperCase()}`
+              }
+            });
+
+            const confirmMsg = await handoverService.generateCallbackConfirmationMessage(detectedPhone, callLang);
+
+            await prisma.callTranscript.create({
+              data: {
+                callRecordId: call.id,
+                sender: 'ai',
+                senderName: 'KAIRA AI Support Specialist',
+                text: confirmMsg,
+                language: callLang
+              }
+            });
+
+            const confirmRespId = `resp_cb_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+            socket.emit('call:ai_response', {
+              callId: data.callId,
+              responseId: confirmRespId,
+              clientMessageId: data.clientMessageId,
+              answer: confirmMsg,
+              isTransferring: false,
+              callbackScheduled: true,
+              ticketId: ticket.id,
+              language: callLang,
+              audioUrl: `/api/voice/tts?text=${encodeURIComponent(confirmMsg)}&lang=${callLang}`
+            });
+
+            socket.emit('call:callback_scheduled', {
+              callId: data.callId,
+              ticketId: ticket.id,
+              phone: detectedPhone,
+              message: confirmMsg
+            });
+
+            // Notify staff
+            io.to('role:admin').to('role:agent').emit('callback:requested', {
+              callId: data.callId,
+              ticketId: ticket.id,
+              customerName: call.customerName,
+              phone: detectedPhone,
+              reason: session.pendingHandoverReason,
+              query: session.lastHandoverQuery
+            });
+
+            return;
+          } else if (isDeclined) {
+            session.awaitingCallbackConfirmation = false;
+            handoverService.clearTransferLock(data.callId);
+
+            let declineMsg = "No problem at all. How else can I assist you today?";
+            if (callLang !== 'en') {
+              try {
+                declineMsg = await translationService.translateText(declineMsg, callLang, 'en');
+              } catch (e) {}
+            }
+
+            await prisma.callTranscript.create({
+              data: {
+                callRecordId: call.id,
+                sender: 'customer',
+                senderName: call.customerName,
+                text: queryText,
+                language: callLang
+              }
+            }).catch(e => console.error('[AICall] Error saving customer transcript:', e));
+
+            await prisma.callTranscript.create({
+              data: {
+                callRecordId: call.id,
+                sender: 'ai',
+                senderName: 'KAIRA AI Support Specialist',
+                text: declineMsg,
+                language: callLang
+              }
+            });
+
+            const declineRespId = `resp_decl_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+            socket.emit('call:ai_response', {
+              callId: data.callId,
+              responseId: declineRespId,
+              clientMessageId: data.clientMessageId,
+              answer: declineMsg,
+              isTransferring: false,
+              language: callLang,
+              audioUrl: `/api/voice/tts?text=${encodeURIComponent(declineMsg)}&lang=${callLang}`
+            });
+
+            return;
+          }
+        }
+
+        // 0B. Guard against duplicate transfer triggers while transfer is actively in progress
+        if (handoverService.isTransferInProgress(data.callId)) {
+          const activeLock = handoverService.getActiveTransferLock(data.callId);
+          let inProgressMsg = "Your transfer to a human representative is currently in progress. Please hold the line, someone will be with you shortly.";
+          if (callLang !== 'en') {
+            try {
+              inProgressMsg = await translationService.translateText(inProgressMsg, callLang, 'en');
+            } catch (e) {}
+          }
+
+          const inProgRespId = `resp_inprog_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+          socket.emit('call:ai_response', {
+            callId: data.callId,
+            responseId: inProgRespId,
+            clientMessageId: data.clientMessageId,
+            answer: inProgressMsg,
+            isTransferring: true,
+            transferId: activeLock?.transferId,
+            transferReason: activeLock?.reason,
+            language: callLang,
+            audioUrl: `/api/voice/tts?text=${encodeURIComponent(inProgressMsg)}&lang=${callLang}`
+          });
+
+          return;
+        }
 
         // Retrieve real customer profile and support tickets from database
         let customerContext: any = {
@@ -1356,37 +1539,22 @@ export function initSocketServer(io: SocketIOServer) {
         const respLang = response.language || callLang;
         const aiText = response.answer || FALLBACK_MESSAGE;
 
-        // Condition Check: If client is frustrated and the answer is not known to AI, forward to human
-        const sentimentCategory = (sentimentResult.sentiment || '').toUpperCase();
-        const isClientFrustrated = (
-          sentimentCategory === 'FRUSTRATED' ||
-          sentimentCategory === 'NEGATIVE' ||
-          Boolean(sentimentResult.requiresHumanAssistance) ||
-          (typeof sentimentResult.frustrationCount === 'number' && sentimentResult.frustrationCount > 0) ||
-          /\b(frustrated|frustrating|useless|terrible|horrible|angry|annoyed|ridiculous|worst|stupid|awful|waste of time|fed up|sick of this|damn|hate this|not helpful|unhelpful|nobody is helping|no one is helping|can't help|cannot help)\b/i.test(queryText)
-        );
+        // Intelligent AI-to-Human Handover Evaluation
+        const handoverEval = await handoverService.evaluateHandover({
+          queryText,
+          callLang: respLang,
+          sentimentResult,
+          aiResponse: response,
+          callHistory: history
+        });
 
-        const isAnswerUnknownToAI = (
-          !response.isGrounded ||
-          (typeof response.confidence === 'number' && response.confidence < 0.7 && !response.sources?.length) ||
-          response.answer === FALLBACK_MESSAGE ||
-          response.answer.includes(FALLBACK_MESSAGE) ||
-          response.answer.includes('not currently available in our approved Knowledge Base') ||
-          /i apologize, but (that specific company|i don't currently have|that information)/i.test(response.answer) ||
-          /i (do not|don't) currently have (information|details|access)/i.test(response.answer)
-        );
+        if (handoverEval.shouldTransfer) {
+          const transferReason: HandoverReason = handoverEval.reason || 'Customer Frustration';
+          const detailedReason = handoverEval.detailedReason || transferReason;
 
-        const shouldForwardDueToFrustration = isClientFrustrated && isAnswerUnknownToAI;
-        const shouldTransfer = response.requiresTransfer || shouldForwardDueToFrustration;
+          console.log(`[AICall] Initiating Human Handover on call ${data.callId}. Reason: ${transferReason}`);
 
-        if (shouldTransfer) {
-          const transferReason = shouldForwardDueToFrustration
-            ? `Customer is frustrated and answer is unknown to AI: "${queryText}"`
-            : `Customer requested human assistance: "${queryText}"`;
-
-          console.log(`[AICall] Transferring call ${data.callId} to human support. Reason: ${transferReason}`);
-
-          if (shouldForwardDueToFrustration) {
+          if (handoverEval.isUnknownQuestion) {
             // Track knowledge gap since the answer was unknown to AI
             await knowledgeService.trackKnowledgeGap(queryText, respLang, call.id);
             io.to('role:admin').emit('knowledge:gap_detected', {
@@ -1404,7 +1572,7 @@ export function initSocketServer(io: SocketIOServer) {
               customerQuestion: queryText,
               type: 'admin_transfer',
               requiresAssistance: true,
-              assistanceReason: transferReason
+              assistanceReason: detailedReason
             }
           });
 
@@ -1421,81 +1589,22 @@ export function initSocketServer(io: SocketIOServer) {
                 callRecordId: call.id,
                 customerId: call.customerId,
                 customerName: call.customerName,
-                customerPhone: call.customerPhone,
+                customerPhone: call.customerPhone || 'Direct App Call',
                 question: queryText,
                 reason: transferReason,
-                status: 'ringing'
+                status: 'ringing',
+                priority: handoverEval.isFrustrated || handoverEval.isRepeatedComplaint ? 'urgent' : 'normal',
+                sentiment: sentimentResult.sentiment || 'NEUTRAL'
               }
             });
           }
 
-          let transferNotice: string;
-          if (shouldForwardDueToFrustration) {
-            transferNotice = "I understand your frustration, and I want to make sure your question is answered properly. Let me connect you directly with a member of our human support team right away. Please hold for just a moment.";
-            if (respLang !== 'en') {
-              transferNotice = await translationService.translateText(transferNotice, respLang, 'en');
-            }
-          } else {
-            transferNotice = response.answer || "Certainly! I will connect you with a member of our human support team right away. Please hold for just a moment.";
-          }
+          // Register lock to prevent duplicate transfers during active transfer
+          handoverService.registerTransferInitiated(data.callId, transferReason, transferReq.id);
 
-          // Record transfer announcement in DB transcript
-          await prisma.callTranscript.create({
-            data: {
-              callRecordId: call.id,
-              sender: 'ai',
-              senderName: 'KAIRA AI Support Specialist',
-              text: transferNotice,
-              language: respLang
-            }
-          });
-
-          const transferResponseId = `resp_tr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-          socket.emit('call:ai_response', {
-            callId: data.callId,
-            responseId: transferResponseId,
-            clientMessageId: data.clientMessageId,
-            answer: transferNotice,
-            isTransferring: true,
-            transferId: transferReq.id,
-            language: respLang,
-            audioUrl: `/api/voice/tts?text=${encodeURIComponent(transferNotice)}&lang=${respLang}`,
-            latency: {
-              aiMs: aiProcessingMs,
-              totalRoundTripMs
-            }
-          });
-
-          // Broadcast to call participants
-          io.to(`call:${data.callId}`).emit('call:live_transcript', {
-            sender: 'ai',
-            senderName: 'KAIRA AI Support Specialist',
-            text: transferNotice,
-            language: respLang,
-            timestamp: new Date()
-          });
-
-          // Broadcast urgent alert to staff
-          const forwardAlert = {
-            callId: data.callId,
-            customerName: call.customerName,
-            customerPhone: call.customerPhone || 'Not provided',
-            reason: transferReason,
-            question: queryText,
-            triggerText: queryText,
-            sentiment: sentimentResult.sentiment,
-            confidenceScore: sentimentResult.confidenceScore,
-            priority: 'urgent',
-            timestamp: new Date()
-          };
-          io.to('role:admin').emit('sentiment:assistance_alert', forwardAlert);
-          io.to('role:agent').emit('sentiment:assistance_alert', forwardAlert);
-          io.to('role:admin').emit('call:transfer_needed', forwardAlert);
-          io.to('role:agent').emit('call:transfer_needed', forwardAlert);
-
-          // Intelligent ACD: Route ungrounded question directly to available Support Agent or Admin Operator
           const availableAgent = findAvailableAgent(respLang);
           const availableAdmin = findNextAvailableAdminSession(respLang);
+          const isStaffAvailable = Boolean(availableAgent || availableAdmin);
 
           let custEmail = '';
           if (call.customerId) {
@@ -1503,44 +1612,151 @@ export function initSocketServer(io: SocketIOServer) {
             if (u && u.email) custEmail = u.email;
           }
 
-          if (availableAgent && availableAgent.role === 'agent') {
-            console.log(`[Transfer] Routing ungrounded query directly to available Support Agent ${availableAgent.name}`);
-            await dispatchCallToAgent(data.callId, availableAgent, {
-              customerId: call.customerId,
-              customerName: call.customerName,
-              customerEmail: custEmail,
-              customerPhone: call.customerPhone || 'Not provided',
-              preferredLanguage: respLang,
-              customerSocketId: socket.id,
-              callRecordId: call.id
+          const transferResponseId = `resp_tr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+          if (isStaffAvailable) {
+            // Staff is available: Speak announcement and dispatch immediately
+            const transferNotice = handoverEval.verbalAnnouncement || "I will connect you directly with a member of our human support team right away. Please hold for just a moment.";
+
+            await prisma.callTranscript.create({
+              data: {
+                callRecordId: call.id,
+                sender: 'ai',
+                senderName: 'KAIRA AI Support Specialist',
+                text: transferNotice,
+                language: respLang
+              }
             });
-          } else if (availableAdmin) {
-            console.log(`[Transfer] Routing ungrounded query directly to available Admin Operator ${availableAdmin.operatorName}`);
-            await dispatchCallToAdminSession(data.callId, availableAdmin, {
-              customerId: call.customerId,
-              customerName: call.customerName,
-              customerEmail: custEmail,
-              customerPhone: call.customerPhone || 'Not provided',
-              preferredLanguage: respLang,
-              customerSocketId: socket.id,
+
+            socket.emit('call:ai_response', {
+              callId: data.callId,
+              responseId: transferResponseId,
+              clientMessageId: data.clientMessageId,
+              answer: transferNotice,
+              isTransferring: true,
               transferId: transferReq.id,
-              question: queryText,
-              callRecordId: call.id,
-              duration: data.duration || 0
+              transferReason,
+              supportPhoneNumber: handoverService.getThresholds().supportPhoneNumber,
+              language: respLang,
+              audioUrl: `/api/voice/tts?text=${encodeURIComponent(transferNotice)}&lang=${respLang}`,
+              latency: {
+                aiMs: aiProcessingMs,
+                totalRoundTripMs
+              }
             });
-          } else if (availableAgent) {
-            console.log(`[Transfer] Routing ungrounded query directly to Agent ${availableAgent.name}`);
-            await dispatchCallToAgent(data.callId, availableAgent, {
-              customerId: call.customerId,
+
+            io.to(`call:${data.callId}`).emit('call:live_transcript', {
+              sender: 'ai',
+              senderName: 'KAIRA AI Support Specialist',
+              text: transferNotice,
+              language: respLang,
+              timestamp: new Date()
+            });
+
+            const forwardAlert = {
+              callId: data.callId,
               customerName: call.customerName,
-              customerEmail: custEmail,
               customerPhone: call.customerPhone || 'Not provided',
-              preferredLanguage: respLang,
-              customerSocketId: socket.id,
-              callRecordId: call.id
-            });
+              reason: transferReason,
+              question: queryText,
+              triggerText: queryText,
+              sentiment: sentimentResult.sentiment,
+              confidenceScore: sentimentResult.confidenceScore,
+              priority: 'urgent',
+              timestamp: new Date()
+            };
+            io.to('role:admin').emit('sentiment:assistance_alert', forwardAlert);
+            io.to('role:agent').emit('sentiment:assistance_alert', forwardAlert);
+            io.to('role:admin').emit('call:transfer_needed', forwardAlert);
+            io.to('role:agent').emit('call:transfer_needed', forwardAlert);
+
+            if (availableAgent && availableAgent.role === 'agent') {
+              console.log(`[Transfer] Routing ungrounded query directly to available Support Agent ${availableAgent.name}`);
+              await dispatchCallToAgent(data.callId, availableAgent, {
+                customerId: call.customerId,
+                customerName: call.customerName,
+                customerEmail: custEmail,
+                customerPhone: call.customerPhone || 'Not provided',
+                preferredLanguage: respLang,
+                customerSocketId: socket.id,
+                callRecordId: call.id
+              });
+            } else if (availableAdmin) {
+              console.log(`[Transfer] Routing ungrounded query directly to available Admin Operator ${availableAdmin.operatorName}`);
+              await dispatchCallToAdminSession(data.callId, availableAdmin, {
+                customerId: call.customerId,
+                customerName: call.customerName,
+                customerEmail: custEmail,
+                customerPhone: call.customerPhone || 'Not provided',
+                preferredLanguage: respLang,
+                customerSocketId: socket.id,
+                transferId: transferReq.id,
+                question: queryText,
+                callRecordId: call.id,
+                duration: data.duration || 0
+              });
+            } else if (availableAgent) {
+              console.log(`[Transfer] Routing ungrounded query directly to Agent ${availableAgent.name}`);
+              await dispatchCallToAgent(data.callId, availableAgent, {
+                customerId: call.customerId,
+                customerName: call.customerName,
+                customerEmail: custEmail,
+                customerPhone: call.customerPhone || 'Not provided',
+                preferredLanguage: respLang,
+                customerSocketId: socket.id,
+                callRecordId: call.id
+              });
+            }
           } else {
-            // Fallback: broadcast transfer alert to all staff
+            // No human staff online: Offer callback while maintaining call connection (do not disconnect)
+            console.log(`[Transfer] No human staff online for ${data.callId}. Offering priority callback.`);
+            const callbackOffer = await handoverService.generateCallbackOfferMessage(respLang, call.customerPhone, handoverEval.verbalAnnouncement);
+
+            if (session) {
+              session.awaitingCallbackConfirmation = true;
+              session.pendingHandoverReason = transferReason;
+              session.lastHandoverQuery = queryText;
+              session.suggestedCallbackPhone = call.customerPhone || undefined;
+            }
+            handoverService.updateTransferStatus(data.callId, 'callback_offered');
+
+            await prisma.callTranscript.create({
+              data: {
+                callRecordId: call.id,
+                sender: 'ai',
+                senderName: 'KAIRA AI Support Specialist',
+                text: callbackOffer,
+                language: respLang
+              }
+            });
+
+            socket.emit('call:ai_response', {
+              callId: data.callId,
+              responseId: transferResponseId,
+              clientMessageId: data.clientMessageId,
+              answer: callbackOffer,
+              isTransferring: true,
+              isOfferingCallback: true,
+              transferId: transferReq.id,
+              transferReason,
+              supportPhoneNumber: handoverService.getThresholds().supportPhoneNumber,
+              language: respLang,
+              audioUrl: `/api/voice/tts?text=${encodeURIComponent(callbackOffer)}&lang=${respLang}`,
+              latency: {
+                aiMs: aiProcessingMs,
+                totalRoundTripMs
+              }
+            });
+
+            io.to(`call:${data.callId}`).emit('call:live_transcript', {
+              sender: 'ai',
+              senderName: 'KAIRA AI Support Specialist',
+              text: callbackOffer,
+              language: respLang,
+              timestamp: new Date()
+            });
+
+            // Notify admin/agent dashboards of transfer incoming
             io.to('role:admin').to('role:agent').emit('transfer:incoming', {
               transferId: transferReq.id,
               callId: data.callId,
@@ -1556,16 +1772,15 @@ export function initSocketServer(io: SocketIOServer) {
               createdAt: transferReq.createdAt
             });
 
-            // If no staff is currently connected, create an urgent support ticket and notify caller
-            console.log(`[Transfer] No staff online for ${data.callId}. Creating urgent support ticket.`);
+            // Create preliminary open ticket so staff has record immediately
             try {
               const ticket = await prisma.supportTicket.create({
                 data: {
                   customerId: call.customerId,
                   customerName: call.customerName,
                   customerEmail: call.customerPhone || null,
-                  subject: `Live Escalation: ${transferReason.substring(0, 50)}`,
-                  description: `Customer transferred to human support during AI voice call (${transferReason}). Query: "${queryText}". Sentiment: ${sentimentResult.sentiment} (${sentimentResult.confidenceScore}%).`,
+                  subject: `Live Escalation (${transferReason})`,
+                  description: `Customer transferred during AI voice call (${transferReason}). Query: "${queryText}". Sentiment: ${sentimentResult.sentiment} (${sentimentResult.confidenceScore}). Callback offered.`,
                   priority: 'urgent',
                   status: 'open'
                 }
@@ -1574,14 +1789,10 @@ export function initSocketServer(io: SocketIOServer) {
               socket.emit('transfer:no_staff_available', {
                 callId: data.callId,
                 ticketId: ticket.id,
-                message: `All human support specialists and administrators are currently offline. We have logged your request as priority ticket #${ticket.id.slice(-6).toUpperCase()}.`
+                message: `Our human specialists are currently unavailable. We have created priority ticket #${ticket.id.slice(-6).toUpperCase()} and can arrange a callback.`
               });
-            } catch (ticketErr) {
-              console.error('[Transfer] Failed to create auto-ticket:', ticketErr);
-              socket.emit('transfer:no_staff_available', {
-                callId: data.callId,
-                message: 'All support specialists are currently offline. Please try again shortly or leave a message.'
-              });
+            } catch (err) {
+              console.warn('[Transfer] Failed to create preliminary ticket:', err);
             }
           }
         } else {
@@ -2787,6 +2998,7 @@ export function initSocketServer(io: SocketIOServer) {
           activeCallQueryLocks.delete(data.callId);
           callSessions.delete(data.callId);
           callReliabilityService.removeCallHealth(data.callId);
+          handoverService.clearTransferLock(data.callId);
 
           // Asynchronously trigger post-call AI intelligence analysis and conversation summary
           setTimeout(async () => {

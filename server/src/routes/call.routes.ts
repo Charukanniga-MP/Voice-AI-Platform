@@ -753,6 +753,7 @@ router.get('/my-history', authenticate, async (req: Request, res: Response) => {
         admin: { select: { name: true } },
         agent: { select: { name: true } },
         customer: { select: { id: true, name: true, email: true, phone: true } },
+        transferRequests: { orderBy: { createdAt: 'desc' } },
         sentimentRecords: { where: { isFinal: true } },
         intelligence: true,
         followUpTasks: true,

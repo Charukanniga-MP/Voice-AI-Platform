@@ -672,12 +672,12 @@ export const CustomerDashboard: React.FC = () => {
         ];
       });
 
-      if (data.isTransferring) {
+      if (data.isTransferring && !(data as any).isOfferingCallback) {
         setCallStatus('transferring');
       }
 
-      // Ensure listening stays active for continuous dialogue and barge-in
-      if (!data.isTransferring) {
+      // Ensure listening stays active for continuous dialogue, barge-in, or callback confirmation
+      if (!data.isTransferring || (data as any).isOfferingCallback) {
         startSpeechRecognition(callIdRef.current || '', false);
       }
 
@@ -761,6 +761,16 @@ export const CustomerDashboard: React.FC = () => {
           timestamp: new Date().toISOString()
         }
       ]);
+    });
+
+    // 8C. Callback scheduled successfully
+    socket.on('call:callback_scheduled', (data: { callId: string; ticketId: string; phone: string; message: string }) => {
+      console.log('[Customer] Priority callback scheduled:', data);
+      setTransferNotice({
+        message: `Priority callback confirmed for ${data.phone}. Ticket #${data.ticketId.slice(-6).toUpperCase()}`,
+        ticketId: data.ticketId
+      });
+      setCallStatus('active_ai');
     });
 
     // 8C. Transfer rejected by staff
@@ -2174,16 +2184,27 @@ export const CustomerDashboard: React.FC = () => {
                         </td>
 
                         <td className="py-3.5 px-4">
-                          <span
-                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${call.status === 'completed'
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : call.status === 'active'
-                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                : 'bg-slate-100 text-slate-700 border border-slate-200'
-                              }`}
-                          >
-                            {statusBadgeLabel}
-                          </span>
+                          <div className="flex flex-col gap-1 items-start">
+                            <span
+                              className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${call.status === 'completed'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : call.status === 'active'
+                                  ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                  : 'bg-slate-100 text-slate-700 border border-slate-200'
+                                }`}
+                            >
+                              {statusBadgeLabel}
+                            </span>
+                            {(call.transferred || call.transferReason || (call as any).transferRequests?.[0]?.reason) && (
+                              <span
+                                className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-100 text-amber-900 border border-amber-300 inline-flex items-center gap-1"
+                                title={`Transferred to human: ${call.transferReason || (call as any).transferRequests?.[0]?.reason}`}
+                              >
+                                <span>Handover:</span>
+                                <span className="truncate max-w-[120px]">{call.transferReason || (call as any).transferRequests?.[0]?.reason}</span>
+                              </span>
+                            )}
+                          </div>
                         </td>
 
                         <td className="py-3.5 px-4">
@@ -2465,6 +2486,17 @@ export const CustomerDashboard: React.FC = () => {
                 </button>
               </div>
             </div>
+
+            {/* Handover Notice if Call was Transferred */}
+            {(selectedHistoryCall.transferred || selectedHistoryCall.transferReason || (selectedHistoryCall as any).transferRequests?.[0]?.reason) && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-2.5 text-xs text-amber-900 shadow-2xs">
+                <Headphones className="w-4 h-4 text-amber-600 shrink-0" />
+                <div>
+                  <span className="font-bold block">Handover to Human Representative</span>
+                  <span className="text-[11px] text-amber-700">Reason: {selectedHistoryCall.transferReason || (selectedHistoryCall as any).transferRequests?.[0]?.reason}</span>
+                </div>
+              </div>
+            )}
 
             {/* Audio Recording Playback in Modal */}
             {(selectedHistoryCall.recordingUrl || selectedHistoryCall.recording || selectedHistoryCall.recordingStatus === 'completed' || selectedHistoryCall.duration > 2) && (
