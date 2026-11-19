@@ -4,9 +4,29 @@ import { te } from './locales/te.js';
 import { ml } from './locales/ml.js';
 import { kn } from './locales/kn.js';
 import { hi } from './locales/hi.js';
+import { bn } from './locales/bn.js';
+import { mr } from './locales/mr.js';
+import { ar } from './locales/ar.js';
+import { fr } from './locales/fr.js';
+import { de } from './locales/de.js';
+import { es } from './locales/es.js';
+import { zh } from './locales/zh.js';
+import { ja } from './locales/ja.js';
+import { ko } from './locales/ko.js';
+import { it } from './locales/it.js';
+import { pt } from './locales/pt.js';
+import { ru } from './locales/ru.js';
+import { tr } from './locales/tr.js';
+import { id } from './locales/id.js';
+import { vi } from './locales/vi.js';
 import { LanguageCode } from '../types.js';
 
-export { en, ta, te, ml, kn, hi };
+export {
+  en, ta, te, ml, kn, hi,
+  bn, mr, ar, fr, de, es,
+  zh, ja, ko, it, pt, ru,
+  tr, id, vi
+};
 export type { TranslationKey };
 
 export const translations: Record<string, Record<TranslationKey, string>> = {
@@ -15,7 +35,22 @@ export const translations: Record<string, Record<TranslationKey, string>> = {
   te,
   ml,
   kn,
-  hi
+  hi,
+  bn,
+  mr,
+  ar,
+  fr,
+  de,
+  es,
+  zh,
+  ja,
+  ko,
+  it,
+  pt,
+  ru,
+  tr,
+  id,
+  vi
 };
 
 export const translate = (
@@ -34,4 +69,3 @@ export const translate = (
 
   return text;
 };
-

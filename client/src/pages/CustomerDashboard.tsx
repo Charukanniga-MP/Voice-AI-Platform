@@ -14,7 +14,7 @@ import {
   PhoneCall, PhoneOff, Mic, MicOff, Volume2, VolumeX,
   Clock, ShieldAlert, Sparkles, MessageSquare, History, User as UserIcon,
   Headphones, Globe, Star, Users, CheckCircle2, RefreshCw, Settings,
-  Send, Download, Lightbulb, Play, Pause, Bot, Radio, FileText, CheckCircle
+  Send, Download, Lightbulb, Play, Pause, Bot, Radio, FileText, CheckCircle, Trash2
 } from 'lucide-react';
 import { SentimentBadge } from '../components/SentimentBadge.js';
 import { LiveSentimentCard } from '../components/LiveSentimentCard.js';
@@ -58,6 +58,8 @@ export const CustomerDashboard: React.FC = () => {
   const [liveLatency, setLiveLatency] = useState<number | null>(null);
   const speechEndTimeRef = useRef<number | null>(null);
   const currentAiSpeechTextRef = useRef('');
+  const lastAiSpokenTextRef = useRef('');
+  const lastAiSpokenTimeRef = useRef(0);
   const [textInput, setTextInput] = useState('');
 
   const lastSentQueryRef = useRef<{ text: string; time: number }>({ text: '', time: 0 });
@@ -93,6 +95,9 @@ export const CustomerDashboard: React.FC = () => {
   const [selectedIntelligenceCallId, setSelectedIntelligenceCallId] = useState<string | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(new Date());
+  const [deleteConfirmCallId, setDeleteConfirmCallId] = useState<string | null>(null);
+  const [isDeletingCall, setIsDeletingCall] = useState(false);
+  const [deleteToast, setDeleteToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [showAudioDeviceModal, setShowAudioDeviceModal] = useState(false);
   const [showRecordingConsentModal, setShowRecordingConsentModal] = useState(false);
   const [pendingRecordingCallType, setPendingRecordingCallType] = useState<'ai' | 'agent' | null>(null);
@@ -103,9 +108,8 @@ export const CustomerDashboard: React.FC = () => {
 
   // Call recording playback state
   const [playingRecordingId, setPlayingRecordingId] = useState<string | null>(null);
-  const [isRecordingPaused, setIsRecordingPaused] = useState(false);
-  const [playbackProgress, setPlaybackProgress] = useState<{ currentTime: number; duration: number } | null>(null);
   const activeAudioPlayerRef = useRef<HTMLAudioElement | null>(null);
+
   const activeAudioObjectUrlRef = useRef<string | null>(null);
 
   // Call session greeting and utterance deduplication locks
@@ -129,181 +133,71 @@ export const CustomerDashboard: React.FC = () => {
   });
 
   const handlePlayRecording = async (recordingUrl: string, recCallId: string) => {
-    // 1. If currently playing: toggle pause
-    if (playingRecordingId === recCallId && !isRecordingPaused && activeAudioPlayerRef.current) {
-      activeAudioPlayerRef.current.pause();
-      setIsRecordingPaused(true);
+    if (playingRecordingId === recCallId) {
+      activeAudioPlayerRef.current?.pause();
+      activeAudioPlayerRef.current = null;
+      if (activeAudioObjectUrlRef.current) {
+        URL.revokeObjectURL(activeAudioObjectUrlRef.current);
+        activeAudioObjectUrlRef.current = null;
+      }
+      setPlayingRecordingId(null);
       return;
     }
 
-    // 2. If paused: resume
-    if (playingRecordingId === recCallId && isRecordingPaused && activeAudioPlayerRef.current) {
-      try {
-        await activeAudioPlayerRef.current.play();
-        setIsRecordingPaused(false);
-        return;
-      } catch (err) {
-        console.warn('Playback resume error:', err);
-      }
-    }
-
-    // 3. Stop and clean up any previous audio playback
-    if (activeAudioPlayerRef.current) {
-      try {
-        activeAudioPlayerRef.current.pause();
-        activeAudioPlayerRef.current.removeAttribute('src');
-      } catch { }
-      activeAudioPlayerRef.current = null;
-    }
+    activeAudioPlayerRef.current?.pause();
     if (activeAudioObjectUrlRef.current) {
       URL.revokeObjectURL(activeAudioObjectUrlRef.current);
       activeAudioObjectUrlRef.current = null;
     }
 
     setPlayingRecordingId(recCallId);
-    setIsRecordingPaused(false);
-    setPlaybackProgress({ currentTime: 0, duration: 0 });
-
-    const currentToken = token || localStorage.getItem('kaira_token') || localStorage.getItem('token');
-    const audioSrc = (currentToken && !recordingUrl.includes('token='))
-      ? `${recordingUrl}${recordingUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(currentToken)}`
-      : recordingUrl;
-
-    const setupPlayerEvents = (player: HTMLAudioElement, objUrl?: string) => {
-      player.ontimeupdate = () => {
-        setPlaybackProgress({
-          currentTime: player.currentTime || 0,
-          duration: isFinite(player.duration) && player.duration > 0 ? player.duration : 0
-        });
-      };
-
-      player.onloadedmetadata = () => {
-        if (isFinite(player.duration) && player.duration > 0) {
-          setPlaybackProgress(prev => ({
-            currentTime: prev?.currentTime || 0,
-            duration: player.duration
-          }));
-        }
-      };
-
-      player.onended = () => {
-        setPlayingRecordingId(null);
-        setIsRecordingPaused(false);
-        setPlaybackProgress(null);
-        activeAudioPlayerRef.current = null;
-        if (objUrl) {
-          URL.revokeObjectURL(objUrl);
-          if (activeAudioObjectUrlRef.current === objUrl) {
-            activeAudioObjectUrlRef.current = null;
-          }
-        }
-      };
-    };
-
-    // Strategy A: Direct audio streaming via URL (instant HTTP 206 streaming)
     try {
-      const audio = new Audio();
-      audio.preload = 'auto';
-      activeAudioPlayerRef.current = audio;
-      setupPlayerEvents(audio);
-
-      // Strategy B fallback if direct stream fails
-      audio.onerror = async () => {
-        console.warn('[AudioPlayer] Direct streaming error, trying authenticated Blob fallback...');
-        try {
-          const res = await fetch(audioSrc, {
-            headers: currentToken ? { Authorization: `Bearer ${currentToken}` } : undefined
-          });
-
-          if (!res.ok) {
-            const errData = await res.json().catch(() => null);
-            throw new Error(errData?.error || `Unable to retrieve recording (HTTP ${res.status})`);
-          }
-
-          const blob = await res.blob();
-          if (!blob || !blob.size) {
-            throw new Error('The recording file is empty or still processing.');
-          }
-
-          const mimeType = res.headers.get('content-type') || (audioSrc.endsWith('.mp3') ? 'audio/mpeg' : audioSrc.endsWith('.wav') ? 'audio/wav' : 'audio/webm');
-          const typedBlob = blob.type ? blob : new Blob([blob], { type: mimeType });
-          const objectUrl = URL.createObjectURL(typedBlob);
-          activeAudioObjectUrlRef.current = objectUrl;
-
-          audio.src = objectUrl;
-          setupPlayerEvents(audio, objectUrl);
-          await audio.play();
-        } catch (fallbackErr: any) {
-          console.warn('[AudioPlayer] Blob fallback failed:', fallbackErr);
-          setPlayingRecordingId(null);
-          setIsRecordingPaused(false);
-          setPlaybackProgress(null);
-          activeAudioPlayerRef.current = null;
-          alert(fallbackErr.message || 'Unable to play recording. Check that the recording is available and try again.');
-        }
-      };
-
-      audio.src = audioSrc;
-      await audio.play();
-    } catch (directPlayErr: any) {
-      console.warn('[AudioPlayer] Direct play() promise rejected:', directPlayErr);
-      // If direct play was blocked by autoplay or format, try Blob fetch
-      try {
-        const res = await fetch(audioSrc, {
-          headers: currentToken ? { Authorization: `Bearer ${currentToken}` } : undefined
-        });
-        if (!res.ok) {
-          const errData = await res.json().catch(() => null);
-          throw new Error(errData?.error || `Recording request failed (HTTP ${res.status})`);
-        }
-        const blob = await res.blob();
-        if (!blob || !blob.size) throw new Error('The recording file is empty or still processing.');
-        const objectUrl = URL.createObjectURL(blob);
-        activeAudioObjectUrlRef.current = objectUrl;
-
-        const fallbackAudio = new Audio(objectUrl);
-        activeAudioPlayerRef.current = fallbackAudio;
-        setupPlayerEvents(fallbackAudio, objectUrl);
-        await fallbackAudio.play();
-      } catch (finalErr: any) {
-        setPlayingRecordingId(null);
-        setIsRecordingPaused(false);
-        setPlaybackProgress(null);
-        activeAudioPlayerRef.current = null;
-        alert(finalErr.message || 'Unable to play recording. Check that the recording is available and try again.');
+      const token = localStorage.getItem('kaira_token') || localStorage.getItem('token');
+      const response = await fetch(recordingUrl, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined
+      });
+      if (!response.ok) {
+        throw new Error(`Recording request failed (${response.status})`);
       }
-    }
-  };
 
-  const handleSeekRecording = (seconds: number) => {
-    if (activeAudioPlayerRef.current) {
-      activeAudioPlayerRef.current.currentTime = seconds;
-      setPlaybackProgress(prev => prev ? { ...prev, currentTime: seconds } : null);
-    }
-  };
+      const audioBlob = await response.blob();
+      if (!audioBlob.size) throw new Error('The recording file is empty');
 
-  const handleStopRecordingPlayback = () => {
-    if (activeAudioPlayerRef.current) {
-      activeAudioPlayerRef.current.pause();
+      const objectUrl = URL.createObjectURL(audioBlob);
+      activeAudioObjectUrlRef.current = objectUrl;
+      const audio = new Audio(objectUrl);
+      activeAudioPlayerRef.current = audio;
+      audio.onended = () => {
+        setPlayingRecordingId(null);
+        activeAudioPlayerRef.current = null;
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+        activeAudioObjectUrlRef.current = null;
+      };
+      audio.onerror = () => {
+        setPlayingRecordingId(null);
+        activeAudioPlayerRef.current = null;
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+        activeAudioObjectUrlRef.current = null;
+        alert('Unable to play recording. The recording may be unavailable or still processing.');
+      };
+      await audio.play();
+    } catch (err) {
+      console.warn('Playback error:', err);
+      setPlayingRecordingId(null);
       activeAudioPlayerRef.current = null;
+      if (activeAudioObjectUrlRef.current) {
+        URL.revokeObjectURL(activeAudioObjectUrlRef.current);
+        activeAudioObjectUrlRef.current = null;
+      }
+      alert('Unable to play recording. Check that the recording is available and try again.');
     }
-    if (activeAudioObjectUrlRef.current) {
-      URL.revokeObjectURL(activeAudioObjectUrlRef.current);
-      activeAudioObjectUrlRef.current = null;
-    }
-    setPlayingRecordingId(null);
-    setIsRecordingPaused(false);
-    setPlaybackProgress(null);
   };
+
 
   const handleDownloadRecording = async (recordingUrl: string, filename: string) => {
     try {
       const authToken = token || localStorage.getItem('kaira_token') || localStorage.getItem('token');
-      const fetchUrl = (authToken && !recordingUrl.includes('token='))
-        ? `${recordingUrl}${recordingUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(authToken)}&download=true`
-        : `${recordingUrl}${recordingUrl.includes('?') ? '&' : '?'}download=true`;
-
-      const response = await fetch(fetchUrl, {
+      const response = await fetch(recordingUrl, {
         headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
       });
       if (!response.ok) throw new Error(`Recording request failed (${response.status})`);
@@ -342,8 +236,17 @@ export const CustomerDashboard: React.FC = () => {
     message: string;
   } | null>(null);
 
-  // Auto-scroll transcript container only (prevents window scrolling)
+  // Independent transcript container ref & user scroll state
   const transcriptContainerRef = useRef<HTMLDivElement>(null);
+  const isUserScrolledUpRef = useRef<boolean>(false);
+
+  // Handle user manual scroll inside transcript container (keeps user in complete control)
+  const handleTranscriptScroll = () => {
+    const el = transcriptContainerRef.current;
+    if (!el) return;
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    isUserScrolledUpRef.current = !isNearBottom;
+  };
 
   // Listen to WebRTC automatic reconnection events
   useEffect(() => {
@@ -428,12 +331,14 @@ export const CustomerDashboard: React.FC = () => {
     });
   }, []);
 
+  // Independent container scrolling: Only scroll inner container when a new message arrives AND user is at the bottom
+  // NEVER scroll the window or Customer Dashboard page!
   useEffect(() => {
-    // Only scroll the internal transcript container, never the window
-    if (transcriptContainerRef.current) {
-      transcriptContainerRef.current.scrollTop = transcriptContainerRef.current.scrollHeight;
+    const el = transcriptContainerRef.current;
+    if (el && !isUserScrolledUpRef.current) {
+      el.scrollTop = el.scrollHeight;
     }
-  }, [transcripts, interimText]);
+  }, [transcripts]);
 
   // Set voice recognition language on mount and when language changes, and sync with active call session
   useEffect(() => {
@@ -503,6 +408,32 @@ export const CustomerDashboard: React.FC = () => {
       console.error('Failed to load call history:', err);
     } finally {
       setTimeout(() => setLoadingHistory(false), 450);
+    }
+  };
+
+  const handleDeleteCall = async (id: string) => {
+    setIsDeletingCall(true);
+    try {
+      const res = await fetch(`/api/calls/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || t('history.delete_error'));
+      }
+      setDeleteConfirmCallId(null);
+      setDeleteToast({ type: 'success', message: t('history.delete_success') });
+      setTimeout(() => setDeleteToast(null), 4000);
+      fetchHistory();
+    } catch (err: any) {
+      console.error('Delete call record failed:', err);
+      setDeleteToast({ type: 'error', message: err.message || t('history.delete_error') });
+      setTimeout(() => setDeleteToast(null), 4000);
+    } finally {
+      setIsDeletingCall(false);
     }
   };
 
@@ -651,8 +582,6 @@ export const CustomerDashboard: React.FC = () => {
       // Enforce single greeting per call session
       if (greetedCallsRef.current.has(data.callId) || data.greetingPlayed || !data.greeting) {
         console.log('[Customer] Greeting already played or suppressed for call:', data.callId);
-        setAiVisualState('listening');
-        voiceService.ensureListening();
         return;
       }
 
@@ -673,15 +602,14 @@ export const CustomerDashboard: React.FC = () => {
       setAiIsSpeaking(true);
       aiIsSpeakingRef.current = true;
       currentAiSpeechTextRef.current = data.greeting;
-      setAiVisualState('speaking');
+      lastAiSpokenTextRef.current = data.greeting;
+      lastAiSpokenTimeRef.current = Date.now();
 
       voiceService.speak(data.greeting, () => {
         setAiIsSpeaking(false);
         aiIsSpeakingRef.current = false;
         currentAiSpeechTextRef.current = '';
-        setAiVisualState('listening');
-        // Transition seamlessly to listening: activate mic so user response is captured immediately
-        voiceService.ensureListening();
+        lastAiSpokenTimeRef.current = Date.now();
       }, data.language, undefined, data.responseId);
     });
 
@@ -718,7 +646,8 @@ export const CustomerDashboard: React.FC = () => {
       setAiIsSpeaking(true);
       aiIsSpeakingRef.current = true;
       currentAiSpeechTextRef.current = data.answer;
-      setAiVisualState('speaking');
+      lastAiSpokenTextRef.current = data.answer;
+      lastAiSpokenTimeRef.current = Date.now();
 
       setTranscripts(prev => {
         const isDuplicate = prev.some(t =>
@@ -747,22 +676,18 @@ export const CustomerDashboard: React.FC = () => {
         setCallStatus('transferring');
       }
 
+      // Ensure listening stays active for continuous dialogue and barge-in
+      if (!data.isTransferring) {
+        startSpeechRecognition(callIdRef.current || '', false);
+      }
+
       // Play synthesized natural speech in customer's preferred language with SINGLE VOICE GUARANTEE
       voiceService.speak(data.answer, () => {
         setAiIsSpeaking(false);
         aiIsSpeakingRef.current = false;
         currentAiSpeechTextRef.current = '';
-        if (!data.isTransferring) {
-          setAiVisualState('listening');
-          voiceService.ensureListening();
-        }
+        lastAiSpokenTimeRef.current = Date.now();
       }, data.language || selectedLanguageRef.current, undefined, data.responseId);
-    });
-
-    socket.on('call:ai_thinking', (data: { callId: string; isThinking: boolean }) => {
-      if (data.isThinking) {
-        setAiVisualState('thinking');
-      }
     });
 
     // 7B. AI speech interrupted (barge-in broadcast)
@@ -906,14 +831,11 @@ export const CustomerDashboard: React.FC = () => {
     socket.on('call:resumed', () => setIsCallHeld(false));
 
     // 11. Call ended
-    socket.on('call:ended', async (data: { callId: string; duration?: number }) => {
+    socket.on('call:ended', (data: { callId: string; duration?: number }) => {
       setRatingComment('');
       setRatingVal(5);
       setRatingSubmitted(false);
       setRatingCallId(data.callId || callId);
-      if (webrtcManager.getIsRecording()) {
-        await webrtcManager.stopAndUploadRecording().catch((e) => console.warn('[Recording] Upload on call:ended error:', e));
-      }
       cleanupCall();
       fetchHistory();
     });
@@ -931,7 +853,6 @@ export const CustomerDashboard: React.FC = () => {
       socket.off('customer:queue_cancelled');
       socket.off('customer:call_accepted');
       socket.off('call:ready');
-      socket.off('call:ai_thinking');
       socket.off('call:ai_silenced');
       socket.off('call:ai_response');
       socket.off('call:interrupted');
@@ -998,7 +919,6 @@ export const CustomerDashboard: React.FC = () => {
     voiceService.onSpeechStart = () => {
       if (isMutedRef.current || isCallHeldRef.current) return;
       setIsCustomerSpeaking(true);
-      setAiVisualState('listening');
     };
 
     voiceService.startListening((text, isFinal, utteranceId) => {
@@ -1017,11 +937,16 @@ export const CustomerDashboard: React.FC = () => {
       }
 
       // --- ECHO GUARD & NATURAL VOICE INTERRUPTION (BARGE-IN) ---
-      if (!isHumanCall && trimmed.length > 0 && aiIsSpeakingRef.current) {
-        const isAiEcho = currentAiSpeechTextRef.current &&
-          currentAiSpeechTextRef.current.toLowerCase().trim().startsWith(trimmed.toLowerCase()) &&
-          trimmed.length < 6;
+      const currentAiText = (currentAiSpeechTextRef.current || '').toLowerCase().trim();
+      const recentAiText = (lastAiSpokenTextRef.current || '').toLowerCase().trim();
+      const timeSinceAiSpoke = Date.now() - lastAiSpokenTimeRef.current;
+      const lowerTrimmed = trimmed.toLowerCase();
 
+      // Check if recognized speech matches what AI is currently speaking or spoke within last 2.5s (acoustic echo prevention)
+      const isAiEcho = (currentAiText.length > 0 && (currentAiText.includes(lowerTrimmed) || lowerTrimmed.includes(currentAiText))) ||
+        (timeSinceAiSpoke < 2500 && recentAiText.length > 0 && (recentAiText.includes(lowerTrimmed) || lowerTrimmed.includes(recentAiText)));
+
+      if (!isHumanCall && trimmed.length > 0 && (aiIsSpeakingRef.current || (typeof window !== 'undefined' && window.speechSynthesis?.speaking))) {
         if (!isAiEcho) {
           voiceService.cancelSpeech();
           setAiIsSpeaking(false);
@@ -1036,13 +961,16 @@ export const CustomerDashboard: React.FC = () => {
 
       if (!isFinal) {
         setInterimText(text);
-        setIsCustomerSpeaking(true);
-        setAiVisualState('listening');
       } else {
         setInterimText('');
         setIsCustomerSpeaking(false);
-        setAiVisualState('thinking');
         if (!trimmed) return;
+
+        // Acoustic Echo Guard on final speech: suppress if this is an echo of AI speech
+        if (isAiEcho) {
+          console.log('[CustomerDashboard] Suppressed acoustic echo of AI speech:', trimmed);
+          return;
+        }
 
         // Deduplicate customer utterance dispatch
         if (utteranceId && dispatchedUtteranceIdsRef.current.has(utteranceId)) {
@@ -1089,10 +1017,9 @@ export const CustomerDashboard: React.FC = () => {
 
         const clientMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
         const socket = getSocket();
-        const targetCallId = activeCallId || callIdRef.current || callId;
         if (isHumanCall) {
           socket.emit('call:live_speech', {
-            callId: targetCallId,
+            callId: activeCallId,
             sender: 'customer',
             senderName: userRef.current?.name || 'Customer',
             text: text.trim(),
@@ -1100,7 +1027,7 @@ export const CustomerDashboard: React.FC = () => {
           });
         } else {
           socket.emit('call:query', {
-            callId: targetCallId,
+            callId: activeCallId,
             query: text.trim(),
             customerId: userRef.current?.id,
             duration,
@@ -1141,7 +1068,7 @@ export const CustomerDashboard: React.FC = () => {
   // 1. Customer initiates Support Agent Voice Call
   const handleStartAgentCall = async (consent: 'granted' | 'declined') => {
     recordingConsentRef.current = consent;
-    webrtcManager.setRecordingConsent(consent);
+    webrtcManager.setRecordingConsent('not_requested');
     try {
       // Check microphone permission first
       const perm = await audioDeviceManager.checkMicrophonePermission();
@@ -1164,11 +1091,6 @@ export const CustomerDashboard: React.FC = () => {
 
       const newCallId = 'kaira_agent_call_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
       setCallId(newCallId);
-      webrtcManager.setCallId(newCallId);
-
-      if (consent === 'granted') {
-        persistRecordingConsent(newCallId).catch(() => { });
-      }
 
       const socket = getSocket();
       socket.emit('customer:call_agent', {
@@ -1189,7 +1111,7 @@ export const CustomerDashboard: React.FC = () => {
   // 2. Customer initiates AI Voice Assistant Call
   const handleStartAiCall = async (consent: 'granted' | 'declined') => {
     recordingConsentRef.current = consent;
-    webrtcManager.setRecordingConsent(consent);
+    webrtcManager.setRecordingConsent('not_requested');
     try {
       // Check microphone permission first
       const perm = await audioDeviceManager.checkMicrophonePermission();
@@ -1211,22 +1133,13 @@ export const CustomerDashboard: React.FC = () => {
 
       const newCallId = 'kaira_ai_call_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
       setCallId(newCallId);
-      webrtcManager.setCallId(newCallId);
 
-      if (consent === 'granted') {
-        webrtcManager.setRecordingConsent('granted');
-        persistRecordingConsent(newCallId).catch(() => { });
-        webrtcManager.startRecording();
-      }
-
+      const activeUser = user || (localStorage.getItem('kaira_user') ? JSON.parse(localStorage.getItem('kaira_user')!) : null);
       const socket = getSocket();
-      const storedUser = localStorage.getItem('kaira_user') ? JSON.parse(localStorage.getItem('kaira_user')!) : null;
-      const activeUser = user || storedUser;
-
       socket.emit('call:start', {
         callId: newCallId,
         customerId: activeUser?.id,
-        customerName: activeUser?.name || 'Customer',
+        customerName: activeUser?.name,
         customerEmail: activeUser?.email,
         customerPhone: activeUser?.phone,
         language: selectedLanguage
@@ -1270,7 +1183,7 @@ export const CustomerDashboard: React.FC = () => {
     setShowRecordingConsentModal(false);
     setPendingRecordingCallType(null);
     recordingConsentRef.current = consent;
-    webrtcManager.setRecordingConsent(consent);
+    webrtcManager.setRecordingConsent('not_requested');
     if (callType === 'ai') void handleStartAiCall(consent);
     if (callType === 'agent') void handleStartAgentCall(consent);
   };
@@ -1285,20 +1198,14 @@ export const CustomerDashboard: React.FC = () => {
   };
 
   // 4. End Call
-  const handleEndCall = async () => {
-    const activeCallId = callId;
-    if (activeCallId) {
+  const handleEndCall = () => {
+    if (callId) {
       const socket = getSocket();
-      socket.emit('call:end', { callId: activeCallId, duration, endedBy: 'customer' });
+      socket.emit('call:end', { callId, duration, endedBy: 'customer' });
       setRatingComment('');
       setRatingVal(5);
       setRatingSubmitted(false);
-      setRatingCallId(activeCallId);
-    }
-    voiceService.cancelSpeech();
-    voiceService.stopListening();
-    if (webrtcManager.getIsRecording()) {
-      await webrtcManager.stopAndUploadRecording().catch((e) => console.warn('[Recording] Upload on end error:', e));
+      setRatingCallId(callId);
     }
     cleanupCall();
     fetchHistory();
@@ -1307,7 +1214,6 @@ export const CustomerDashboard: React.FC = () => {
   const cleanupCall = () => {
     setCallStatus('idle');
     setCallId(null);
-    setAiVisualState('idle');
     setAiIsSpeaking(false);
     aiIsSpeakingRef.current = false;
     currentAiSpeechTextRef.current = '';
@@ -1330,938 +1236,1083 @@ export const CustomerDashboard: React.FC = () => {
     setTimeout(fetchHistory, 600);
   };
 
-// Submit Rating
-const handleRatingSubmit = async (stars: number) => {
-  setRatingVal(stars);
-  if (ratingCallId && token) {
-    try {
-      const response = await fetch(`/api/calls/${ratingCallId}/rating`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ rating: stars, comment: ratingComment })
-      });
-      if (!response.ok) throw new Error('Could not save call feedback');
-    } catch (e) {
-      console.error('Failed to save call feedback:', e);
-      window.alert('Could not save your feedback. Please try again.');
-      return;
+  // Submit Rating
+  const handleRatingSubmit = async (stars: number) => {
+    setRatingVal(stars);
+    if (ratingCallId && token) {
+      try {
+        const response = await fetch(`/api/calls/${ratingCallId}/rating`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ rating: stars, comment: ratingComment })
+        });
+        if (!response.ok) throw new Error('Could not save call feedback');
+      } catch (e) {
+        console.error('Failed to save call feedback:', e);
+        window.alert('Could not save your feedback. Please try again.');
+        return;
+      }
     }
-  }
-  setRatingSubmitted(true);
-  setTimeout(() => {
-    setRatingCallId(null);
-    setRatingSubmitted(false);
-  }, 2500);
-};
+    setRatingSubmitted(true);
+    setTimeout(() => {
+      setRatingCallId(null);
+      setRatingSubmitted(false);
+    }, 2500);
+  };
 
-// Toggle Mute
-const handleToggleMute = () => {
-  if (callStatus === 'active_agent' || callStatus === 'active_admin') {
-    const muted = webrtcManager.toggleMute();
-    setIsMuted(muted);
-    isMutedRef.current = muted;
-  } else {
-    setIsMuted(prev => {
-      const next = !prev;
-      isMutedRef.current = next;
-      return next;
-    });
-  }
-};
+  // Toggle Mute
+  const handleToggleMute = () => {
+    if (callStatus === 'active_agent' || callStatus === 'active_admin') {
+      const muted = webrtcManager.toggleMute();
+      setIsMuted(muted);
+      isMutedRef.current = muted;
+    } else {
+      setIsMuted(prev => {
+        const next = !prev;
+        isMutedRef.current = next;
+        return next;
+      });
+    }
+  };
 
-// Change Volume
-const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-  const val = parseFloat(e.target.value);
-  setVolume(val);
-  webrtcManager.setVolume(val);
-  voiceService.setVolume(val);
-  voiceOutputController.setVolume(val);
-};
+  // Change Volume
+  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseFloat(e.target.value);
+    setVolume(val);
+    webrtcManager.setVolume(val);
+    voiceService.setVolume(val);
+    voiceOutputController.setVolume(val);
+  };
 
-const formatDuration = (sec: number) => {
-  const m = Math.floor(sec / 60).toString().padStart(2, '0');
-  const s = (sec % 60).toString().padStart(2, '0');
-  return `${m}:${s}`;
-};
+  const formatDuration = (sec: number) => {
+    const m = Math.floor(sec / 60).toString().padStart(2, '0');
+    const s = (sec % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
 
-const isCallActive = ['connecting', 'ringing', 'queued', 'active_agent', 'active_ai', 'transferring', 'active_admin'].includes(callStatus);
+  const isCallActive = ['connecting', 'ringing', 'queued', 'active_agent', 'active_ai', 'transferring', 'active_admin'].includes(callStatus);
 
-return (
-  <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 sm:space-y-8">
-    {/* Welcome & Language Selection Banner */}
-    <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-indigo-800 rounded-3xl p-4 sm:p-6 lg:p-8 text-white shadow-xl shadow-blue-100 relative overflow-hidden">
-      <div className="absolute -right-10 -bottom-10 w-72 h-72 rounded-full bg-white/10 blur-2xl pointer-events-none" />
-      <div className="relative z-10 max-w-3xl space-y-3.5 sm:space-y-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-rose-50 border border-rose-200 rounded-lg">
-            <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping" />
-            <span className="text-[10px] font-bold text-rose-700 uppercase tracking-wider">REC</span>
-          </div>
-
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-white/20 text-white backdrop-blur-xs border border-white/20">
-            <Sparkles className="w-3.5 h-3.5" />
-            {t('dashboard.platform_badge')}
-          </span>
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-400/20 text-emerald-200 border border-emerald-400/30">
-            {t('dashboard.supported_languages_badge')}
-          </span>
-        </div>
-
-        <h1 className="text-xl sm:text-2xl lg:text-3xl font-extrabold tracking-tight">
-          {t('dashboard.welcome_user', { name: user?.name || 'Valued Customer' })}
-        </h1>
-        <p className="text-blue-100 text-xs sm:text-sm leading-relaxed">
-          {t('dashboard.banner_desc')}
-        </p>
-      </div>
-    </div>
-
-    {/* Main Calling Stage Console */}
-    <div className="bg-white rounded-3xl shadow-xl shadow-slate-100 border border-slate-200/80 overflow-hidden">
-      {/* Top Session Bar */}
-      <div className="px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 bg-slate-50/70">
-        <div className="flex items-center gap-3">
-          <div
-            className={`w-3.5 h-3.5 rounded-full shrink-0 ${callStatus === 'idle'
-              ? 'bg-slate-300'
-              : callStatus === 'queued'
-                ? 'bg-amber-500 animate-pulse'
-                : callStatus === 'ringing'
-                  ? 'bg-indigo-500 animate-ping'
-                  : 'bg-emerald-500 animate-pulse'
-              }`}
-          />
-          <div>
-            <h2 className="text-sm font-bold text-slate-800">{t('call.session_title')}</h2>
-            <p className="text-xs text-slate-500">
-              {callStatus === 'idle' && t('call.status_ready', { language: SUPPORTED_LANGUAGES[selectedLanguage]?.name, nativeName: SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName })}
-              {callStatus === 'connecting' && t('call.status_connecting')}
-              {callStatus === 'ringing' && t('call.status_ringing', { name: activePartner?.name || 'Agent' })}
-              {callStatus === 'queued' && t('call.status_queued', { position: queueInfo?.position || 1 })}
-              {callStatus === 'active_agent' && t('call.status_active_agent', { name: activePartner?.name || '', language: SUPPORTED_LANGUAGES[selectedLanguage]?.name })}
-              {callStatus === 'active_ai' && (aiIsSpeaking ? t('call.status_ai_speaking') : t('call.status_ai_listening'))}
-              {callStatus === 'transferring' && t('call.status_transferring')}
-              {callStatus === 'active_admin' && t('call.status_active_admin', { name: activePartner?.name || '' })}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
-          {/* Live Call Quality Indicator */}
-          <CallQualityIndicator isCallActive={isCallActive} />
-
-          {/* Audio Device Settings Button */}
-          <button
-            onClick={() => setShowAudioDeviceModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50 text-slate-700 hover:text-blue-700 rounded-xl text-xs font-semibold shadow-2xs transition-all cursor-pointer min-h-[36px]"
-            title="Audio & Microphone Settings"
-          >
-            <Settings className="w-3.5 h-3.5 text-slate-500" />
-            <span className="hidden sm:inline">Audio Settings</span>
-          </button>
-
-          {/* Explicit Jump to Call History */}
-          <button
-            type="button"
-            onClick={() => document.getElementById('call-history-section')?.scrollIntoView({ behavior: 'smooth' })}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-xl text-xs font-semibold shadow-2xs transition-all cursor-pointer min-h-[36px]"
-            title="Jump to Call History & AI Summary"
-          >
-            <History className="w-3.5 h-3.5 text-slate-500" />
-            <span className="hidden sm:inline">Call History</span>
-          </button>
-
-          {/* Live Timer */}
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-700 shadow-2xs min-h-[36px]">
-            <Clock className="w-3.5 h-3.5 text-slate-400" />
-            {formatDuration(duration)}
-          </div>
-
-          {/* Microphone Status */}
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-600 shadow-2xs min-h-[36px]">
-            {isMuted ? (
-              <>
-                <MicOff className="w-3.5 h-3.5 text-red-500" />
-                <span className="text-red-600 font-semibold">{t('call.mic_muted')}</span>
-              </>
-            ) : (
-              <>
-                <Mic className="w-3.5 h-3.5 text-emerald-500" />
-                <span className="text-slate-700 font-semibold">{t('call.mic_live')}</span>
-              </>
-            )}
-          </div>
+  return (
+    <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 sm:space-y-8">
+      {/* Welcome Banner */}
+      <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-indigo-800 rounded-3xl p-4 sm:p-6 lg:p-8 text-white shadow-xl shadow-blue-100 relative overflow-hidden">
+        <div className="absolute -right-10 -bottom-10 w-72 h-72 rounded-full bg-white/10 blur-2xl pointer-events-none" />
+        <div className="relative z-10 max-w-3xl space-y-3 sm:space-y-3.5">
+          <h1 className="text-xl sm:text-2xl lg:text-3xl font-extrabold tracking-tight">
+            {t('dashboard.welcome_user', { name: user?.name || 'Valued Customer' })}
+          </h1>
+          <p className="text-blue-100 text-xs sm:text-sm leading-relaxed">
+            {t('dashboard.banner_desc')}
+          </p>
         </div>
       </div>
 
-      {/* Central Call Actions & Active UI */}
-      <div className="p-4 sm:p-8 text-center flex flex-col items-center justify-center">
-        {callStatus === 'idle' && (
-          <div className="w-full max-w-2xl py-2 sm:py-4 space-y-4 sm:space-y-6">
-            {/* PRIMARY HERO: Call KAIRA AI Voice Agent */}
-            <div className="p-4 sm:p-6 lg:p-8 rounded-3xl border-2 border-emerald-200/80 bg-gradient-to-br from-emerald-50/60 via-white to-teal-50/40 text-left shadow-xl shadow-emerald-100/50 relative overflow-hidden transition-all hover:border-emerald-400">
-              <div className="absolute -top-12 -right-12 w-48 h-48 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
+      {/* Main Calling Stage Console */}
+      <div className="bg-white rounded-3xl shadow-xl shadow-slate-100 border border-slate-200/80 overflow-hidden">
+        {/* Top Session Bar */}
+        <div className="px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 bg-slate-50/70">
+          <div className="flex items-center gap-3">
+            <div
+              className={`w-3.5 h-3.5 rounded-full shrink-0 ${callStatus === 'idle'
+                ? 'bg-slate-300'
+                : callStatus === 'queued'
+                  ? 'bg-amber-500 animate-pulse'
+                  : callStatus === 'ringing'
+                    ? 'bg-indigo-500 animate-ping'
+                    : 'bg-emerald-500 animate-pulse'
+                }`}
+            />
+            <div>
+              <h2 className="text-sm font-bold text-slate-800">{t('call.session_title')}</h2>
+              <p className="text-xs text-slate-500">
+                {callStatus === 'idle' && t('call.status_ready', { language: SUPPORTED_LANGUAGES[selectedLanguage]?.name, nativeName: SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName })}
+                {callStatus === 'connecting' && t('call.status_connecting')}
+                {callStatus === 'ringing' && t('call.status_ringing', { name: activePartner?.name || 'Agent' })}
+                {callStatus === 'queued' && t('call.status_queued', { position: queueInfo?.position || 1 })}
+                {callStatus === 'active_agent' && t('call.status_active_agent', { name: activePartner?.name || '', language: SUPPORTED_LANGUAGES[selectedLanguage]?.name })}
+                {callStatus === 'active_ai' && (aiIsSpeaking ? t('call.status_ai_speaking') : t('call.status_ai_listening'))}
+                {callStatus === 'transferring' && t('call.status_transferring')}
+                {callStatus === 'active_admin' && t('call.status_active_admin', { name: activePartner?.name || '' })}
+              </p>
+            </div>
+          </div>
 
-              <div className="relative z-10 space-y-4 sm:space-y-5">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-lg shadow-emerald-500/30 shrink-0">
-                    <Bot className="w-8 h-8 sm:w-9 sm:h-9" />
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+            {/* Live Call Quality Indicator */}
+            <CallQualityIndicator isCallActive={isCallActive} />
+
+            {/* Audio Device Settings Button */}
+            <button
+              onClick={() => setShowAudioDeviceModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50 text-slate-700 hover:text-blue-700 rounded-xl text-xs font-semibold shadow-2xs transition-all cursor-pointer min-h-[36px]"
+              title={t('device.modal_title')}
+            >
+              <Settings className="w-3.5 h-3.5 text-slate-500" />
+              <span className="hidden sm:inline">{t('device.modal_title')}</span>
+            </button>
+
+            {/* Live Timer */}
+            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-700 shadow-2xs min-h-[36px]">
+              <Clock className="w-3.5 h-3.5 text-slate-400" />
+              {formatDuration(duration)}
+            </div>
+
+            {/* Microphone Status */}
+            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-600 shadow-2xs min-h-[36px]">
+              {isMuted ? (
+                <>
+                  <MicOff className="w-3.5 h-3.5 text-red-500" />
+                  <span className="text-red-600 font-semibold">{t('call.mic_muted')}</span>
+                </>
+              ) : (
+                <>
+                  <Mic className="w-3.5 h-3.5 text-emerald-500" />
+                  <span className="text-slate-700 font-semibold">{t('call.mic_live')}</span>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Central Call Actions & Active UI */}
+        <div className="p-4 sm:p-8 text-center flex flex-col items-center justify-center">
+          {callStatus === 'idle' && (
+            <div className="w-full max-w-2xl py-2 sm:py-4 space-y-4 sm:space-y-6">
+              {/* PRIMARY HERO: Call KAIRA AI Voice Agent */}
+              <div className="p-4 sm:p-6 lg:p-8 rounded-3xl border-2 border-emerald-200/80 bg-gradient-to-br from-emerald-50/60 via-white to-teal-50/40 text-left shadow-xl shadow-emerald-100/50 relative overflow-hidden transition-all hover:border-emerald-400">
+                <div className="absolute -top-12 -right-12 w-48 h-48 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
+
+                <div className="relative z-10 space-y-4 sm:space-y-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-lg shadow-emerald-500/30 shrink-0">
+                      <Bot className="w-8 h-8 sm:w-9 sm:h-9" />
+                    </div>
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 self-start sm:self-auto">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      24/7 INSTANT AI SUPPORT • NO WAITING
+                    </span>
                   </div>
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 self-start sm:self-auto">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                    24/7 INSTANT AI SUPPORT • NO WAITING
-                  </span>
-                </div>
 
-                <div>
-                  <h3 className="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight">
-                    Call KAIRA AI Voice Agent
-                  </h3>
-                  <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
-                    Instant, human-like voice conversation in <strong>{SUPPORTED_LANGUAGES[selectedLanguage]?.name} ({SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName})</strong>. Connect directly to our autonomous AI voice agent with zero wait time. Answers questions on products, pricing, policies, technical issues, account inquiries, and general topics with continuous dialogue and voice interruption.
-                  </p>
-                </div>
+                  <div>
+                    <h3 className="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight">
+                      {t('call.card_ai_title')}
+                    </h3>
+                    <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
+                      {t('call.card_ai_desc')}
+                    </p>
+                  </div>
 
-                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 text-[10px] sm:text-[11px] font-semibold text-slate-500">
-                  <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-emerald-700 flex items-center gap-1 shadow-2xs">
-                    ⚡ Ultra-fast speech (&lt;1.2s)
-                  </span>
-                  <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 flex items-center gap-1 shadow-2xs">
-                    🌐 Multiple Languages Supported
-                  </span>
-                  <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 flex items-center gap-1 shadow-2xs">
-                    🎙️ Voice Interruption
-                  </span>
-                </div>
+                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 text-[10px] sm:text-[11px] font-semibold text-slate-500">
+                    <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-emerald-700 flex items-center gap-1 shadow-2xs">
+                      ⚡ &lt;1.2s
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 flex items-center gap-1 shadow-2xs">
+                      🌐 {SUPPORTED_LANGUAGES[selectedLanguage]?.name} ({SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName})
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 flex items-center gap-1 shadow-2xs">
+                      🎙️ HD Voice
+                    </span>
+                  </div>
 
+                  <button
+                    onClick={() => requestRecordingConsent('ai')}
+                    className="w-full min-h-[50px] sm:min-h-[54px] py-3.5 sm:py-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-green-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white font-extrabold text-sm sm:text-base shadow-xl shadow-emerald-600/30 hover:shadow-2xl hover:shadow-emerald-600/40 active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-2 sm:gap-3"
+                  >
+                    <PhoneCall className="w-5 h-5 animate-bounce" />
+                    <span>{t('call.card_ai_btn')}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* SECONDARY OPTION: Live Support Specialist */}
+              <div className="p-4 sm:p-5 rounded-2xl border border-slate-200/90 bg-white text-left flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center shrink-0">
+                    <Headphones className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-800">{t('call.card_agent_title')}</h4>
+                    <p className="text-[11px] text-slate-500">
+                      {t('call.card_agent_desc', { language: SUPPORTED_LANGUAGES[selectedLanguage]?.name, nativeName: SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName })}
+                    </p>
+                  </div>
+                </div>
                 <button
-                  onClick={() => requestRecordingConsent('ai')}
-                  className="w-full min-h-[50px] sm:min-h-[54px] py-3.5 sm:py-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-green-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white font-extrabold text-sm sm:text-base shadow-xl shadow-emerald-600/30 hover:shadow-2xl hover:shadow-emerald-600/40 active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-2 sm:gap-3"
+                  onClick={() => requestRecordingConsent('agent')}
+                  className="px-4 py-2.5 rounded-xl border border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold cursor-pointer transition-colors flex items-center justify-center gap-2"
                 >
-                  <PhoneCall className="w-5 h-5 animate-bounce" />
-                  <span>Call AI Voice Agent Now</span>
+                  <PhoneCall className="w-3.5 h-3.5 text-slate-500" />
+                  <span>{t('call.card_agent_btn')}</span>
                 </button>
               </div>
             </div>
+          )}
 
-            {/* SECONDARY OPTION: Live Support Specialist */}
-            <div className="p-4 sm:p-5 rounded-2xl border border-slate-200/90 bg-white text-left flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center shrink-0">
-                  <Headphones className="w-5 h-5" />
-                </div>
+          {/* Queue Waiting Screen */}
+          {callStatus === 'queued' && (
+            <div className="w-full max-w-md py-6 space-y-6">
+              <div className="w-20 h-20 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center mx-auto animate-pulse">
+                <Users className="w-10 h-10" />
+              </div>
+              <div className="space-y-2">
+                <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-amber-50 text-amber-800 border border-amber-200">
+                  {t('queue.all_busy')}
+                </span>
+                <h3 className="text-xl font-extrabold text-slate-900">{t('queue.in_queue_title')}</h3>
+                <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                  Your call is a request until an agent accepts it. {t('queue.in_queue_desc', { language: SUPPORTED_LANGUAGES[selectedLanguage]?.name })}
+                </p>
+              </div>
+
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-around">
                 <div>
-                  <h4 className="text-xs font-bold text-slate-800">Prefer human assistance?</h4>
-                  <p className="text-[11px] text-slate-500">
-                    Connect with an authorized customer support specialist.
-                  </p>
+                  <div className="text-xs text-slate-400 font-semibold uppercase">{t('queue.position_label')}</div>
+                  <div className="text-2xl font-black text-indigo-700">#{queueInfo?.position || 1}</div>
+                </div>
+                <div className="h-8 w-px bg-slate-200" />
+                <div>
+                  <div className="text-xs text-slate-400 font-semibold uppercase">{t('queue.wait_time_label')}</div>
+                  <div className="text-2xl font-black text-slate-800">~{queueInfo?.estimatedWaitTime || 45}s</div>
                 </div>
               </div>
+
               <button
-                onClick={() => requestRecordingConsent('agent')}
-                className="px-4 py-2.5 rounded-xl border border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold cursor-pointer transition-colors flex items-center justify-center gap-2"
+                onClick={handleCancelQueue}
+                className="px-6 py-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition-colors cursor-pointer"
               >
-                <PhoneCall className="w-3.5 h-3.5 text-slate-500" />
-                <span>Call Human Agent</span>
+                {t('queue.cancel_btn')}
               </button>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Queue Waiting Screen */}
-        {callStatus === 'queued' && (
-          <div className="w-full max-w-md py-6 space-y-6">
-            <div className="w-20 h-20 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center mx-auto animate-pulse">
-              <Users className="w-10 h-10" />
-            </div>
-            <div className="space-y-2">
-              <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-amber-50 text-amber-800 border border-amber-200">
-                {t('queue.all_busy')}
-              </span>
-              <h3 className="text-xl font-extrabold text-slate-900">{t('queue.in_queue_title')}</h3>
-              <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                Your call is a request until an agent accepts it. {t('queue.in_queue_desc', { language: SUPPORTED_LANGUAGES[selectedLanguage]?.name })}
-              </p>
-            </div>
-
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-around">
-              <div>
-                <div className="text-xs text-slate-400 font-semibold uppercase">{t('queue.position_label')}</div>
-                <div className="text-2xl font-black text-indigo-700">#{queueInfo?.position || 1}</div>
-              </div>
-              <div className="h-8 w-px bg-slate-200" />
-              <div>
-                <div className="text-xs text-slate-400 font-semibold uppercase">{t('queue.wait_time_label')}</div>
-                <div className="text-2xl font-black text-slate-800">~{queueInfo?.estimatedWaitTime || 45}s</div>
-              </div>
-            </div>
-
-            <button
-              onClick={handleCancelQueue}
-              className="px-6 py-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition-colors cursor-pointer"
-            >
-              {t('queue.cancel_btn')}
-            </button>
-          </div>
-        )}
-
-        {/* Active Call State Graphic & Controls */}
-        {['connecting', 'ringing', 'active_agent', 'active_ai', 'transferring', 'active_admin'].includes(callStatus) && (
-          <div className="w-full max-w-xl space-y-6 py-2">
-            {/* Caller Identity Indicator */}
-            <div className="mx-auto flex flex-wrap items-center justify-between gap-3 px-5 py-3 bg-slate-50 border border-slate-200/90 rounded-2xl shadow-xs text-left w-full">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
-                  {user?.name?.charAt(0) || 'C'}
-                </div>
-                <div>
-                  <div className="text-xs font-black text-slate-900">{user?.name || 'Customer'}</div>
-                  <div className="text-[11px] text-slate-500 font-mono flex flex-wrap items-center gap-2">
-                    <span>ID: #{user?.id ? user.id.slice(-8).toUpperCase() : 'CUST-001'}</span>
-                    {user?.email && <span>• {user.email}</span>}
-                    {user?.phone && <span>• Tel: {user.phone}</span>}
+          {/* Active Call State Graphic & Controls */}
+          {['connecting', 'ringing', 'active_agent', 'active_ai', 'transferring', 'active_admin'].includes(callStatus) && (
+            <div className="w-full max-w-xl space-y-6 py-2">
+              {/* Caller Identity Indicator */}
+              <div className="mx-auto flex flex-wrap items-center justify-between gap-3 px-5 py-3 bg-slate-50 border border-slate-200/90 rounded-2xl shadow-xs text-left w-full">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                    {user?.name?.charAt(0) || 'C'}
                   </div>
-                </div>
-              </div>
-              <div className="text-right">
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                  Language: {SUPPORTED_LANGUAGES[selectedLanguage]?.name}
-                </span>
-              </div>
-            </div>
-
-            {/* Dedicated AI Agent Avatar with Real-time State Indicators */}
-            <div className="relative flex flex-col items-center justify-center py-4">
-              <div className="relative mb-3">
-                {/* Visual Status Halo Ring */}
-                <div
-                  className={`w-28 h-28 rounded-full flex items-center justify-center transition-all duration-500 ${aiVisualState === 'speaking'
-                    ? 'bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 p-1 animate-pulse shadow-xl shadow-indigo-500/40 ring-4 ring-indigo-300/50'
-                    : aiVisualState === 'thinking'
-                      ? 'bg-gradient-to-tr from-amber-400 via-purple-500 to-indigo-600 p-1 animate-spin shadow-lg shadow-amber-400/30'
-                      : aiVisualState === 'listening'
-                        ? 'bg-gradient-to-tr from-emerald-500 to-teal-400 p-1 shadow-lg shadow-emerald-500/30 ring-4 ring-emerald-300/40 animate-pulse'
-                        : 'bg-slate-200 p-1 shadow-xs'
-                    }`}
-                >
-                  <div className="w-full h-full bg-white rounded-full flex items-center justify-center shadow-inner">
-                    <div className="w-22 h-22 rounded-full bg-gradient-to-tr from-indigo-600 to-teal-600 text-white flex items-center justify-center shadow-md">
-                      {callStatus === 'active_admin' || callStatus === 'active_agent' ? (
-                        <Headphones className="w-10 h-10 animate-pulse" />
-                      ) : aiVisualState === 'speaking' ? (
-                        <Volume2 className="w-10 h-10 animate-bounce" />
-                      ) : aiVisualState === 'thinking' ? (
-                        <Sparkles className="w-10 h-10 animate-spin" />
-                      ) : (
-                        <Bot className="w-10 h-10" />
-                      )}
+                  <div>
+                    <div className="text-xs font-black text-slate-900">{user?.name || 'Customer'}</div>
+                    <div className="text-[11px] text-slate-500 font-mono flex flex-wrap items-center gap-2">
+                      <span>ID: #{user?.id ? user.id.slice(-8).toUpperCase() : 'CUST-001'}</span>
+                      {user?.email && <span>• {user.email}</span>}
+                      {user?.phone && <span>• Tel: {user.phone}</span>}
                     </div>
                   </div>
                 </div>
-
-                {/* Connected Live Badge */}
-                <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 whitespace-nowrap px-3 py-0.5 bg-white border border-slate-200 rounded-full shadow-xs flex items-center gap-1.5 text-[10px] font-bold text-slate-700">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                  <span>CONNECTED</span>
+                <div className="text-right">
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    Language: {SUPPORTED_LANGUAGES[selectedLanguage]?.name}
+                  </span>
                 </div>
               </div>
 
-              <h3 className="text-base font-extrabold text-slate-900 mt-2">
-                {activePartner?.name || 'KAIRA AI Support Specialist'}
-              </h3>
-              <p className="text-xs text-slate-500">
-                {callStatus === 'active_admin' || callStatus === 'active_agent'
-                  ? 'Human Support Specialist (Two-Way Voice Connected)'
-                  : 'AI-Powered Voice Customer Support Platform'}
-              </p>
-
-              {/* Status Indicator Banners */}
-              <div className="mt-3">
-                {aiVisualState === 'listening' && (
-                  <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold animate-pulse">
-                    <Mic className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Listening... (Speak your question now)</span>
+              {/* Dedicated AI Agent Avatar with Real-time State Indicators */}
+              <div className="relative flex flex-col items-center justify-center py-4">
+                <div className="relative mb-3">
+                  {/* Visual Status Halo Ring */}
+                  <div
+                    className={`w-28 h-28 rounded-full flex items-center justify-center transition-all duration-500 ${aiVisualState === 'speaking'
+                      ? 'bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 p-1 animate-pulse shadow-xl shadow-indigo-500/40 ring-4 ring-indigo-300/50'
+                      : aiVisualState === 'thinking'
+                        ? 'bg-gradient-to-tr from-amber-400 via-purple-500 to-indigo-600 p-1 animate-spin shadow-lg shadow-amber-400/30'
+                        : aiVisualState === 'listening'
+                          ? 'bg-gradient-to-tr from-emerald-500 to-teal-400 p-1 shadow-lg shadow-emerald-500/30 ring-4 ring-emerald-300/40 animate-pulse'
+                          : 'bg-slate-200 p-1 shadow-xs'
+                      }`}
+                  >
+                    <div className="w-full h-full bg-white rounded-full flex items-center justify-center shadow-inner">
+                      <div className="w-22 h-22 rounded-full bg-gradient-to-tr from-indigo-600 to-teal-600 text-white flex items-center justify-center shadow-md">
+                        {callStatus === 'active_admin' || callStatus === 'active_agent' ? (
+                          <Headphones className="w-10 h-10 animate-pulse" />
+                        ) : aiVisualState === 'speaking' ? (
+                          <Volume2 className="w-10 h-10 animate-bounce" />
+                        ) : aiVisualState === 'thinking' ? (
+                          <Sparkles className="w-10 h-10 animate-spin" />
+                        ) : (
+                          <Bot className="w-10 h-10" />
+                        )}
+                      </div>
+                    </div>
                   </div>
-                )}
 
-                {aiVisualState === 'thinking' && (
-                  <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold animate-pulse">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-600 animate-spin" />
-                    <span>Thinking & searching Knowledge Base...</span>
+                  {/* Connected Live Badge */}
+                  <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 whitespace-nowrap px-3 py-0.5 bg-white border border-slate-200 rounded-full shadow-xs flex items-center gap-1.5 text-[10px] font-bold text-slate-700">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                    <span>CONNECTED</span>
                   </div>
-                )}
+                </div>
 
-                {aiVisualState === 'speaking' && (
-                  <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-800 text-xs font-bold animate-pulse">
-                    <Volume2 className="w-3.5 h-3.5 text-indigo-600" />
-                    <span>Speaking with natural AI voice...</span>
-                  </div>
-                )}
+                <h3 className="text-base font-extrabold text-slate-900 mt-2">
+                  {activePartner?.name || 'KAIRA AI Support Specialist'}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  {callStatus === 'active_admin' || callStatus === 'active_agent'
+                    ? 'Human Support Specialist (Two-Way Voice Connected)'
+                    : 'AI-Powered Voice Customer Support Platform'}
+                </p>
 
-                {aiVisualState === 'idle' && callStatus === 'connecting' && (
-                  <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold">
-                    <Radio className="w-3.5 h-3.5 text-slate-500 animate-pulse" />
-                    <span>Connecting call session...</span>
-                  </div>
-                )}
-              </div>
-            </div>
+                {/* Status Indicator Banners (Fixed min-height to eliminate layout shifts) */}
+                <div className="mt-3 min-h-[36px] flex items-center justify-center">
+                  {aiVisualState === 'listening' && (
+                    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold animate-pulse">
+                      <Mic className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Listening... (Speak your question now)</span>
+                    </div>
+                  )}
 
-            {/* Soundwave animation with conversational state indication */}
-            <div className="h-24 flex flex-col items-center justify-center gap-3 py-2">
-              <div className="flex items-center justify-center gap-1.5">
-                <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-1' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-1' : 'bg-slate-300 h-3'}`} />
-                <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-2' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-2' : 'bg-slate-300 h-5'}`} />
-                <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-3' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-3' : 'bg-slate-300 h-8'}`} />
-                <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-4' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-4' : 'bg-slate-300 h-4'}`} />
-                <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-5' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-5' : 'bg-slate-300 h-7'}`} />
-                <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-2' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-2' : 'bg-slate-300 h-5'}`} />
-                <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-4' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-4' : 'bg-slate-300 h-3'}`} />
-              </div>
+                  {aiVisualState === 'thinking' && (
+                    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold animate-pulse">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-600 animate-spin" />
+                      <span>Thinking & searching Knowledge Base...</span>
+                    </div>
+                  )}
 
-              {/* State Pills */}
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                {callStatus === 'active_ai' && (
-                  <>
-                    {(aiVisualState === 'speaking' || aiIsSpeaking) ? (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                        <Volume2 className="w-3.5 h-3.5 text-indigo-600 animate-pulse" />
-                        KAIRA AI is Speaking
-                      </span>
-                    ) : aiVisualState === 'thinking' ? (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                        <Sparkles className="w-3.5 h-3.5 text-amber-600 animate-spin" />
-                        AI is Thinking & Searching...
-                      </span>
-                    ) : (aiVisualState === 'listening' || isCustomerSpeaking) ? (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        <Mic className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
-                        Listening to you (Speak freely)
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-slate-50 text-slate-600 border border-slate-200">
-                        <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
-                        Continuous Voice Dialogue Active
-                      </span>
-                    )}
+                  {aiVisualState === 'speaking' && (
+                    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-800 text-xs font-bold animate-pulse">
+                      <Volume2 className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Speaking with natural AI voice...</span>
+                    </div>
+                  )}
 
-                    {liveLatency !== null && (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        ⚡ Latency: {liveLatency}ms
-                      </span>
-                    )}
-
-                    {wasInterrupted && (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-300 animate-pulse">
-                        ⚡ Interrupted (Barge-in)
-                      </span>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Call Status Banners */}
-            {callStatus === 'ringing' && (
-              <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-2xl text-indigo-800 text-xs flex items-center justify-center gap-3 animate-pulse">
-                <PhoneCall className="w-5 h-5 text-indigo-600 shrink-0" />
-                <div className="text-left">
-                  <p className="font-bold">{t('call.contacting_specialist')}</p>
-                  <p className="text-indigo-700">{t('call.connecting_wait', { language: SUPPORTED_LANGUAGES[selectedLanguage]?.name })}</p>
+                  {aiVisualState === 'idle' && callStatus === 'connecting' && (
+                    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold">
+                      <Radio className="w-3.5 h-3.5 text-slate-500 animate-pulse" />
+                      <span>Connecting call session...</span>
+                    </div>
+                  )}
                 </div>
               </div>
-            )}
 
-            {callStatus === 'active_agent' && (
-              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-800 text-xs flex items-center justify-center gap-3">
-                <Headphones className="w-5 h-5 text-emerald-600 shrink-0" />
-                <div className="text-left">
-                  <p className="font-bold">{t('call.agent_connected', { name: activePartner?.name || '' })}</p>
-                  <p className="text-emerald-700">
-                    {t('call.two_way_active', {
-                      language: SUPPORTED_LANGUAGES[selectedLanguage]?.name,
-                      nativeName: SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName
-                    })}
-                  </p>
+              {/* Soundwave animation with conversational state indication */}
+              <div className="h-24 flex flex-col items-center justify-center gap-3 py-2">
+                <div className="flex items-center justify-center gap-1.5">
+                  <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-1' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-1' : 'bg-slate-300 h-3'}`} />
+                  <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-2' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-2' : 'bg-slate-300 h-5'}`} />
+                  <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-3' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-3' : 'bg-slate-300 h-8'}`} />
+                  <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-4' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-4' : 'bg-slate-300 h-4'}`} />
+                  <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-5' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-5' : 'bg-slate-300 h-7'}`} />
+                  <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-2' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-2' : 'bg-slate-300 h-5'}`} />
+                  <span className={`w-1.5 rounded-full ${aiVisualState === 'speaking' || aiIsSpeaking ? 'bg-indigo-600 animate-soundwave-4' : (aiVisualState === 'listening' || isCustomerSpeaking) ? 'bg-emerald-500 animate-soundwave-4' : 'bg-slate-300 h-3'}`} />
+                </div>
+
+                {/* State Pills */}
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  {callStatus === 'active_ai' && (
+                    <>
+                      {(aiVisualState === 'speaking' || aiIsSpeaking) ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          <Volume2 className="w-3.5 h-3.5 text-indigo-600 animate-pulse" />
+                          KAIRA AI is Speaking
+                        </span>
+                      ) : aiVisualState === 'thinking' ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                          <Sparkles className="w-3.5 h-3.5 text-amber-600 animate-spin" />
+                          AI is Thinking & Searching...
+                        </span>
+                      ) : (aiVisualState === 'listening' || isCustomerSpeaking) ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          <Mic className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
+                          Listening to you (Speak freely)
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-slate-50 text-slate-600 border border-slate-200">
+                          <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                          Continuous Voice Dialogue Active
+                        </span>
+                      )}
+
+                      {liveLatency !== null && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          ⚡ Latency: {liveLatency}ms
+                        </span>
+                      )}
+
+                      {wasInterrupted && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-300 animate-pulse">
+                          ⚡ Interrupted (Barge-in)
+                        </span>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
-            )}
 
-            {callStatus === 'transferring' && (
-              <div className="p-5 bg-amber-50 border border-amber-200 rounded-3xl text-amber-900 text-xs space-y-3 shadow-xs">
-                <div className="flex items-center justify-center gap-3">
-                  <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0 animate-pulse" />
+              {/* Call Status Banners */}
+              {callStatus === 'ringing' && (
+                <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-2xl text-indigo-800 text-xs flex items-center justify-center gap-3 animate-pulse">
+                  <PhoneCall className="w-5 h-5 text-indigo-600 shrink-0" />
                   <div className="text-left">
-                    <p className="font-bold">{t('call.transfer_in_progress')}</p>
-                    <p className="text-amber-700 leading-relaxed">{transferNotice?.message || t('call.transfer_wait')}</p>
+                    <p className="font-bold">{t('call.contacting_specialist')}</p>
+                    <p className="text-indigo-700">{t('call.connecting_wait', { language: SUPPORTED_LANGUAGES[selectedLanguage]?.name })}</p>
                   </div>
                 </div>
-
-                {transferNotice?.ticketId && (
-                  <div className="bg-white/95 p-3 rounded-2xl border border-amber-200/80 text-center font-medium shadow-2xs">
-                    <span className="text-slate-600">Priority Support Ticket Created: </span>
-                    <span className="font-bold text-amber-800 font-mono">#{transferNotice.ticketId.slice(-6).toUpperCase()}</span>
-                  </div>
-                )}
-
-                <div className="flex items-center justify-center gap-2 pt-1">
-                  <button
-                    onClick={() => {
-                      setCallStatus('active_ai');
-                      setTransferNotice(null);
-                      startSpeechRecognition(callId || '', false);
-                    }}
-                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-xs transition-all cursor-pointer"
-                  >
-                    Return to AI Assistant
-                  </button>
-                  <button
-                    onClick={handleEndCall}
-                    className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs shadow-xs transition-all cursor-pointer"
-                  >
-                    End Call
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {isCallHeld && (
-              <div className="p-3 bg-amber-100 border border-amber-300 text-amber-900 rounded-2xl text-xs font-bold animate-pulse">
-                {t('call.call_on_hold')}
-              </div>
-            )}
-
-            {/* In-Call Controls */}
-            <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 pt-2">
-              {/* Mute Button with 48px touch target */}
-              <button
-                type="button"
-                onClick={handleToggleMute}
-                className={`min-h-[48px] min-w-[48px] px-4 py-3 rounded-2xl border font-semibold text-xs transition-all cursor-pointer flex items-center gap-2 active:scale-95 shadow-xs ${isMuted
-                  ? 'bg-red-50 border-red-300 text-red-700 hover:bg-red-100 ring-2 ring-red-500/20'
-                  : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
-                  }`}
-                title={isMuted ? t('call.unmute') : t('call.mute')}
-              >
-                {isMuted ? <MicOff className="w-5 h-5 text-red-600" /> : <Mic className="w-5 h-5 text-emerald-600" />}
-                <span>{isMuted ? t('call.unmute') : t('call.mute')}</span>
-              </button>
-
-              {/* End Call Button with 48px touch target */}
-              <button
-                type="button"
-                onClick={handleEndCall}
-                className="min-h-[48px] min-w-[140px] flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white font-bold text-sm shadow-lg shadow-red-500/25 active:scale-95 transition-all cursor-pointer border border-red-500/30"
-              >
-                <PhoneOff className="w-5 h-5" />
-                <span>{t('call.end_call')}</span>
-              </button>
-
-              {/* Optional Request Human Escalation during AI Call */}
-              {callStatus === 'active_ai' && (
-                <button
-                  type="button"
-                  onClick={handleEscalateToHuman}
-                  className="min-h-[48px] px-4 py-3 rounded-2xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-semibold text-xs flex items-center gap-2 cursor-pointer shadow-xs active:scale-95 transition-all"
-                  title="Transfer this call to a human support specialist"
-                >
-                  <Headphones className="w-4 h-4 text-amber-600" />
-                  <span>Talk to Human</span>
-                </button>
               )}
 
-              {/* Speaker Volume */}
-              <div className="flex items-center gap-2 px-3.5 py-2.5 bg-white border border-slate-200 rounded-2xl shadow-xs" title={t('call.speaker_volume')}>
-                {volume === 0 ? <VolumeX className="w-4 h-4 text-slate-400" /> : <Volume2 className="w-4 h-4 text-slate-600" />}
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={volume}
-                  onChange={handleVolumeChange}
-                  className="w-20 sm:w-24 accent-indigo-600 cursor-pointer"
-                  aria-label="Volume slider"
-                />
-              </div>
-            </div>
-
-            {/* Suggested Questions for AI Call */}
-            {callStatus === 'active_ai' && (
-              <div className="pt-4 space-y-3 w-full">
-                <div className="flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-500">
-                  <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
-                  <span>Suggested Questions (Click to Ask):</span>
+              {callStatus === 'active_agent' && (
+                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-800 text-xs flex items-center justify-center gap-3">
+                  <Headphones className="w-5 h-5 text-emerald-600 shrink-0" />
+                  <div className="text-left">
+                    <p className="font-bold">{t('call.agent_connected', { name: activePartner?.name || '' })}</p>
+                    <p className="text-emerald-700">
+                      {t('call.two_way_active', {
+                        language: SUPPORTED_LANGUAGES[selectedLanguage]?.name,
+                        nativeName: SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName
+                      })}
+                    </p>
+                  </div>
                 </div>
-                <div className="flex flex-wrap justify-center gap-2">
-                  {SUGGESTED_QUESTIONS.map((q) => (
+              )}
+
+              {callStatus === 'transferring' && (
+                <div className="p-5 bg-amber-50 border border-amber-200 rounded-3xl text-amber-900 text-xs space-y-3 shadow-xs">
+                  <div className="flex items-center justify-center gap-3">
+                    <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0 animate-pulse" />
+                    <div className="text-left">
+                      <p className="font-bold">{t('call.transfer_in_progress')}</p>
+                      <p className="text-amber-700 leading-relaxed">{transferNotice?.message || t('call.transfer_wait')}</p>
+                    </div>
+                  </div>
+
+                  {transferNotice?.ticketId && (
+                    <div className="bg-white/95 p-3 rounded-2xl border border-amber-200/80 text-center font-medium shadow-2xs">
+                      <span className="text-slate-600">Priority Support Ticket Created: </span>
+                      <span className="font-bold text-amber-800 font-mono">#{transferNotice.ticketId.slice(-6).toUpperCase()}</span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-center gap-2 pt-1">
                     <button
-                      key={q}
-                      onClick={() => handleSendTextQuery(q)}
-                      className="px-3 py-1.5 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-xl text-xs text-slate-700 hover:text-indigo-700 transition-all cursor-pointer font-medium"
+                      onClick={() => {
+                        setCallStatus('active_ai');
+                        setTransferNotice(null);
+                        startSpeechRecognition(callId || '', false);
+                      }}
+                      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-xs transition-all cursor-pointer"
                     >
-                      {q}
+                      Return to AI Assistant
                     </button>
-                  ))}
+                    <button
+                      onClick={handleEndCall}
+                      className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs shadow-xs transition-all cursor-pointer"
+                    >
+                      End Call
+                    </button>
+                  </div>
                 </div>
+              )}
 
-                {/* Text Input Option for Quiet Environments */}
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    handleSendTextQuery(textInput);
-                  }}
-                  className="flex gap-2 max-w-md mx-auto pt-2"
+              {isCallHeld && (
+                <div className="p-3 bg-amber-100 border border-amber-300 text-amber-900 rounded-2xl text-xs font-bold animate-pulse">
+                  {t('call.call_on_hold')}
+                </div>
+              )}
+
+              {/* In-Call Controls */}
+              <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 pt-2">
+                {/* Mute Button with 48px touch target */}
+                <button
+                  type="button"
+                  onClick={handleToggleMute}
+                  className={`min-h-[48px] min-w-[48px] px-4 py-3 rounded-2xl border font-semibold text-xs transition-all cursor-pointer flex items-center gap-2 active:scale-95 shadow-xs ${isMuted
+                    ? 'bg-red-50 border-red-300 text-red-700 hover:bg-red-100 ring-2 ring-red-500/20'
+                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
+                    }`}
+                  title={isMuted ? t('call.unmute') : t('call.mute')}
                 >
-                  <input
-                    type="text"
-                    placeholder="Type a question to the AI..."
-                    value={textInput}
-                    onChange={(e) => setTextInput(e.target.value)}
-                    className="flex-1 px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                  />
+                  {isMuted ? <MicOff className="w-5 h-5 text-red-600" /> : <Mic className="w-5 h-5 text-emerald-600" />}
+                  <span>{isMuted ? t('call.unmute') : t('call.mute')}</span>
+                </button>
+
+                {/* End Call Button with 48px touch target */}
+                <button
+                  type="button"
+                  onClick={handleEndCall}
+                  className="min-h-[48px] min-w-[140px] flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white font-bold text-sm shadow-lg shadow-red-500/25 active:scale-95 transition-all cursor-pointer border border-red-500/30"
+                >
+                  <PhoneOff className="w-5 h-5" />
+                  <span>{t('call.end_call')}</span>
+                </button>
+
+                {/* Optional Request Human Escalation during AI Call */}
+                {callStatus === 'active_ai' && (
                   <button
-                    type="submit"
-                    disabled={!textInput.trim()}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    type="button"
+                    onClick={handleEscalateToHuman}
+                    className="min-h-[48px] px-4 py-3 rounded-2xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-semibold text-xs flex items-center gap-2 cursor-pointer shadow-xs active:scale-95 transition-all"
+                    title="Transfer this call to a human support specialist"
                   >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>Send</span>
+                    <Headphones className="w-4 h-4 text-amber-600" />
+                    <span>Talk to Human</span>
                   </button>
-                </form>
+                )}
+
+                {/* Speaker Volume */}
+                <div className="flex items-center gap-2 px-3.5 py-2.5 bg-white border border-slate-200 rounded-2xl shadow-xs" title={t('call.speaker_volume')}>
+                  {volume === 0 ? <VolumeX className="w-4 h-4 text-slate-400" /> : <Volume2 className="w-4 h-4 text-slate-600" />}
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={volume}
+                    onChange={handleVolumeChange}
+                    className="w-20 sm:w-24 accent-indigo-600 cursor-pointer"
+                    aria-label="Volume slider"
+                  />
+                </div>
               </div>
+
+              {/* Suggested Questions for AI Call */}
+              {callStatus === 'active_ai' && (
+                <div className="pt-4 space-y-3 w-full">
+                  <div className="flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-500">
+                    <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Suggested Questions (Click to Ask):</span>
+                  </div>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {SUGGESTED_QUESTIONS.map((q) => (
+                      <button
+                        key={q}
+                        onClick={() => handleSendTextQuery(q)}
+                        className="px-3 py-1.5 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-xl text-xs text-slate-700 hover:text-indigo-700 transition-all cursor-pointer font-medium"
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Text Input Option for Quiet Environments */}
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      handleSendTextQuery(textInput);
+                    }}
+                    className="flex gap-2 max-w-md mx-auto pt-2"
+                  >
+                    <input
+                      type="text"
+                      placeholder="Type a question to the AI..."
+                      value={textInput}
+                      onChange={(e) => setTextInput(e.target.value)}
+                      className="flex-1 px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!textInput.trim()}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Send</span>
+                    </button>
+                  </form>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Dynamic Call Health & Recovery Alert Banner */}
+        {recoveryBanner && (
+          <div className={`mx-6 mt-4 p-3.5 rounded-xl border flex items-center justify-between text-xs font-semibold shadow-xs transition-all ${recoveryBanner.type === 'reconnecting'
+            ? 'bg-amber-50/90 border-amber-200 text-amber-900'
+            : recoveryBanner.type === 'restored'
+              ? 'bg-emerald-50/90 border-emerald-200 text-emerald-900'
+              : recoveryBanner.type === 'escalating'
+                ? 'bg-indigo-50/90 border-indigo-200 text-indigo-900'
+                : 'bg-rose-50/90 border-rose-200 text-rose-900'
+            }`}>
+            <div className="flex items-center gap-2.5">
+              <span className={`w-2.5 h-2.5 rounded-full ${recoveryBanner.type === 'reconnecting' ? 'bg-amber-500 animate-ping' :
+                recoveryBanner.type === 'restored' ? 'bg-emerald-500' :
+                  recoveryBanner.type === 'escalating' ? 'bg-indigo-500 animate-pulse' : 'bg-rose-500 animate-bounce'
+                }`} />
+              <span>{recoveryBanner.message}</span>
+            </div>
+            {recoveryBanner.type === 'restored' && (
+              <span className="text-[10px] text-emerald-700 bg-emerald-100/60 px-2 py-0.5 rounded-full">Active</span>
             )}
           </div>
         )}
-      </div>
 
-      {/* Dynamic Call Health & Recovery Alert Banner */}
-      {recoveryBanner && (
-        <div className={`mx-6 mt-4 p-3.5 rounded-xl border flex items-center justify-between text-xs font-semibold shadow-xs transition-all ${recoveryBanner.type === 'reconnecting'
-          ? 'bg-amber-50/90 border-amber-200 text-amber-900'
-          : recoveryBanner.type === 'restored'
-            ? 'bg-emerald-50/90 border-emerald-200 text-emerald-900'
-            : recoveryBanner.type === 'escalating'
-              ? 'bg-indigo-50/90 border-indigo-200 text-indigo-900'
-              : 'bg-rose-50/90 border-rose-200 text-rose-900'
-          }`}>
-          <div className="flex items-center gap-2.5">
-            <span className={`w-2.5 h-2.5 rounded-full ${recoveryBanner.type === 'reconnecting' ? 'bg-amber-500 animate-ping' :
-              recoveryBanner.type === 'restored' ? 'bg-emerald-500' :
-                recoveryBanner.type === 'escalating' ? 'bg-indigo-500 animate-pulse' : 'bg-rose-500 animate-bounce'
-              }`} />
-            <span>{recoveryBanner.message}</span>
+        {/* Real-time Customer Sentiment Indicator */}
+        {callStatus !== 'idle' && (
+          <div className="px-6 py-3 border-t border-slate-200/80 bg-slate-50/40">
+            <LiveSentimentCard
+              sentiment={liveSentiment?.sentiment}
+              confidenceScore={liveSentiment?.confidenceScore}
+              reason={liveSentiment?.reason}
+              triggerText={liveSentiment?.triggerText}
+              requiresHumanAssistance={liveSentiment?.requiresHumanAssistance}
+            />
           </div>
-          {recoveryBanner.type === 'restored' && (
-            <span className="text-[10px] text-emerald-700 bg-emerald-100/60 px-2 py-0.5 rounded-full">Active</span>
-          )}
-        </div>
-      )}
+        )}
 
-      {/* Real-time Customer Sentiment Indicator */}
-      {callStatus !== 'idle' && (
-        <div className="px-6 py-3 border-t border-slate-200/80 bg-slate-50/40">
-          <LiveSentimentCard
-            sentiment={liveSentiment?.sentiment}
-            confidenceScore={liveSentiment?.confidenceScore}
-            reason={liveSentiment?.reason}
-            triggerText={liveSentiment?.triggerText}
-            requiresHumanAssistance={liveSentiment?.requiresHumanAssistance}
-          />
-        </div>
-      )}
-
-      {/* Live Conversation Transcript & Real-Time Chatbot Synchronization */}
-      <div className="border-t border-slate-200/80 bg-slate-50/60 p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs">
-              <MessageSquare className="w-4 h-4" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider">
-                  Live AI Voice Chatbot (Synchronized)
-                </h3>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  Live Sync Active
-                </span>
+        {/* Live Conversation Transcript & Real-Time Chatbot Synchronization */}
+        <div className="border-t border-slate-200/80 bg-slate-50/60 p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+                <MessageSquare className="w-4 h-4" />
               </div>
-              <p className="text-[11px] text-slate-500">
-                Instant real-time transcription, language detection, and audio synchronization
-              </p>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                    Live AI Voice Chatbot (Synchronized)
+                  </h3>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    Live Sync Active
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Instant real-time transcription, language detection, and audio synchronization
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2.5">
+              <span className="text-[11px] text-slate-400 font-medium">
+                {transcripts.length} exchanges
+              </span>
+              {transcripts.length > 0 && (
+                <button
+                  onClick={() => handleDownloadTranscript(transcripts, `KAIRA-LiveCall-${callId || 'active'}`)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 rounded-xl text-xs font-semibold text-slate-700 cursor-pointer shadow-2xs transition-colors"
+                  title="Export call transcript as text file"
+                >
+                  <Download className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Export .txt</span>
+                </button>
+              )}
             </div>
           </div>
-          <div className="flex items-center gap-2.5">
-            <span className="text-[11px] text-slate-400 font-medium">
-              {transcripts.length} exchanges
-            </span>
-            {transcripts.length > 0 && (
-              <button
-                onClick={() => handleDownloadTranscript(transcripts, `KAIRA-LiveCall-${callId || 'active'}`)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 rounded-xl text-xs font-semibold text-slate-700 cursor-pointer shadow-2xs transition-colors"
-                title="Export call transcript as text file"
+
+          <div
+            ref={transcriptContainerRef}
+            onScroll={handleTranscriptScroll}
+            className="bg-white rounded-2xl border border-slate-200/90 p-4 h-80 overflow-y-auto space-y-4 shadow-2xs"
+          >
+            {transcripts.length === 0 && !interimText && (
+              <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs text-center p-4 space-y-3">
+                <div>
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-500 flex items-center justify-center mx-auto mb-2">
+                    <Bot className="w-6 h-6" />
+                  </div>
+                  <p className="font-semibold text-slate-600">AI Customer Support Voice & Chat Ready</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Start speaking or type a question below to begin live conversation</p>
+                </div>
+                <div className="space-y-1.5 max-w-md pt-2">
+                  <div className="flex items-center justify-center gap-1.5 text-[11px] font-semibold text-slate-500">
+                    <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Frequently asked customer questions:</span>
+                  </div>
+                  <div className="flex flex-wrap justify-center gap-1.5">
+                    {SUGGESTED_QUESTIONS.map((q) => (
+                      <span
+                        key={q}
+                        className="px-2.5 py-1 text-[11px] bg-slate-50 text-slate-700 border border-slate-200/80 rounded-lg font-medium shadow-2xs"
+                      >
+                        "{q}"
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {transcripts.map((tItem) => (
+              <div
+                key={tItem.id}
+                className={`flex flex-col ${tItem.sender === 'customer'
+                  ? 'items-end'
+                  : tItem.sender === 'system'
+                    ? 'items-center'
+                    : 'items-start'
+                  }`}
               >
-                <Download className="w-3.5 h-3.5 text-slate-500" />
-                <span>Export .txt</span>
-              </button>
+                {tItem.sender === 'system' ? (
+                  <span className="px-3.5 py-1 bg-amber-50 border border-amber-200 text-amber-800 text-[11px] rounded-full font-medium my-1 shadow-2xs">
+                    {tItem.text}
+                  </span>
+                ) : (
+                  <div className="max-w-[85%] sm:max-w-[78%] space-y-1">
+                    <div className={`flex items-center gap-2 px-1 text-[10px] font-bold text-slate-400 ${tItem.sender === 'customer' ? 'justify-end' : 'justify-start'}`}>
+                      <span>
+                        {tItem.senderName || (tItem.sender === 'customer' ? (user?.name || 'Customer') : 'KAIRA AI Support Specialist')}
+                      </span>
+                      {tItem.language && (
+                        <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 uppercase font-mono text-[9px]">
+                          {tItem.language}
+                        </span>
+                      )}
+                      <span>
+                        {tItem.timestamp ? new Date(tItem.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}
+                      </span>
+                    </div>
+
+                    <div
+                      className={`px-4 py-3 rounded-2xl text-xs leading-relaxed ${tItem.sender === 'customer'
+                        ? 'bg-emerald-600 text-white rounded-tr-xs shadow-md shadow-emerald-600/10'
+                        : tItem.sender === 'ai'
+                          ? 'bg-gradient-to-br from-slate-50 to-indigo-50/30 text-slate-800 rounded-tl-xs border border-indigo-100 shadow-2xs'
+                          : 'bg-indigo-50 text-indigo-950 border border-indigo-200 rounded-tl-xs'
+                        }`}
+                    >
+                      <div className="font-normal">{tItem.text}</div>
+                      {/* Translation subtitle */}
+                      {tItem.translation && (
+                        <div className={`mt-1.5 pt-1.5 border-t text-[11px] font-normal italic ${tItem.sender === 'customer' ? 'border-emerald-500/50 text-emerald-100' : 'border-slate-200 text-indigo-700'
+                          }`}>
+                          {t('transcript.translation_prefix', { text: tItem.translation })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {/* Live Streaming Speech Bubble */}
+            {interimText && (
+              <div className="flex flex-col items-end">
+                <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 px-1 mb-1">
+                  <Mic className="w-3 h-3 animate-pulse" />
+                  <span>Speaking in real-time...</span>
+                </div>
+                <div className="max-w-[85%] px-4 py-2.5 bg-emerald-50 text-emerald-800 text-xs rounded-2xl rounded-tr-xs border border-emerald-200 italic shadow-2xs animate-pulse">
+                  {interimText}...
+                </div>
+              </div>
+            )}
+
+            {/* AI Thinking Indicator in Chatbot */}
+            {aiVisualState === 'thinking' && (
+              <div className="flex flex-col items-start">
+                <div className="flex items-center gap-2 px-3 py-2 bg-indigo-50/80 border border-indigo-200/80 rounded-2xl text-xs text-indigo-800 animate-pulse shadow-2xs">
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-600 animate-spin" />
+                  <span>KAIRA AI is thinking & searching Knowledge Base...</span>
+                </div>
+              </div>
             )}
           </div>
         </div>
+      </div>
 
-        <div
-          ref={transcriptContainerRef}
-          className="bg-white rounded-2xl border border-slate-200/90 p-4 h-80 overflow-y-auto space-y-4 shadow-2xs"
-        >
-          {transcripts.length === 0 && !interimText && (
-            <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs text-center p-4 space-y-3">
-              <div>
-                <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-500 flex items-center justify-center mx-auto mb-2">
-                  <Bot className="w-6 h-6" />
-                </div>
-                <p className="font-semibold text-slate-600">AI Customer Support Voice & Chat Ready</p>
-                <p className="text-[11px] text-slate-400 mt-0.5">Start speaking or type a question below to begin live conversation</p>
+      {/* Post-Call Rating Modal */}
+      {ratingCallId && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 text-center space-y-4">
+            <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-500 flex items-center justify-center mx-auto">
+              <Star className="w-6 h-6 fill-amber-400" />
+            </div>
+            <div>
+              <h3 className="font-extrabold text-slate-900 text-base">{t('rating.title')}</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                {t('rating.desc', { language: SUPPORTED_LANGUAGES[selectedLanguage]?.name })}
+              </p>
+            </div>
+
+            {ratingSubmitted ? (
+              <div className="p-3 bg-emerald-50 text-emerald-800 rounded-2xl text-xs font-bold flex items-center justify-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                {t('rating.thank_you')}
               </div>
-              <div className="space-y-1.5 max-w-md pt-2">
-                <div className="flex items-center justify-center gap-1.5 text-[11px] font-semibold text-slate-500">
-                  <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
-                  <span>Frequently asked customer questions:</span>
-                </div>
-                <div className="flex flex-wrap justify-center gap-1.5">
-                  {SUGGESTED_QUESTIONS.map((q) => (
-                    <span
-                      key={q}
-                      className="px-2.5 py-1 text-[11px] bg-slate-50 text-slate-700 border border-slate-200/80 rounded-lg font-medium shadow-2xs"
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center justify-center gap-2 py-2">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      onClick={() => setRatingVal(star)}
+                      aria-label={`${star} star${star === 1 ? '' : 's'}`}
+                      className="p-2 rounded-xl hover:scale-125 transition-transform text-amber-400 cursor-pointer"
                     >
-                      "{q}"
-                    </span>
+                      <Star className={`w-6 h-6 ${star <= ratingVal ? 'fill-amber-400' : 'text-slate-300'}`} />
+                    </button>
                   ))}
                 </div>
-              </div>
-            </div>
-          )}
-
-          {transcripts.map((tItem) => (
-            <div
-              key={tItem.id}
-              className={`flex flex-col ${tItem.sender === 'customer'
-                ? 'items-end'
-                : tItem.sender === 'system'
-                  ? 'items-center'
-                  : 'items-start'
-                }`}
-            >
-              {tItem.sender === 'system' ? (
-                <span className="px-3.5 py-1 bg-amber-50 border border-amber-200 text-amber-800 text-[11px] rounded-full font-medium my-1 shadow-2xs">
-                  {tItem.text}
-                </span>
-              ) : (
-                <div className="max-w-[85%] sm:max-w-[78%] space-y-1">
-                  <div className={`flex items-center gap-2 px-1 text-[10px] font-bold text-slate-400 ${tItem.sender === 'customer' ? 'justify-end' : 'justify-start'}`}>
-                    <span>
-                      {tItem.senderName || (tItem.sender === 'customer' ? (user?.name || 'Customer') : 'KAIRA AI Support Specialist')}
-                    </span>
-                    {tItem.language && (
-                      <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 uppercase font-mono text-[9px]">
-                        {tItem.language}
-                      </span>
-                    )}
-                    <span>
-                      {tItem.timestamp ? new Date(tItem.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}
-                    </span>
-                  </div>
-
-                  <div
-                    className={`px-4 py-3 rounded-2xl text-xs leading-relaxed ${tItem.sender === 'customer'
-                      ? 'bg-emerald-600 text-white rounded-tr-xs shadow-md shadow-emerald-600/10'
-                      : tItem.sender === 'ai'
-                        ? 'bg-gradient-to-br from-slate-50 to-indigo-50/30 text-slate-800 rounded-tl-xs border border-indigo-100 shadow-2xs'
-                        : 'bg-indigo-50 text-indigo-950 border border-indigo-200 rounded-tl-xs'
-                      }`}
-                  >
-                    <div className="font-normal">{tItem.text}</div>
-                    {/* Translation subtitle */}
-                    {tItem.translation && (
-                      <div className={`mt-1.5 pt-1.5 border-t text-[11px] font-normal italic ${tItem.sender === 'customer' ? 'border-emerald-500/50 text-emerald-100' : 'border-slate-200 text-indigo-700'
-                        }`}>
-                        {t('transcript.translation_prefix', { text: tItem.translation })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-
-          {/* Live Streaming Speech Bubble */}
-          {interimText && (
-            <div className="flex flex-col items-end">
-              <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 px-1 mb-1">
-                <Mic className="w-3 h-3 animate-pulse" />
-                <span>Speaking in real-time...</span>
-              </div>
-              <div className="max-w-[85%] px-4 py-2.5 bg-emerald-50 text-emerald-800 text-xs rounded-2xl rounded-tr-xs border border-emerald-200 italic shadow-2xs animate-pulse">
-                {interimText}...
-              </div>
-            </div>
-          )}
-
-          {/* AI Thinking Indicator in Chatbot */}
-          {aiVisualState === 'thinking' && (
-            <div className="flex flex-col items-start">
-              <div className="flex items-center gap-2 px-3 py-2 bg-indigo-50/80 border border-indigo-200/80 rounded-2xl text-xs text-indigo-800 animate-pulse shadow-2xs">
-                <Sparkles className="w-3.5 h-3.5 text-indigo-600 animate-spin" />
-                <span>KAIRA AI is thinking & searching Knowledge Base...</span>
-              </div>
-            </div>
-          )}
-
-        </div>
-      </div>
-    </div>
-
-    {/* Post-Call Rating Modal */}
-    {ratingCallId && (
-      <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 text-center space-y-4">
-          <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-500 flex items-center justify-center mx-auto">
-            <Star className="w-6 h-6 fill-amber-400" />
-          </div>
-          <div>
-            <h3 className="font-extrabold text-slate-900 text-base">{t('rating.title')}</h3>
-            <p className="text-xs text-slate-500 mt-1">
-              {t('rating.desc', { language: SUPPORTED_LANGUAGES[selectedLanguage]?.name })}
-            </p>
-          </div>
-
-          {ratingSubmitted ? (
-            <div className="p-3 bg-emerald-50 text-emerald-800 rounded-2xl text-xs font-bold flex items-center justify-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-              {t('rating.thank_you')}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="flex items-center justify-center gap-2 py-2">
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <button
-                    key={star}
-                    onClick={() => setRatingVal(star)}
-                    aria-label={`${star} star${star === 1 ? '' : 's'}`}
-                    className="p-2 rounded-xl hover:scale-125 transition-transform text-amber-400 cursor-pointer"
-                  >
-                    <Star className={`w-6 h-6 ${star <= ratingVal ? 'fill-amber-400' : 'text-slate-300'}`} />
+                <textarea
+                  value={ratingComment}
+                  onChange={(e) => setRatingComment(e.target.value.slice(0, 1000))}
+                  placeholder="Tell us what went well or what we could improve (optional)"
+                  maxLength={1000}
+                  rows={3}
+                  className="w-full resize-none rounded-xl border border-slate-200 p-3 text-left text-xs text-slate-700 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                />
+                <div className="flex items-center justify-between text-[10px] text-slate-400">
+                  <span>{ratingComment.length}/1000</span>
+                  <button onClick={() => handleRatingSubmit(ratingVal)} className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white hover:bg-indigo-700 cursor-pointer">
+                    Submit feedback
                   </button>
-                ))}
+                </div>
               </div>
-              <textarea
-                value={ratingComment}
-                onChange={(e) => setRatingComment(e.target.value.slice(0, 1000))}
-                placeholder="Tell us what went well or what we could improve (optional)"
-                maxLength={1000}
-                rows={3}
-                className="w-full resize-none rounded-xl border border-slate-200 p-3 text-left text-xs text-slate-700 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
-              />
-              <div className="flex items-center justify-between text-[10px] text-slate-400">
-                <span>{ratingComment.length}/1000</span>
-                <button onClick={() => handleRatingSubmit(ratingVal)} className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white hover:bg-indigo-700 cursor-pointer">
-                  Submit feedback
-                </button>
-              </div>
-            </div>
-          )}
+            )}
 
+            <button
+              onClick={() => setRatingCallId(null)}
+              className="text-xs text-slate-400 hover:text-slate-600 font-semibold cursor-pointer"
+            >
+              {t('rating.skip')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Customer Call History Table */}
+      <div className="bg-white rounded-3xl shadow-xl shadow-slate-100 border border-slate-200/80 p-6 sm:p-8 space-y-4">
+        {deleteToast && (
+          <div className={`p-3 rounded-2xl text-xs font-semibold flex items-center justify-between ${deleteToast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'
+            }`}>
+            <span>{deleteToast.message}</span>
+            <button type="button" onClick={() => setDeleteToast(null)} className="text-slate-400 hover:text-slate-600 text-xs font-bold ml-2 cursor-pointer">✕</button>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <History className="w-5 h-5 text-indigo-600" />
+            <h2 className="text-lg font-bold text-slate-900">{t('history.title')}</h2>
+            {lastRefreshedAt && (
+              <span className="hidden sm:inline-block text-[11px] text-slate-400 font-mono">
+                • {t('history.updated_at', { time: lastRefreshedAt.toLocaleTimeString() })}
+              </span>
+            )}
+          </div>
           <button
-            onClick={() => setRatingCallId(null)}
-            className="text-xs text-slate-400 hover:text-slate-600 font-semibold cursor-pointer"
+            type="button"
+            disabled={loadingHistory}
+            onClick={fetchHistory}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 border border-transparent hover:border-indigo-100 transition-all cursor-pointer active:scale-95 disabled:opacity-60"
+            title="Refresh Call History"
           >
-            {t('rating.skip')}
+            <RefreshCw className={`w-3.5 h-3.5 transition-transform ${loadingHistory ? 'animate-spin text-indigo-700' : ''}`} />
+            <span>{loadingHistory ? 'Refreshing...' : t('history.refresh')}</span>
           </button>
         </div>
-      </div>
-    )}
 
-    {/* Customer Call History Table */}
-    <div id="call-history-section" className="bg-white rounded-3xl shadow-xl shadow-slate-100 border border-slate-200/80 p-6 sm:p-8 space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <History className="w-5 h-5 text-indigo-600" />
-          <h2 className="text-lg font-bold text-slate-900">Call History & AI Summary</h2>
-          {lastRefreshedAt && (
-            <span className="hidden sm:inline-block text-[11px] text-slate-400 font-mono">
-              • Updated {lastRefreshedAt.toLocaleTimeString()}
-            </span>
-          )}
-        </div>
-        <button
-          type="button"
-          disabled={loadingHistory}
-          onClick={fetchHistory}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 border border-transparent hover:border-indigo-100 transition-all cursor-pointer active:scale-95 disabled:opacity-60"
-          title="Refresh Call History"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 transition-transform ${loadingHistory ? 'animate-spin text-indigo-700' : ''}`} />
-          <span>{loadingHistory ? 'Refreshing...' : t('history.refresh')}</span>
-        </button>
-      </div>
+        {loadingHistory && history.length === 0 ? (
+          <div className="py-8 text-center text-xs text-slate-500">{t('history.loading')}</div>
+        ) : history.length === 0 ? (
+          <div className="py-8 text-center text-xs text-slate-400">
+            {t('history.empty')}
+          </div>
+        ) : (
+          <>
+            {/* 1. Desktop & Laptop Table View (md and above) */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-600">
+                <thead className="bg-slate-50 text-slate-700 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
+                  <tr>
+                    <th className="py-3 px-4">{t('history.col_customer')}</th>
+                    <th className="py-3 px-4">{t('history.col_datetime')}</th>
+                    <th className="py-3 px-4">{t('history.col_duration')}</th>
+                    <th className="py-3 px-4">{t('history.col_status')}</th>
+                    <th className="py-3 px-4">{t('history.col_agent_name')}</th>
+                    <th className="py-3 px-4">{t('history.col_summary')}</th>
+                    <th className="py-3 px-4">{t('history.col_resolution')}</th>
+                    <th className="py-3 px-4">{t('history.col_follow_up')}</th>
+                    <th className="py-3 px-4 text-right">{t('history.col_actions')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {history.map((call) => {
+                    const resolution = call.intelligence?.resolutionStatus || call.conversationAnalysis?.resolutionStatus || 'resolved';
+                    const summaryText = call.intelligence?.overallSummary || call.intelligence?.callReason || call.conversationAnalysis?.summary || call.customerQuestion || 'AI Voice support inquiry';
+                    const recUrl = call.recording?.id ? `/api/recordings/${encodeURIComponent(call.recording.id)}/stream` : call.recordingUrl || `/api/calls/${encodeURIComponent(call.callId)}/recording`;
 
-      {loadingHistory && history.length === 0 ? (
-        <div className="py-8 text-center text-xs text-slate-500">{t('history.loading')}</div>
-      ) : history.length === 0 ? (
-        <div className="py-8 text-center text-xs text-slate-400">
-          {t('history.empty')}
-        </div>
-      ) : (
-        <>
-          {/* 1. Desktop & Laptop Table View (md and above) */}
-          <div className="hidden md:block overflow-x-auto">
-            <table className="w-full text-left text-xs text-slate-600">
-              <thead className="bg-slate-50 text-slate-700 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
-                <tr>
-                  <th className="py-3 px-4">Customer Details</th>
-                  <th className="py-3 px-4">Date & Time</th>
-                  <th className="py-3 px-4">Duration</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">AI Agent Name</th>
-                  <th className="py-3 px-4">Call Summary</th>
-                  <th className="py-3 px-4">Resolution</th>
-                  <th className="py-3 px-4">Follow-Up</th>
-                  <th className="py-3 px-4 text-right">Actions & Summary</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {history.map((call) => {
-                  const resolution = call.intelligence?.resolutionStatus || call.conversationAnalysis?.resolutionStatus || 'resolved';
-                  const summaryText = call.intelligence?.overallSummary || call.intelligence?.callReason || call.conversationAnalysis?.summary || call.customerQuestion || 'AI Voice support inquiry';
-                  const recUrl = `/api/calls/${call.callId || call.id}/recording`;
+                    const statusBadgeLabel = call.status === 'completed'
+                      ? t('history.status_completed')
+                      : call.status === 'active'
+                        ? t('history.status_active')
+                        : call.status === 'rejected'
+                          ? t('history.status_rejected')
+                          : call.status === 'missed'
+                            ? t('history.status_missed')
+                            : call.status === 'transferred'
+                              ? t('history.status_transferred')
+                              : call.status === 'queued'
+                                ? t('history.status_queued')
+                                : call.status;
 
-                  return (
-                    <tr key={call.id} className="hover:bg-slate-50/70 transition-colors">
-                      <td className="py-3.5 px-4">
-                        <div className="font-extrabold text-slate-900 text-xs">
-                          {call.customerName || call.customer?.name || user?.name || 'Customer'}
+                    const resolutionBadgeLabel = resolution === 'resolved'
+                      ? t('history.res_resolved')
+                      : resolution === 'partially_resolved'
+                        ? t('history.res_partially_resolved')
+                        : resolution === 'escalated_admin' || resolution === 'escalated'
+                          ? t('history.res_escalated')
+                          : resolution === 'unresolved'
+                            ? t('history.res_unresolved')
+                            : resolution.replace('_', ' ');
+
+                    return (
+                      <tr key={call.id} className="hover:bg-slate-50/70 transition-colors">
+                        <td className="py-3.5 px-4">
+                          <div className="font-extrabold text-slate-900 text-xs">
+                            {call.customerName || call.customer?.name || user?.name || 'Customer'}
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-mono">
+                            ID: #{call.customerId ? call.customerId.slice(-6).toUpperCase() : (user?.id ? user.id.slice(-6).toUpperCase() : 'CUST')}
+                          </div>
+                          <div className="text-[10px] text-slate-400">
+                            {call.customerPhone || call.customer?.phone || user?.phone || t('history.no_phone')}
+                          </div>
+                        </td>
+
+                        <td className="py-3.5 px-4 font-medium text-slate-800">
+                          <div>{new Date(call.startTime).toLocaleDateString()}</div>
+                          <div className="text-[10px] text-slate-400">{new Date(call.startTime).toLocaleTimeString()}</div>
+                        </td>
+
+                        <td className="py-3.5 px-4 font-mono font-bold text-slate-700">
+                          {formatDuration(call.duration)}
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${call.status === 'completed'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : call.status === 'active'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : 'bg-slate-100 text-slate-700 border border-slate-200'
+                              }`}
+                          >
+                            {statusBadgeLabel}
+                          </span>
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center gap-1.5">
+                            <Bot className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                            <span className="font-bold text-indigo-950">
+                              {call.agentName || (call.type === 'ai_voice' ? 'KAIRA AI Support Specialist' : call.type === 'admin_transfer' ? 'Admin' : 'Agent')}
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="py-3.5 px-4 max-w-xs">
+                          <p className="line-clamp-2 text-[11px] text-slate-600 font-medium leading-relaxed" title={summaryText}>
+                            {summaryText}
+                          </p>
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${resolution === 'resolved'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : resolution === 'partially_resolved'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : resolution === 'escalated_admin' || resolution === 'escalated'
+                                  ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                                  : 'bg-amber-50 text-amber-700 border border-amber-200'
+                              }`}
+                          >
+                            {resolutionBadgeLabel}
+                          </span>
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          {call.followUpTasks && call.followUpTasks.length > 0 ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                              {t('history.followup_pending')}
+                            </span>
+                          ) : call.intelligence?.requiresHumanSupport ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                              {t('history.support_review')}
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              {t('history.complete')}
+                            </span>
+                          )}
+                        </td>
+
+                        <td className="py-3.5 px-4 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            {/* View AI Intelligence & Summary */}
+                            <button
+                              onClick={() => setSelectedIntelligenceCallId(call.callId || call.id)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
+                              title="View full AI Summary & Resolution Report"
+                            >
+                              <Sparkles className="w-3.5 h-3.5" />
+                              <span className="hidden lg:inline">{t('history.btn_ai_summary')}</span>
+                            </button>
+
+                            {/* Audio Playback button */}
+                            {(call.recordingUrl || call.recording || call.recordingStatus === 'completed' || call.duration > 2) ? (
+                              <button
+                                onClick={() => handlePlayRecording(recUrl, call.id)}
+                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${playingRecordingId === call.id
+                                  ? 'bg-red-600 text-white animate-pulse ring-2 ring-red-400'
+                                  : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
+                                  }`}
+                                title={playingRecordingId === call.id ? 'Pause Recording' : 'Listen to Call Recording'}
+                              >
+                                {playingRecordingId === call.id ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                                <span>{playingRecordingId === call.id ? t('history.btn_playing') : t('history.btn_listen')}</span>
+                              </button>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 italic">{t('history.no_audio')}</span>
+                            )}
+
+                            {/* View Transcript modal button */}
+                            <button
+                              onClick={() => setSelectedHistoryCall(call)}
+                              className="p-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-lg border border-slate-200 cursor-pointer shadow-2xs"
+                              title={t('history.view_transcript')}
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* Delete Call Record Button */}
+                            <button
+                              type="button"
+                              onClick={() => setDeleteConfirmCallId(call.id)}
+                              className="p-1.5 bg-slate-50 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-lg border border-slate-200 hover:border-rose-200 cursor-pointer shadow-2xs transition-colors"
+                              title={t('history.btn_delete')}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* 2. Adaptive Mobile & Tablet Card View (< md) */}
+            <div className="block md:hidden space-y-3">
+              {history.map((call) => {
+                const resolution = call.intelligence?.resolutionStatus || call.conversationAnalysis?.resolutionStatus || 'resolved';
+                const summaryText = call.intelligence?.overallSummary || call.intelligence?.callReason || call.conversationAnalysis?.summary || call.customerQuestion || 'AI Voice support inquiry';
+                const recUrl = call.recording?.id ? `/api/recordings/${encodeURIComponent(call.recording.id)}/stream` : call.recordingUrl || `/api/calls/${encodeURIComponent(call.callId)}/recording`;
+
+                return (
+                  <div key={call.id} className="p-4 rounded-2xl border border-slate-200 bg-slate-50/50 space-y-3 shadow-2xs">
+                    {/* Top Row: Partner + Status */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                          <Bot className="w-4 h-4" />
                         </div>
-                        <div className="text-[10px] text-slate-500 font-mono">
-                          ID: #{call.customerId ? call.customerId.slice(-6).toUpperCase() : (user?.id ? user.id.slice(-6).toUpperCase() : 'CUST')}
+                        <div>
+                          <div className="font-extrabold text-slate-900 text-xs">
+                            {call.agentName || (call.type === 'ai_voice' ? 'KAIRA AI Support' : 'Agent')}
+                          </div>
+                          <div className="text-[10px] text-slate-400 font-mono">
+                            {new Date(call.startTime).toLocaleDateString()} at {new Date(call.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
                         </div>
-                        <div className="text-[10px] text-slate-400">
-                          {call.customerPhone || call.customer?.phone || user?.phone || 'No phone'}
-                        </div>
-                      </td>
-
-                      <td className="py-3.5 px-4 font-medium text-slate-800">
-                        <div>{new Date(call.startTime).toLocaleDateString()}</div>
-                        <div className="text-[10px] text-slate-400">{new Date(call.startTime).toLocaleTimeString()}</div>
-                      </td>
-
-                      <td className="py-3.5 px-4 font-mono font-bold text-slate-700">
-                        {formatDuration(call.duration)}
-                      </td>
-
-                      <td className="py-3.5 px-4">
+                      </div>
+                      <div className="flex flex-col items-end gap-1">
                         <span
                           className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${call.status === 'completed'
                             ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
@@ -2272,479 +2323,325 @@ return (
                         >
                           {call.status}
                         </span>
-                      </td>
-
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-1.5">
-                          <Bot className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                          <span className="font-bold text-indigo-950">
-                            {call.agentName || (call.type === 'ai_voice' ? 'KAIRA AI Support Specialist' : call.type === 'admin_transfer' ? 'Admin' : 'Agent')}
-                          </span>
-                        </div>
-                      </td>
-
-                      <td className="py-3.5 px-4 max-w-xs">
-                        <p className="line-clamp-2 text-[11px] text-slate-600 font-medium leading-relaxed" title={summaryText}>
-                          {summaryText}
-                        </p>
-                      </td>
-
-                      <td className="py-3.5 px-4">
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${resolution === 'resolved'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : resolution === 'partially_resolved'
-                              ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                              : resolution === 'escalated_admin'
-                                ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                                : 'bg-amber-50 text-amber-700 border border-amber-200'
-                            }`}
-                        >
-                          {resolution.replace('_', ' ')}
+                        <span className="font-mono text-[10px] font-bold text-slate-600">
+                          ⏱ {formatDuration(call.duration)}
                         </span>
-                      </td>
-
-                      <td className="py-3.5 px-4">
-                        {call.followUpTasks && call.followUpTasks.length > 0 ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
-                            Follow-Up Pending
-                          </span>
-                        ) : call.intelligence?.requiresHumanSupport ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
-                            Support Review
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                            Complete
-                          </span>
-                        )}
-                      </td>
-
-                      <td className="py-3.5 px-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          {/* View AI Intelligence & Summary */}
-                          <button
-                            onClick={() => setSelectedIntelligenceCallId(call.callId || call.id)}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
-                            title="View full AI Summary & Resolution Report"
-                          >
-                            <Sparkles className="w-3.5 h-3.5" />
-                            <span className="hidden lg:inline">AI Summary</span>
-                          </button>
-
-                          {/* Audio Playback button */}
-                          {(call.recordingUrl || call.recording || call.recordingStatus === 'completed' || call.duration > 2) ? (
-                            <button
-                              onClick={() => handlePlayRecording(recUrl, call.id)}
-                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${playingRecordingId === call.id
-                                ? isRecordingPaused
-                                  ? 'bg-amber-600 text-white ring-2 ring-amber-400'
-                                  : 'bg-red-600 text-white animate-pulse ring-2 ring-red-400'
-                                : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
-                                }`}
-                              title={
-                                playingRecordingId === call.id
-                                  ? isRecordingPaused
-                                    ? 'Resume Recording'
-                                    : 'Pause Recording'
-                                  : 'Listen to Call Recording'
-                              }
-                            >
-                              {playingRecordingId === call.id ? (
-                                isRecordingPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />
-                              ) : (
-                                <Play className="w-3.5 h-3.5" />
-                              )}
-                              <span>
-                                {playingRecordingId === call.id
-                                  ? isRecordingPaused
-                                    ? 'Paused'
-                                    : 'Playing'
-                                  : 'Listen'}
-                              </span>
-                            </button>
-                          ) : (
-                            <span className="text-[10px] text-slate-400 italic">No audio</span>
-                          )}
-
-                          {/* View Transcript modal button */}
-                          <button
-                            onClick={() => setSelectedHistoryCall(call)}
-                            className="p-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-lg border border-slate-200 cursor-pointer shadow-2xs"
-                            title="View Transcript"
-                          >
-                            <FileText className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          {/* 2. Adaptive Mobile & Tablet Card View (< md) */}
-          <div className="block md:hidden space-y-3">
-            {history.map((call) => {
-              const resolution = call.intelligence?.resolutionStatus || call.conversationAnalysis?.resolutionStatus || 'resolved';
-              const summaryText = call.intelligence?.overallSummary || call.intelligence?.callReason || call.conversationAnalysis?.summary || call.customerQuestion || 'AI Voice support inquiry';
-              const recUrl = call.recordingUrl || (call.recording ? `/api/recordings/file/${call.recording.id}` : `/api/calls/${call.callId}/recording`);
-
-              return (
-                <div key={call.id} className="p-4 rounded-2xl border border-slate-200 bg-slate-50/50 space-y-3 shadow-2xs">
-                  {/* Top Row: Partner + Status */}
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
-                        <Bot className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <div className="font-extrabold text-slate-900 text-xs">
-                          {call.agentName || (call.type === 'ai_voice' ? 'KAIRA AI Support' : 'Agent')}
-                        </div>
-                        <div className="text-[10px] text-slate-400 font-mono">
-                          {new Date(call.startTime).toLocaleDateString()} at {new Date(call.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
                       </div>
                     </div>
-                    <div className="flex flex-col items-end gap-1">
+
+                    {/* Summary */}
+                    <p className="text-xs text-slate-600 leading-relaxed line-clamp-2 bg-white p-2.5 rounded-xl border border-slate-200/60">
+                      {summaryText}
+                    </p>
+
+                    {/* Footer Row: Resolution + Actions */}
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">
                       <span
-                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${call.status === 'completed'
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${resolution === 'resolved'
                           ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                          : call.status === 'active'
-                            ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                            : 'bg-slate-100 text-slate-700 border border-slate-200'
+                          : 'bg-amber-50 text-amber-700 border border-amber-200'
                           }`}
                       >
-                        {call.status}
+                        {resolution.replace('_', ' ')}
                       </span>
-                      <span className="font-mono text-[10px] font-bold text-slate-600">
-                        ⏱ {formatDuration(call.duration)}
-                      </span>
-                    </div>
-                  </div>
 
-                  {/* Summary */}
-                  <p className="text-xs text-slate-600 leading-relaxed line-clamp-2 bg-white p-2.5 rounded-xl border border-slate-200/60">
-                    {summaryText}
-                  </p>
-
-                  {/* Footer Row: Resolution + Actions */}
-                  <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${resolution === 'resolved'
-                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                        : 'bg-amber-50 text-amber-700 border border-amber-200'
-                        }`}
-                    >
-                      {resolution.replace('_', ' ')}
-                    </span>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setSelectedIntelligenceCallId(call.callId || call.id)}
-                        className="min-h-[36px] px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
-                        title="View AI Summary"
-                      >
-                        <Sparkles className="w-3.5 h-3.5" />
-                        <span>AI Summary</span>
-                      </button>
-                      {(call.recordingUrl || call.recording || call.recordingStatus === 'completed' || call.duration > 2) && (
+                      <div className="flex items-center gap-1.5">
                         <button
-                          onClick={() => handlePlayRecording(recUrl, call.id)}
-                          className={`min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${playingRecordingId === call.id
-                            ? 'bg-red-600 text-white animate-pulse'
-                            : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
-                            }`}
+                          onClick={() => setSelectedIntelligenceCallId(call.callId || call.id)}
+                          className="min-h-[36px] px-2.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+                          title="View AI Summary"
                         >
-                          {playingRecordingId === call.id ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                          <span>{playingRecordingId === call.id ? 'Playing' : 'Listen'}</span>
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>{t('history.btn_ai_summary')}</span>
                         </button>
-                      )}
-                      <button
-                        onClick={() => setSelectedHistoryCall(call)}
-                        className="min-h-[36px] px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 rounded-xl border border-slate-200 text-xs font-semibold cursor-pointer shadow-2xs flex items-center gap-1"
-                      >
-                        <FileText className="w-3.5 h-3.5 text-slate-500" />
-                        <span>View</span>
-                      </button>
+                        {(call.recordingUrl || call.recording || call.recordingStatus === 'completed' || call.duration > 2) && (
+                          <button
+                            onClick={() => handlePlayRecording(recUrl, call.id)}
+                            className={`min-h-[36px] inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${playingRecordingId === call.id
+                              ? 'bg-red-600 text-white animate-pulse'
+                              : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
+                              }`}
+                          >
+                            {playingRecordingId === call.id ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                            <span>{playingRecordingId === call.id ? t('history.btn_playing') : t('history.btn_listen')}</span>
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setSelectedHistoryCall(call)}
+                          className="min-h-[36px] px-2.5 py-1.5 bg-white hover:bg-slate-100 text-slate-700 rounded-xl border border-slate-200 text-xs font-semibold cursor-pointer shadow-2xs flex items-center gap-1"
+                          title={t('history.view_transcript')}
+                        >
+                          <FileText className="w-3.5 h-3.5 text-slate-500" />
+                          <span>{t('history.btn_view')}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteConfirmCallId(call.id)}
+                          className="min-h-[36px] p-2 bg-white hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-xl border border-slate-200 hover:border-rose-200 cursor-pointer shadow-2xs transition-colors"
+                          title={t('history.btn_delete')}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </div>
-
-    {/* Customer Support Tickets Section */}
-    <div className="bg-white rounded-3xl shadow-xl shadow-slate-100 border border-slate-200/80 p-6 sm:p-8 space-y-4">
-      <SupportTickets isCustomerView={true} />
-    </div>
-
-    {/* Transcript Modal for Historical Calls */}
-    {selectedHistoryCall && (
-      <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div>
-              <h3 className="font-bold text-slate-900 text-sm">{t('history.modal_title')}</h3>
-              <p className="text-[11px] text-slate-500 font-mono">
-                {new Date(selectedHistoryCall.startTime).toLocaleString()} • Duration: {formatDuration(selectedHistoryCall.duration)}
-              </p>
+                );
+              })}
             </div>
-            <div className="flex items-center gap-2">
-              {selectedHistoryCall.transcripts && selectedHistoryCall.transcripts.length > 0 && (
-                <button
-                  onClick={() => handleDownloadTranscript(selectedHistoryCall.transcripts as any, `KAIRA-History-${selectedHistoryCall.id}`)}
-                  className="p-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-600 cursor-pointer"
-                  title="Export transcript as text"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                </button>
-              )}
+          </>
+        )}
+      </div>
+
+      {/* Customer Support Tickets Section */}
+      <div className="bg-white rounded-3xl shadow-xl shadow-slate-100 border border-slate-200/80 p-6 sm:p-8 space-y-4">
+        <SupportTickets isCustomerView={true} />
+      </div>
+
+      {/* Delete Call Record Confirmation Modal */}
+      {deleteConfirmCallId && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center gap-3 text-rose-600">
+              <div className="w-10 h-10 rounded-2xl bg-rose-50 flex items-center justify-center shrink-0 border border-rose-100">
+                <Trash2 className="w-5 h-5 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-base">{t('history.delete_confirm_title')}</h3>
+                <p className="text-xs text-slate-500">Call Record #{deleteConfirmCallId.slice(-6).toUpperCase()}</p>
+              </div>
+            </div>
+            <p className="text-sm text-slate-600 leading-relaxed">
+              {t('history.delete_confirm_msg')}
+            </p>
+            <div className="flex items-center justify-end gap-3 pt-2">
               <button
-                onClick={() => setSelectedHistoryCall(null)}
-                className="text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
+                type="button"
+                disabled={isDeletingCall}
+                onClick={() => setDeleteConfirmCallId(null)}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-semibold cursor-pointer transition-colors"
               >
-                ✕ {t('history.modal_close')}
+                {t('history.delete_btn_cancel')}
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingCall}
+                onClick={() => handleDeleteCall(deleteConfirmCallId)}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md shadow-rose-200 cursor-pointer transition-all flex items-center gap-1.5 disabled:opacity-60"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeletingCall ? t('history.delete_deleting') : t('history.delete_btn_confirm')}</span>
               </button>
             </div>
           </div>
+        </div>
+      )}
 
-          {/* Audio Recording Playback in Modal */}
-          {(selectedHistoryCall.recordingUrl || selectedHistoryCall.recording || selectedHistoryCall.recordingStatus === 'completed' || selectedHistoryCall.duration > 2) && (
-            <div className="p-3 bg-indigo-50/70 border border-indigo-200/80 rounded-2xl flex items-center justify-between gap-3 shadow-2xs">
-              <div className="flex items-center gap-2">
-                <Volume2 className="w-4 h-4 text-indigo-600" />
-                <div>
-                  <span className="text-xs font-bold text-indigo-950 block">Call Recording Audio</span>
-                  <span className="text-[10px] text-indigo-600 font-mono">Format: WebM / Opus HD</span>
-                </div>
+      {/* Transcript Modal for Historical Calls */}
+      {selectedHistoryCall && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm">{t('history.modal_title')}</h3>
+                <p className="text-[11px] text-slate-500 font-mono">
+                  {new Date(selectedHistoryCall.startTime).toLocaleString()} • Duration: {formatDuration(selectedHistoryCall.duration)}
+                </p>
               </div>
               <div className="flex items-center gap-2">
+                {selectedHistoryCall.transcripts && selectedHistoryCall.transcripts.length > 0 && (
+                  <button
+                    onClick={() => handleDownloadTranscript(selectedHistoryCall.transcripts as any, `KAIRA-History-${selectedHistoryCall.id}`)}
+                    className="p-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-600 cursor-pointer"
+                    title="Export transcript as text"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                  </button>
+                )}
                 <button
-                  onClick={() => handlePlayRecording(selectedHistoryCall.recordingUrl || `/api/calls/${selectedHistoryCall.callId}/recording`, selectedHistoryCall.id)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer ${playingRecordingId === selectedHistoryCall.id
-                    ? 'bg-red-600 text-white animate-pulse'
-                    : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                    }`}
+                  onClick={() => setSelectedHistoryCall(null)}
+                  className="text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
                 >
-                  {playingRecordingId === selectedHistoryCall.id ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                  <span>{playingRecordingId === selectedHistoryCall.id ? 'Pause' : 'Play Audio'}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDownloadRecording(
-                    selectedHistoryCall.recordingUrl || `/api/calls/${selectedHistoryCall.callId}/recording`,
-                    `call-${selectedHistoryCall.callId}.webm`
-                  )}
-                  className="p-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl cursor-pointer"
-                  title="Download Audio File"
-                >
-                  <Download className="w-3.5 h-3.5" />
+                  ✕ {t('history.modal_close')}
                 </button>
               </div>
             </div>
-          )}
 
-          {/* Post-Call Sentiment Evaluation */}
-          <PostCallSentimentSummary
-            overallSentiment={selectedHistoryCall.overallSentiment}
-            sentimentScore={selectedHistoryCall.sentimentScore}
-            customerExperience={selectedHistoryCall.sentimentRecords?.find(r => r.isFinal)?.customerExperienceNote}
-            frustrationDetected={selectedHistoryCall.overallSentiment === 'FRUSTRATED'}
-            requiresAssistance={selectedHistoryCall.requiresAssistance}
-            assistanceReason={selectedHistoryCall.assistanceReason}
-          />
-
-
-          {/* AI Call Intelligence Summary if generated */}
-          {selectedHistoryCall.intelligence && (
-            <div className="p-3.5 bg-gradient-to-r from-purple-50/80 to-indigo-50/80 border border-purple-100 rounded-2xl space-y-2 text-xs">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5 font-bold text-purple-900">
-                  <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-                  AI Call Summary
+            {/* Audio Recording Playback in Modal */}
+            {(selectedHistoryCall.recordingUrl || selectedHistoryCall.recording || selectedHistoryCall.recordingStatus === 'completed' || selectedHistoryCall.duration > 2) && (
+              <div className="p-3 bg-indigo-50/70 border border-indigo-200/80 rounded-2xl flex items-center justify-between gap-3 shadow-2xs">
+                <div className="flex items-center gap-2">
+                  <Volume2 className="w-4 h-4 text-indigo-600" />
+                  <div>
+                    <span className="text-xs font-bold text-indigo-950 block">Call Recording Audio</span>
+                    <span className="text-[10px] text-indigo-600 font-mono">Format: WebM / Opus HD</span>
+                  </div>
                 </div>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${selectedHistoryCall.intelligence.resolutionStatus === 'resolved'
-                  ? 'bg-emerald-100 text-emerald-800'
-                  : selectedHistoryCall.intelligence.resolutionStatus === 'partially_resolved'
-                    ? 'bg-blue-100 text-blue-800'
-                    : selectedHistoryCall.intelligence.resolutionStatus === 'escalated_admin'
-                      ? 'bg-purple-100 text-purple-800'
-                      : 'bg-amber-100 text-amber-800'
-                  }`}>
-                  {selectedHistoryCall.intelligence.resolutionStatus.replace('_', ' ')}
-                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handlePlayRecording(selectedHistoryCall.recording?.id ? `/api/recordings/${encodeURIComponent(selectedHistoryCall.recording.id)}/stream` : selectedHistoryCall.recordingUrl || `/api/calls/${encodeURIComponent(selectedHistoryCall.callId)}/recording`, selectedHistoryCall.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer ${playingRecordingId === selectedHistoryCall.id
+                      ? 'bg-red-600 text-white animate-pulse'
+                      : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                      }`}
+                  >
+                    {playingRecordingId === selectedHistoryCall.id ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                    <span>{playingRecordingId === selectedHistoryCall.id ? 'Pause' : 'Play Audio'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadRecording(
+                      selectedHistoryCall.recording?.id ? `/api/recordings/${encodeURIComponent(selectedHistoryCall.recording.id)}/download` : selectedHistoryCall.recordingUrl || `/api/calls/${encodeURIComponent(selectedHistoryCall.callId)}/recording?download=true`,
+                      `call-${selectedHistoryCall.callId}.webm`
+                    )}
+                    className="p-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl cursor-pointer"
+                    title="Download Audio File"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
-              <p className="text-slate-700 leading-relaxed font-medium">
-                {selectedHistoryCall.intelligence.overallSummary}
-              </p>
-              {selectedHistoryCall.intelligence.solutionsProvided && (
-                <div className="text-[11px] text-slate-600 bg-white/70 p-2 rounded-xl border border-purple-100">
-                  <strong className="text-purple-800 block">Solutions Provided:</strong>
-                  {selectedHistoryCall.intelligence.solutionsProvided}
-                </div>
-              )}
-              {selectedHistoryCall.intelligence.actionItems && (
-                <div className="text-[11px] text-amber-800 bg-amber-50/80 p-2 rounded-xl border border-amber-200 font-semibold">
-                  Follow-Up Action: {selectedHistoryCall.intelligence.actionItems}
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="max-h-80 overflow-y-auto space-y-3 p-2">
-            {(!selectedHistoryCall.transcripts || selectedHistoryCall.transcripts.length === 0) ? (
-              <p className="text-xs text-slate-400 text-center py-4">{t('history.no_entries')}</p>
-            ) : (
-              selectedHistoryCall.transcripts.map((tItem) => (
-                <div key={tItem.id} className="text-xs">
-                  <span className="font-semibold text-slate-500 block mb-0.5">
-                    {tItem.senderName || tItem.sender}:
-                  </span>
-                  <p className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-slate-800">
-                    {tItem.text}
-                  </p>
-                  {tItem.translation && (
-                    <p className="text-[11px] italic text-indigo-600 mt-1 pl-2">
-                      {t('transcript.translation_prefix', { text: tItem.translation })}
-                    </p>
-                  )}
-                </div>
-              ))
             )}
-          </div>
 
-          <button
-            onClick={() => setSelectedHistoryCall(null)}
-            className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
-          >
-            {t('history.modal_close')}
-          </button>
-        </div>
-      </div>
-    )}
-    {showRecordingConsentModal && (
-      <div className="fixed inset-0 z-[70] bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="recording-consent-title"
-          className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl border border-slate-200 space-y-5"
-        >
-          <div className="flex items-start gap-3">
-            <div className="w-10 h-10 shrink-0 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center">
-              <Radio className="w-5 h-5" />
+            {/* Post-Call Sentiment Evaluation */}
+            <PostCallSentimentSummary
+              overallSentiment={selectedHistoryCall.overallSentiment}
+              sentimentScore={selectedHistoryCall.sentimentScore}
+              customerExperience={selectedHistoryCall.sentimentRecords?.find(r => r.isFinal)?.customerExperienceNote}
+              frustrationDetected={selectedHistoryCall.overallSentiment === 'FRUSTRATED'}
+              requiresAssistance={selectedHistoryCall.requiresAssistance}
+              assistanceReason={selectedHistoryCall.assistanceReason}
+            />
+
+
+            {/* AI Call Intelligence Summary if generated */}
+            {selectedHistoryCall.intelligence && (
+              <div className="p-3.5 bg-gradient-to-r from-purple-50/80 to-indigo-50/80 border border-purple-100 rounded-2xl space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 font-bold text-purple-900">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                    AI Call Summary
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${selectedHistoryCall.intelligence.resolutionStatus === 'resolved'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : selectedHistoryCall.intelligence.resolutionStatus === 'partially_resolved'
+                      ? 'bg-blue-100 text-blue-800'
+                      : selectedHistoryCall.intelligence.resolutionStatus === 'escalated_admin'
+                        ? 'bg-purple-100 text-purple-800'
+                        : 'bg-amber-100 text-amber-800'
+                    }`}>
+                    {selectedHistoryCall.intelligence.resolutionStatus.replace('_', ' ')}
+                  </span>
+                </div>
+                <p className="text-slate-700 leading-relaxed font-medium">
+                  {selectedHistoryCall.intelligence.overallSummary}
+                </p>
+                {selectedHistoryCall.intelligence.solutionsProvided && (
+                  <div className="text-[11px] text-slate-600 bg-white/70 p-2 rounded-xl border border-purple-100">
+                    <strong className="text-purple-800 block">Solutions Provided:</strong>
+                    {selectedHistoryCall.intelligence.solutionsProvided}
+                  </div>
+                )}
+                {selectedHistoryCall.intelligence.actionItems && (
+                  <div className="text-[11px] text-amber-800 bg-amber-50/80 p-2 rounded-xl border border-amber-200 font-semibold">
+                    Follow-Up Action: {selectedHistoryCall.intelligence.actionItems}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="max-h-80 overflow-y-auto space-y-3 p-2">
+              {(!selectedHistoryCall.transcripts || selectedHistoryCall.transcripts.length === 0) ? (
+                <p className="text-xs text-slate-400 text-center py-4">{t('history.no_entries')}</p>
+              ) : (
+                selectedHistoryCall.transcripts.map((tItem) => (
+                  <div key={tItem.id} className="text-xs">
+                    <span className="font-semibold text-slate-500 block mb-0.5">
+                      {tItem.senderName || tItem.sender}:
+                    </span>
+                    <p className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-slate-800">
+                      {tItem.text}
+                    </p>
+                    {tItem.translation && (
+                      <p className="text-[11px] italic text-indigo-600 mt-1 pl-2">
+                        {t('transcript.translation_prefix', { text: tItem.translation })}
+                      </p>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
-            <div className="space-y-1">
-              <h2 id="recording-consent-title" className="text-base font-bold text-slate-900">{t('recording.consent_title')}</h2>
-              <p className="text-sm leading-relaxed text-slate-600">
-                {t('recording.consent_description')}
-              </p>
-            </div>
+
+            <button
+              onClick={() => setSelectedHistoryCall(null)}
+              className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+            >
+              {t('history.modal_close')}
+            </button>
           </div>
-          <div className="flex flex-col-reverse sm:flex-row gap-2">
+        </div>
+      )}
+      {showRecordingConsentModal && (
+        <div className="fixed inset-0 z-[70] bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="recording-consent-title"
+            className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl border border-slate-200 space-y-5"
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 shrink-0 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center">
+                <Radio className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h2 id="recording-consent-title" className="text-base font-bold text-slate-900">{t('recording.consent_title')}</h2>
+                <p className="text-sm leading-relaxed text-slate-600">
+                  {t('recording.consent_description')}
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-col-reverse sm:flex-row gap-2">
+              <button
+                type="button"
+                onClick={() => handleRecordingConsentDecision('declined')}
+                className="flex-1 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                {t('recording.continue_without')}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRecordingConsentDecision('granted')}
+                className="flex-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"
+              >
+                {t('recording.allow_continue')}
+              </button>
+            </div>
             <button
               type="button"
-              onClick={() => handleRecordingConsentDecision('declined')}
-              className="flex-1 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              onClick={() => {
+                setShowRecordingConsentModal(false);
+                setPendingRecordingCallType(null);
+              }}
+              className="w-full text-xs font-medium text-slate-500 hover:text-slate-700"
             >
-              {t('recording.continue_without')}
-            </button>
-            <button
-              type="button"
-              onClick={() => handleRecordingConsentDecision('granted')}
-              className="flex-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"
-            >
-              {t('recording.allow_continue')}
+              {t('recording.cancel_call')}
             </button>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              setShowRecordingConsentModal(false);
-              setPendingRecordingCallType(null);
-            }}
-            className="w-full text-xs font-medium text-slate-500 hover:text-slate-700"
-          >
-            {t('recording.cancel_call')}
-          </button>
         </div>
-      </div>
-    )}
+      )}
 
-    {/* Floating Audio Playback Control Bar */}
-    {playingRecordingId && (
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-11/12 max-w-lg bg-slate-900/95 backdrop-blur-md text-white px-5 py-3.5 rounded-2xl shadow-2xl border border-slate-700 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3 min-w-0">
-          <button
-            type="button"
-            onClick={() => {
-              if (activeAudioPlayerRef.current) {
-                if (isRecordingPaused) {
-                  activeAudioPlayerRef.current.play().catch(() => {});
-                  setIsRecordingPaused(false);
-                } else {
-                  activeAudioPlayerRef.current.pause();
-                  setIsRecordingPaused(true);
-                }
-              }
-            }}
-            className="w-9 h-9 rounded-full bg-indigo-600 hover:bg-indigo-500 flex items-center justify-center shrink-0 cursor-pointer shadow-md transition-all active:scale-95"
-            title={isRecordingPaused ? 'Resume' : 'Pause'}
-          >
-            {isRecordingPaused ? <Play className="w-4 h-4 fill-white" /> : <Pause className="w-4 h-4 fill-white" />}
-          </button>
-          <div className="min-w-0">
-            <div className="text-xs font-bold text-slate-100 flex items-center gap-1.5">
-              <Volume2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-              <span className="truncate">Call Recording</span>
-            </div>
-            <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-              {formatDuration(Math.floor(playbackProgress?.currentTime || 0))} / {formatDuration(Math.floor(playbackProgress?.duration || 0))}
-            </div>
-          </div>
-        </div>
+      {/* Audio Device Settings Modal */}
+      <AudioDeviceModal
+        isOpen={showAudioDeviceModal}
+        onClose={() => setShowAudioDeviceModal(false)}
+      />
 
-        <div className="flex-1 max-w-xs mx-2">
-          <input
-            type="range"
-            min={0}
-            max={playbackProgress?.duration || 100}
-            value={playbackProgress?.currentTime || 0}
-            onChange={(e) => handleSeekRecording(Number(e.target.value))}
-            className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-          />
-        </div>
-
-        <button
-          type="button"
-          onClick={handleStopRecordingPlayback}
-          className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer text-xs font-bold"
-          title="Stop & Close Player"
-        >
-          ✕
-        </button>
-      </div>
-    )}
-
-    {/* Audio Device Settings Modal */}
-    <AudioDeviceModal
-      isOpen={showAudioDeviceModal}
-      onClose={() => setShowAudioDeviceModal(false)}
-    />
-
-    {/* AI Call Intelligence & Automatic Summary Modal */}
-    <CallIntelligenceModal
-      callId={selectedIntelligenceCallId}
-      isOpen={!!selectedIntelligenceCallId}
-      onClose={() => setSelectedIntelligenceCallId(null)}
-      token={token}
-    />
-  </div>
-);
+      {/* AI Call Intelligence & Automatic Summary Modal */}
+      <CallIntelligenceModal
+        callId={selectedIntelligenceCallId}
+        isOpen={!!selectedIntelligenceCallId}
+        onClose={() => setSelectedIntelligenceCallId(null)}
+        token={token}
+      />
+    </div>
+  );
 };

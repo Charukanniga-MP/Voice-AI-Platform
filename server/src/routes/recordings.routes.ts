@@ -293,7 +293,7 @@ router.get(
 router.get(
   '/:id/download',
   authenticate,
-  authorizeRoles('admin'),
+  authorizeRoles('admin', 'agent', 'customer'),
   async (req: Request, res: Response) => {
     try {
       await recordingService.downloadRecording(req.params.id, req, res, req.user);

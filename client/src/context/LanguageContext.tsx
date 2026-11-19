@@ -46,6 +46,11 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     try {
       localStorage.setItem(STORAGE_KEY, language);
     } catch {}
+
+    if (typeof document !== 'undefined') {
+      document.documentElement.dir = language === 'ar' ? 'rtl' : 'ltr';
+      document.documentElement.lang = language;
+    }
   }, [language]);
 
   const setLanguage = useCallback((newLang: LanguageCode) => {

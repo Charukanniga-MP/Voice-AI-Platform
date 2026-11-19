@@ -258,6 +258,13 @@ export class RecordingService {
       res.status(404).json({ error: 'Audio recording file not found or declined.' });
       return;
     }
+    if (user?.role === 'customer') {
+      const call = await prisma.callRecord.findUnique({ where: { id: recording.callRecordId }, select: { customerId: true } });
+      if (call?.customerId !== user.id) {
+        res.status(403).json({ error: 'Access denied.' });
+        return;
+      }
+    }
 
     // Path traversal check
     const resolved = path.resolve(recording.storagePath);
@@ -326,6 +333,13 @@ export class RecordingService {
     if (!recording || !recording.storagePath || !fs.existsSync(recording.storagePath)) {
       res.status(404).json({ error: 'Recording file not available for download.' });
       return;
+    }
+    if (user?.role === 'customer') {
+      const call = await prisma.callRecord.findUnique({ where: { id: recording.callRecordId }, select: { customerId: true } });
+      if (call?.customerId !== user.id) {
+        res.status(403).json({ error: 'Access denied.' });
+        return;
+      }
     }
 
     // Path traversal verification

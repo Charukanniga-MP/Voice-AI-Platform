@@ -236,11 +236,11 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean; isAgentView?: 
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-slate-900">
-            {isCustomer ? 'My Support Tickets' : isAgentView ? 'Tickets' : 'Support Tickets'}
+            {isCustomer ? t('tickets.my_tickets') : isAgentView ? t('tickets.section_title') : t('tickets.section_title')}
           </h1>
           <p className="mt-1 text-xs text-slate-500">
             {isCustomer
-              ? 'Track your inquiries, reported issues, and responses from support agents.'
+              ? t('tickets.customer_subtitle')
               : isAgentView
                 ? 'View customer issues, ticket conversations, and status updates.'
                 : 'Track customer issues, ownership, priority, and follow-up across all channels.'}
@@ -251,7 +251,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean; isAgentView?: 
             onClick={() => void fetchTickets()}
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer shadow-xs transition-colors min-h-[38px]"
           >
-            <RefreshCw className="h-4 w-4" /> Refresh
+            <RefreshCw className="h-4 w-4" /> {t('tickets.refresh_btn')}
           </button>
           <button
             onClick={() => {
@@ -263,7 +263,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean; isAgentView?: 
             }}
             className="inline-flex items-center gap-2 rounded-xl bg-purple-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-purple-700 cursor-pointer shadow-sm transition-colors min-h-[38px]"
           >
-            <Plus className="h-4 w-4" /> {isCustomer ? 'Open New Ticket' : 'New Ticket'}
+            <Plus className="h-4 w-4" /> {isCustomer ? t('tickets.open_new_ticket') : t('tickets.create_btn')}
           </button>
         </div>
       </header>
@@ -304,7 +304,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean; isAgentView?: 
       {showForm && (
         <form onSubmit={createTicket} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:grid-cols-2">
           <h2 className="font-bold text-slate-900 sm:col-span-2">
-            {isCustomer ? 'Submit a Support Ticket' : 'Create a Support Ticket'}
+            {isCustomer ? t('tickets.submit_ticket_title') : t('tickets.create_ticket_title')}
           </h2>
 
           {!isCustomer && (
@@ -313,14 +313,14 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean; isAgentView?: 
                 required
                 value={customerName}
                 onChange={event => setCustomerName(event.target.value)}
-                placeholder="Customer name"
+                placeholder={t('tickets.customer_name')}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/20"
               />
               <input
                 type="email"
                 value={customerEmail}
                 onChange={event => setCustomerEmail(event.target.value)}
-                placeholder="Customer email (optional)"
+                placeholder={t('tickets.customer_email')}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/20"
               />
             </>
@@ -330,7 +330,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean; isAgentView?: 
             required
             value={subject}
             onChange={event => setSubject(event.target.value)}
-            placeholder="Issue summary / subject"
+            placeholder={t('tickets.field_subject_placeholder')}
             className="rounded-lg border border-slate-200 px-3 py-2 text-sm sm:col-span-2 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
           />
 
@@ -338,32 +338,32 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean; isAgentView?: 
             required
             value={description}
             onChange={event => setDescription(event.target.value)}
-            placeholder="Describe the issue in detail..."
+            placeholder={t('tickets.field_description_placeholder')}
             rows={3}
             className="rounded-lg border border-slate-200 px-3 py-2 text-sm sm:col-span-2 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
           />
 
           <label className="space-y-1 text-xs font-medium text-slate-600">
-            Priority
+            {t('tickets.field_priority')}
             <select
               value={priority}
               onChange={event => setPriority(event.target.value)}
               className="block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
             >
-              <option value="low">Low</option>
-              <option value="normal">Normal</option>
-              <option value="high">High</option>
-              <option value="urgent">Urgent</option>
+              <option value="low">{t('tickets.priority_low')}</option>
+              <option value="normal">{t('tickets.priority_normal')}</option>
+              <option value="high">{t('tickets.priority_high')}</option>
+              <option value="urgent">{t('tickets.priority_urgent')}</option>
             </select>
           </label>
 
           {canAssignTickets && (
             <label className="space-y-1 text-xs font-medium text-slate-600">
-                Assign to
+                {t('tickets.col_assigned_to')}
                 <input
                   value={assignedTo}
                   onChange={event => setAssignedTo(event.target.value)}
-                  placeholder="Agent name"
+                  placeholder={t('tickets.agent_name_placeholder')}
                   className="block w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
                 />
               </label>
@@ -371,7 +371,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean; isAgentView?: 
           {!isCustomer && (
             <>
               <label className="space-y-1 text-xs font-medium text-slate-600">
-                Follow-up date
+                {t('tickets.follow_up_date')}
                 <input
                   type="date"
                   value={followUpAt}
@@ -388,13 +388,13 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean; isAgentView?: 
               onClick={() => setShowForm(false)}
               className="rounded-lg px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 cursor-pointer"
             >
-              Cancel
+              {t('tickets.cancel_btn')}
             </button>
             <button
               disabled={saving}
               className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 cursor-pointer disabled:opacity-50"
             >
-              {saving ? 'Saving…' : (isCustomer ? 'Submit Ticket' : 'Create Ticket')}
+              {saving ? t('tickets.saving_btn') : (isCustomer ? t('tickets.submit_btn') : t('tickets.create_btn'))}
             </button>
           </div>
         </form>
@@ -402,24 +402,24 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean; isAgentView?: 
 
       <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-xs">
         {loading ? (
-          <p className="p-8 text-center text-sm text-slate-500">Loading tickets…</p>
+          <p className="p-8 text-center text-sm text-slate-500">{t('tickets.loading_tickets')}</p>
         ) : filteredTickets.length === 0 ? (
           <p className="p-8 text-center text-sm text-slate-500">
             {statusFilter === 'all'
               ? t('tickets.empty')
-              : `No tickets found with status "${getStatusLabel(statusFilter)}".`}
+              : t('tickets.no_matching_status', { status: getStatusLabel(statusFilter) })}
           </p>
         ) : (
           <table className="w-full min-w-[850px] text-left text-xs text-slate-600">
             <thead className="border-b border-slate-200 bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-slate-700">
               <tr>
-                <th className="px-4 py-3">Issue / Customer</th>
-                <th className="px-4 py-3">Priority</th>
-                {canAssignTickets && <th className="px-4 py-3">Assigned to</th>}
-                <th className="px-4 py-3">Follow-up</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Updated</th>
-                {!isCustomer && <th className="px-4 py-3 text-right">Actions</th>}
+                <th className="px-4 py-3">{t('tickets.col_issue_customer')}</th>
+                <th className="px-4 py-3">{t('tickets.col_priority')}</th>
+                {canAssignTickets && <th className="px-4 py-3">{t('tickets.col_assigned_to')}</th>}
+                <th className="px-4 py-3">{t('tickets.col_follow_up')}</th>
+                <th className="px-4 py-3">{t('tickets.col_status')}</th>
+                <th className="px-4 py-3">{t('tickets.col_updated')}</th>
+                {!isCustomer && <th className="px-4 py-3 text-right">{t('tickets.col_actions')}</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -441,9 +441,9 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean; isAgentView?: 
                         <button
                           type="button"
                           onClick={() => { setOpenConversationId(openConversationId === ticket.id ? null : ticket.id); setReplyText(''); }}
-                          className="mt-2 rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                          className="mt-2 rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
                         >
-                          {openConversationId === ticket.id ? 'Hide replies' : `View conversation (${ticket.messages?.length || 0})`}
+                          {openConversationId === ticket.id ? t('tickets.hide_replies') : t('tickets.view_conversation', { count: ticket.messages?.length || 0 })}
                         </button>
                       )}
                     </td>
@@ -451,7 +451,7 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean; isAgentView?: 
                     <td className="px-4 py-3">
                       {isCustomer ? (
                         <span className={`inline-flex px-2 py-0.5 rounded-md border text-[11px] font-semibold capitalize ${priorityColors[ticket.priority] || priorityColors.normal}`}>
-                          {ticket.priority}
+                          {getPriorityLabel(ticket.priority)}
                         </span>
                       ) : (
                         <select
@@ -460,10 +460,10 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean; isAgentView?: 
                           onChange={event => void updateTicket(ticket.id, { priority: event.target.value })}
                           className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs"
                         >
-                          <option value="low">Low</option>
-                          <option value="normal">Normal</option>
-                          <option value="high">High</option>
-                          <option value="urgent">Urgent</option>
+                          <option value="low">{t('tickets.priority_low')}</option>
+                          <option value="normal">{t('tickets.priority_normal')}</option>
+                          <option value="high">{t('tickets.priority_high')}</option>
+                          <option value="urgent">{t('tickets.priority_urgent')}</option>
                         </select>
                       )}
                     </td>
@@ -553,13 +553,13 @@ export const SupportTickets: React.FC<{ isCustomerView?: boolean; isAgentView?: 
                               onChange={event => setReplyText(event.target.value)}
                               maxLength={4000}
                               rows={3}
-                              placeholder={isCustomer ? 'Reply to support…' : 'Write an update or explain the resolution…'}
+                              placeholder={isCustomer ? t('tickets.reply_placeholder') : 'Write an update or explain the resolution…'}
                               className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
                             />
                             <div className="flex items-center justify-between">
                               {!isCustomer && <span className="text-xs text-slate-500">The customer will receive an email when delivery is configured.</span>}
-                              <button disabled={sendingReply || !replyText.trim()} className="ml-auto rounded-lg bg-purple-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">
-                                {sendingReply ? 'Sending…' : 'Send reply'}
+                              <button disabled={sendingReply || !replyText.trim()} className="ml-auto rounded-lg bg-purple-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50 cursor-pointer">
+                                {sendingReply ? t('tickets.sending_reply') : t('tickets.send_reply_btn')}
                               </button>
                             </div>
                           </form>

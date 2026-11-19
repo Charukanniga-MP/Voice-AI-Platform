@@ -284,8 +284,8 @@ export class VoiceService {
           this.activeOnResult(this.lastInterimTranscript, false);
         }
 
-        // Voice Activity Detection (VAD) Debounce:
-        // Allow a comfortable 1350ms natural conversational pause before finalizing turn
+        // Fast Voice Activity Detection (VAD) Debounce:
+        // Finalize after 800ms natural conversational pause on a complete utterance
         if (this.vadTimer) clearTimeout(this.vadTimer);
         if (this.lastInterimTranscript.length >= 2) {
           this.vadTimer = setTimeout(() => {
@@ -309,7 +309,7 @@ export class VoiceService {
                 this.activeOnResult(textToEmit, true, utteranceId);
               }
             }
-          }, 1350);
+          }, 800);
         }
       }
     };
