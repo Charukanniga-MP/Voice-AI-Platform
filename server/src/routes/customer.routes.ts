@@ -150,7 +150,8 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
       return;
     }
 
-    res.json({ customer });
+    const { passwordHash: _hash, ...safeCustomer } = customer as any;
+    res.json({ customer: safeCustomer });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to retrieve customer details.' });
   }

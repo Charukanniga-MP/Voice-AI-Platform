@@ -21,10 +21,17 @@ export interface AuditLogParams {
   details?: string | null;
 }
 
+export function sanitizeLogDetails(details: string): string {
+  if (!details) return details;
+  return details
+    .replace(/(password|token|secret|clientSecret|apiKey|authorization)=["']?[^&"',\s]+["']?/gi, '$1=***REDACTED***')
+    .replace(/"(password|token|secret|clientSecret|apiKey|authorization)"\s*:\s*"[^"]+"/gi, '"$1":"***REDACTED***"');
+}
+
 export async function logSecurityEvent(params: AuditLogParams): Promise<void> {
   try {
     const cleanEmail = params.email ? params.email.trim().toLowerCase() : null;
-    const cleanDetails = params.details ? params.details.slice(0, 1000) : null;
+    const cleanDetails = params.details ? sanitizeLogDetails(params.details).slice(0, 1000) : null;
 
     await prisma.securityAuditLog.create({
       data: {

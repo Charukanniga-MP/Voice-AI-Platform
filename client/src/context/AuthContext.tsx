@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { User } from '../types.js';
-import { registerSocketUser } from '../services/socket.js';
+import { registerSocketUser, unregisterSocketUser } from '../services/socket.js';
 import { setupFetchInterceptor, getJwtExpiration } from '../services/apiClient.js';
 
 interface AuthContextType {
@@ -39,7 +39,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     setToken(null);
     localStorage.removeItem('kaira_token');
+    localStorage.removeItem('token');
     localStorage.removeItem('kaira_user');
+    unregisterSocketUser();
     setSessionExpiredMessage(message);
     if (expiryTimerRef.current) {
       clearTimeout(expiryTimerRef.current);
@@ -278,10 +280,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       clearTimeout(expiryTimerRef.current);
       expiryTimerRef.current = null;
     }
+    const savedToken = token || localStorage.getItem('kaira_token') || localStorage.getItem('token');
+    if (savedToken) {
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${savedToken}`
+        }
+      }).catch(() => {});
+    }
     setUser(null);
     setToken(null);
     localStorage.removeItem('kaira_token');
+    localStorage.removeItem('token');
     localStorage.removeItem('kaira_user');
+    unregisterSocketUser();
   };
 
   return (

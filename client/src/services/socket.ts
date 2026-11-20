@@ -7,6 +7,7 @@ let lastRegisteredUser: {
   name: string;
   agentStatus?: string;
   supportedLanguages?: string[];
+  token?: string;
 } | null = null;
 
 export function getSocket(): Socket {
@@ -16,7 +17,11 @@ export function getSocket(): Socket {
       reconnection: true,
       reconnectionAttempts: 15,
       reconnectionDelay: 1000,
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
+      auth: (cb) => {
+        const token = localStorage.getItem('kaira_token') || localStorage.getItem('token');
+        cb({ token });
+      }
     });
 
     socket.on('connect', () => {
@@ -48,8 +53,20 @@ export function registerSocketUser(
   agentStatus: string = 'available',
   supportedLanguages?: string[]
 ) {
-  lastRegisteredUser = { userId, role, name, agentStatus, supportedLanguages };
+  const token = localStorage.getItem('kaira_token') || localStorage.getItem('token') || undefined;
+  lastRegisteredUser = { userId, role, name, agentStatus, supportedLanguages, token };
   const s = getSocket();
   console.log('[Socket] registerSocketUser:', name, role, 'status:', agentStatus, 'connected:', s.connected);
-  s.emit('user:register', { userId, role, name, agentStatus, supportedLanguages });
+  s.emit('user:register', { userId, role, name, agentStatus, supportedLanguages, token });
+}
+
+export function unregisterSocketUser() {
+  lastRegisteredUser = null;
+  if (socket) {
+    try {
+      socket.emit('user:unregister');
+      socket.disconnect();
+    } catch { }
+    socket = null;
+  }
 }

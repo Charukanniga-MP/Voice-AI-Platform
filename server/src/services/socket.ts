@@ -1,5 +1,7 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
+import jwt from 'jsonwebtoken';
 import { prisma } from '../db.js';
+import { getJwtSecret } from '../middleware/auth.js';
 import { knowledgeService, FALLBACK_MESSAGE } from './knowledge.js';
 import { translationService, SUPPORTED_LANGUAGES } from './translation.js';
 import { sentimentService } from './sentiment.js';
@@ -147,6 +149,31 @@ export interface AdminSession {
 
 export function initSocketServer(io: SocketIOServer) {
   activeSocketServer = io;
+
+  // Authenticate socket connection via handshake token if provided
+  io.use(async (socket: Socket, next) => {
+    try {
+      const token =
+        (socket.handshake.auth && socket.handshake.auth.token) ||
+        (socket.handshake.headers['authorization']?.replace(/^Bearer\s+/i, '')) ||
+        (socket.handshake.query && (socket.handshake.query.token as string));
+
+      if (token && typeof token === 'string' && token.trim()) {
+        try {
+          const decoded = jwt.verify(token.trim(), getJwtSecret(), { algorithms: ['HS256'] }) as any;
+          if (decoded && decoded.id && decoded.role) {
+            (socket as any).authenticatedUser = decoded;
+          }
+        } catch {
+          // Token invalid or expired - allow connection for anonymous customer calls, but without authenticated status
+        }
+      }
+      next();
+    } catch {
+      next();
+    }
+  });
+
   const connectedUsers = new Map<string, ConnectedUser>(); // socketId -> User
   const adminSessions = new Map<string, AdminSession>(); // adminSessionId -> AdminSession
   const socketToAdminSession = new Map<string, string>(); // socketId -> adminSessionId
@@ -585,16 +612,40 @@ export function initSocketServer(io: SocketIOServer) {
       userId: string;
       role: string;
       name: string;
+      token?: string;
       preferredLanguage?: string;
       supportedLanguages?: string[];
       agentStatus?: 'available' | 'busy';
     }) => {
       try {
-        // Query database to fetch up-to-date user preferences
+        if (!data || !data.userId) return;
+
+        // Query database to fetch up-to-date user preferences and verified role
         let dbUser = await prisma.user.findUnique({
           where: { id: data.userId }
         });
 
+        // Cryptographic check: verify token if provided or attached
+        const candidateToken = data.token || (socket as any).authenticatedUser?.token;
+        if (candidateToken) {
+          try {
+            const decoded = jwt.verify(candidateToken, getJwtSecret(), { algorithms: ['HS256'] }) as any;
+            if (decoded && decoded.id === data.userId) {
+              (socket as any).authenticatedUser = decoded;
+            }
+          } catch { }
+        }
+
+        // Strict authorization: Privileged roles (admin, agent) MUST exist in DB with matching role
+        if (data.role === 'admin' || data.role === 'agent') {
+          if (!dbUser || dbUser.role !== data.role) {
+            console.warn(`[Socket Security] Unauthorized attempt to register as ${data.role} from socket ${socket.id} (userId: ${data.userId})`);
+            socket.emit('auth:error', { error: `Authentication failed: account is not an authorized ${data.role}.` });
+            return;
+          }
+        }
+
+        const verifiedRole = dbUser ? dbUser.role : (data.role === 'customer' ? 'customer' : 'customer');
         const preferredLanguage = data.preferredLanguage || dbUser?.preferredLanguage || 'en';
         const supportedLanguages = data.supportedLanguages || (dbUser?.supportedLanguages ? dbUser.supportedLanguages.split(',') : ['en', 'ta', 'te', 'ml', 'hi']);
         const agentStatus = (data.agentStatus || (dbUser?.agentStatus as any) || 'available') as 'available' | 'busy' | 'offline';
@@ -603,8 +654,8 @@ export function initSocketServer(io: SocketIOServer) {
         const user: ConnectedUser = {
           socketId: socket.id,
           userId: data.userId,
-          role: data.role,
-          name: data.name,
+          role: verifiedRole,
+          name: dbUser?.name || data.name || 'User',
           preferredLanguage,
           supportedLanguages,
           agentStatus,
@@ -616,22 +667,34 @@ export function initSocketServer(io: SocketIOServer) {
 
         socket.join(`user:${data.userId}`);
         if (dbUser?.role === 'customer' && dbUser.email) socket.join(`customer:${dbUser.email.trim().toLowerCase()}`);
-        if (data.role === 'admin') socket.join('role:admin');
-        if (data.role === 'agent') socket.join('role:agent');
-
-        console.log(`[Socket] Registered: ${data.name} (${data.role}) - Lang: ${preferredLanguage}, Status: ${agentStatus}`);
-
-        // If agent just registered as available, check if someone is waiting in queue!
-        if (data.role === 'agent' || data.role === 'admin') {
-          await checkWaitingQueueForAgent(user);
+        if (verifiedRole === 'admin') {
+          socket.join('role:admin');
+          socket.join('role:agent');
+        } else if (verifiedRole === 'agent') {
+          socket.join('role:agent');
         }
 
-        // Send current queue stats to registered agent/admin
-        if (data.role === 'admin' || data.role === 'agent') {
+        console.log(`[Socket] Registered: ${user.name} (${verifiedRole}) - Lang: ${preferredLanguage}, Status: ${agentStatus}`);
+
+        // If agent just registered as available, check if someone is waiting in queue!
+        if (verifiedRole === 'agent' || verifiedRole === 'admin') {
+          await checkWaitingQueueForAgent(user);
           broadcastQueueStats();
         }
       } catch (err) {
         console.error('[Socket] Error registering user:', err);
+      }
+    });
+
+    // Unregister user when logging out
+    socket.on('user:unregister', () => {
+      const existingUser = connectedUsers.get(socket.id);
+      if (existingUser) {
+        socket.leave(`user:${existingUser.userId}`);
+        socket.leave('role:admin');
+        socket.leave('role:agent');
+        connectedUsers.delete(socket.id);
+        console.log(`[Socket] Unregistered user session: ${existingUser.name}`);
       }
     });
 
@@ -1220,8 +1283,9 @@ export function initSocketServer(io: SocketIOServer) {
       clientSentAt?: number;
     }) => {
       try {
-        const queryText = (data.query || '').trim();
-        if (!queryText || queryText.length < 2) return;
+        const rawQuery = (data.query || '').trim();
+        if (!rawQuery || rawQuery.length < 2) return;
+        const queryText = rawQuery.length > 2500 ? rawQuery.slice(0, 2500) : rawQuery;
 
         // Reject noise-only queries (non-word characters, clicks, empty pauses)
         if (!/[\p{L}\p{N}]/u.test(queryText)) {
@@ -2860,11 +2924,50 @@ export function initSocketServer(io: SocketIOServer) {
       }
     });
 
-    // 16a. Participant explicitly joins a call room
-    socket.on('call:join', (data: { callId: string }) => {
-      if (data?.callId) {
-        socket.join(`call:${data.callId}`);
-        console.log(`[Socket] Socket ${socket.id} joined call room: call:${data.callId}`);
+    // 16a. Participant joins a call room (Authorized access only)
+    socket.on('call:join', async (data: { callId: string }) => {
+      if (!data?.callId || typeof data.callId !== 'string') return;
+      const callId = data.callId.trim();
+      const currentUser = connectedUsers.get(socket.id);
+      const activeSession = callSessions.get(callId);
+
+      // Check if user is staff (admin / agent)
+      const isStaff = currentUser?.role === 'admin' || currentUser?.role === 'agent';
+      // Check if socket is the customer who initiated this session
+      const isSessionCustomer =
+        activeSession?.customerSocketId === socket.id ||
+        (currentUser && activeSession?.customerId && activeSession.customerId === currentUser.userId);
+
+      if (isStaff || isSessionCustomer) {
+        socket.join(`call:${callId}`);
+        console.log(`[Socket] Authorized participant ${currentUser?.name || socket.id} joined call room: call:${callId}`);
+        return;
+      }
+
+      // If session is not in memory, verify against DB
+      const callRecord = await prisma.callRecord.findFirst({
+        where: { OR: [{ callId }, { id: callId }] },
+        select: { id: true, customerId: true, agentId: true, adminId: true }
+      });
+
+      if (!callRecord) {
+        console.warn(`[Socket Security] Denied join to non-existent call ${callId} from socket ${socket.id}`);
+        socket.emit('call:error', { callId, error: 'Access denied: Call session not found or unauthorized.' });
+        return;
+      }
+
+      const isParticipant =
+        currentUser &&
+        (callRecord.customerId === currentUser.userId ||
+          callRecord.agentId === currentUser.userId ||
+          callRecord.adminId === currentUser.userId);
+
+      if (isParticipant) {
+        socket.join(`call:${callId}`);
+        console.log(`[Socket] Authorized participant ${currentUser.name} joined call room: call:${callId}`);
+      } else {
+        console.warn(`[Socket Security] Denied unauthorized join to call ${callId} from socket ${socket.id} (user: ${currentUser?.userId || 'anonymous'})`);
+        socket.emit('call:error', { callId, error: 'Access denied: You are not an authorized participant of this call session.' });
       }
     });
 

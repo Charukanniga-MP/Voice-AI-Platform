@@ -1615,11 +1615,20 @@ router.get('/:callId/recording', authenticate, async (req: Request, res: Respons
     }
 
     // Role-based permission check: Customer can only access their own calls, staff/admin can access any
-    const isParticipant =
+    let isParticipant =
       call.customerId === req.user!.id ||
-      (call.customerName && req.user!.name && call.customerName.toLowerCase() === req.user!.name.toLowerCase()) ||
       call.agentId === req.user!.id ||
       call.adminId === req.user!.id;
+
+    if (!isParticipant && req.user!.role === 'customer') {
+      const dbUser = await prisma.user.findUnique({
+        where: { id: req.user!.id },
+        select: { phone: true, email: true }
+      });
+      if (dbUser && dbUser.phone && call.customerPhone && dbUser.phone === call.customerPhone) {
+        isParticipant = true;
+      }
+    }
     const isStaff = req.user!.role === 'admin' || req.user!.role === 'agent';
 
     if (!isParticipant && !isStaff) {

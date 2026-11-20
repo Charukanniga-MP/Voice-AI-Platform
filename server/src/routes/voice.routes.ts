@@ -62,6 +62,11 @@ router.all('/tts', async (req: Request, res: Response) => {
       return;
     }
 
+    if (text.length > 2500) {
+      res.status(400).send('Text exceeds maximum allowable length of 2500 characters.');
+      return;
+    }
+
     const cacheKey = `${lang}:${text}`;
     if (ttsCache.has(cacheKey)) {
       const cached = ttsCache.get(cacheKey)!;
@@ -128,8 +133,13 @@ router.all('/tts', async (req: Request, res: Response) => {
 router.post('/translate', async (req: Request, res: Response) => {
   try {
     const { text, targetLang, sourceLang } = req.body;
-    if (!text) {
+    if (!text || typeof text !== 'string') {
       res.status(400).json({ error: 'Text is required.' });
+      return;
+    }
+
+    if (text.length > 5000) {
+      res.status(400).json({ error: 'Text exceeds maximum allowable length of 5000 characters.' });
       return;
     }
 

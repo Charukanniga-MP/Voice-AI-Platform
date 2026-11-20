@@ -297,6 +297,15 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   });
 });
 
+// Global process crash prevention handlers
+process.on('uncaughtException', (err: Error) => {
+  console.error('[FATAL PROCESS ERROR] Uncaught exception:', err.message || err);
+});
+
+process.on('unhandledRejection', (reason: any) => {
+  console.error('[UNHANDLED PROMISE REJECTION]:', reason?.message || reason);
+});
+
 // Initialize Socket.io events and signaling
 initSocketServer(io);
 
