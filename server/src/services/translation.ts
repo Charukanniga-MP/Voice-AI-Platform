@@ -11,6 +11,9 @@ export const SUPPORTED_LANGUAGES: Record<string, { name: string; nativeName: str
   hi: { name: 'Hindi', nativeName: 'हिन्दी', bcp47: 'hi-IN' },
   bn: { name: 'Bengali', nativeName: 'বাংলা', bcp47: 'bn-IN' },
   mr: { name: 'Marathi', nativeName: 'मराठी', bcp47: 'mr-IN' },
+  gu: { name: 'Gujarati', nativeName: 'ગુજરાતી', bcp47: 'gu-IN' },
+  pa: { name: 'Punjabi', nativeName: 'ਪੰਜਾਬੀ', bcp47: 'pa-IN' },
+  ur: { name: 'Urdu', nativeName: 'اردو', bcp47: 'ur-PK' },
   ar: { name: 'Arabic', nativeName: 'العربية', bcp47: 'ar-SA' },
   fr: { name: 'French', nativeName: 'Français', bcp47: 'fr-FR' },
   de: { name: 'German', nativeName: 'Deutsch', bcp47: 'de-DE' },
@@ -44,6 +47,9 @@ export class TranslationService {
     this.translationCache.set(`en->kn:${baseGreeting}`, "ನಮಸ್ಕಾರ! KAIRA ಗೆ ಸುಸ್ವಾಗತ. ನಾನು ನಿಮ್ಮ AI ಸಹಾಯಕ. ಇಂದು ನಾನು ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಲಿ?");
     this.translationCache.set(`en->bn:${baseGreeting}`, "হ্যালো! কায়রা-তে স্বাগতম। আমি আপনার এআই সহকারী। আজ আমি আপনাকে কীভাবে সাহায্য করতে পারি?");
     this.translationCache.set(`en->mr:${baseGreeting}`, "नमस्कार! KAIRA मध्ये आपले स्वागत आहे. मी आपला AI सहाय्यक आहे. आज मी आपली काय मदत करू शकतो?");
+    this.translationCache.set(`en->gu:${baseGreeting}`, "નમસ્તે! KAIRA માં આપનું સ્વાગત છે. હું તમારો AI સહાયક છું. આજે હું તમારી શું મદદ કરી શકું?");
+    this.translationCache.set(`en->pa:${baseGreeting}`, "ਸਤਿ ਸ੍ਰੀ ਅਕਾਲ! KAIRA ਵਿੱਚ ਤੁਹਾਡਾ ਸਵਾਗਤ ਹੈ। ਮੈਂ ਤੁਹਾਡਾ AI ਸਹਾਇਕ ਹਾਂ। ਅੱਜ ਮੈਂ ਤੁਹਾਡੀ ਕੀ ਮਦਦ ਕਰ ਸਕਦਾ ਹਾਂ?");
+    this.translationCache.set(`en->ur:${baseGreeting}`, "خوش آمدید! کائرہ میں آپ کا خیر مقدم ہے۔ میں آپ کا AI معاون ہوں۔ آج میں آپ کی کیا مدد کر سکتا ہوں؟");
     this.translationCache.set(`en->ar:${baseGreeting}`, "مرحباً! أهلاً بكم في كايرا. أنا مساعدكم الذكي. كيف يمكنني مساعدتكم اليوم؟");
     this.translationCache.set(`en->fr:${baseGreeting}`, "Bonjour! Bienvenue chez KAIRA. Je suis votre assistante IA. Comment puis-je vous aider aujourd'hui?");
     this.translationCache.set(`en->de:${baseGreeting}`, "Hallo! Willkommen bei KAIRA. Ich bin Ihre KI-Assistentin. Wie kann ich Ihnen heute helfen?");

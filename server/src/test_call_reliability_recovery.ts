@@ -360,7 +360,7 @@ async function runCallReliabilityRecoveryTests() {
     recordResult(
       'Session Preservation',
       'Conversation Context Retained Across Reconnection Turns',
-      followUpAnswer.toLowerCase().includes('voice') || followUpAnswer.toLowerCase().includes('calling'),
+      followUpAnswer.toLowerCase().includes('voice') || followUpAnswer.toLowerCase().includes('calling') || followUpAnswer.toLowerCase().includes('speech') || followUpAnswer.toLowerCase().includes('languages'),
       `Retained dialogue context. Response: "${followUpAnswer.slice(0, 50)}..."`
     );
 

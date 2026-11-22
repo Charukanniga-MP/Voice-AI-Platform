@@ -7,6 +7,9 @@ export type LanguageCode =
   | 'hi'
   | 'bn'
   | 'mr'
+  | 'gu'
+  | 'pa'
+  | 'ur'
   | 'ar'
   | 'fr'
   | 'de'
@@ -30,6 +33,9 @@ export const SUPPORTED_LANGUAGES: Record<LanguageCode, { name: string; nativeNam
   hi: { name: 'Hindi', nativeName: 'हिन्दी', bcp47: 'hi-IN' },
   bn: { name: 'Bengali', nativeName: 'বাংলা', bcp47: 'bn-IN' },
   mr: { name: 'Marathi', nativeName: 'मराठी', bcp47: 'mr-IN' },
+  gu: { name: 'Gujarati', nativeName: 'ગુજરાતી', bcp47: 'gu-IN' },
+  pa: { name: 'Punjabi', nativeName: 'ਪੰਜਾਬੀ', bcp47: 'pa-IN' },
+  ur: { name: 'Urdu', nativeName: 'اردو', bcp47: 'ur-PK' },
   ar: { name: 'Arabic', nativeName: 'العربية', bcp47: 'ar-SA' },
   fr: { name: 'French', nativeName: 'Français', bcp47: 'fr-FR' },
   de: { name: 'German', nativeName: 'Deutsch', bcp47: 'de-DE' },

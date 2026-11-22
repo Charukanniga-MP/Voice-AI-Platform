@@ -372,6 +372,21 @@ model PasswordResetToken {
   @@index([userId, expiresAt])
 }
 
+model OtpVerification {
+  id          String   @id @default(cuid())
+  phone       String   // Normalized Indian E.164, e.g. +919876543210
+  otpHash     String   // SHA-256 hash of the 6-digit OTP
+  expiresAt   DateTime // Expiration timestamp (e.g. 5 minutes from issue)
+  attempts    Int      @default(0) // Failed attempt count
+  verified    Boolean  @default(false)
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([phone, verified])
+  @@index([expiresAt])
+}
+
 model SecurityAuditLog {
   id        String   @id @default(cuid())
   eventType String   // Security events and auditable administrative setting changes

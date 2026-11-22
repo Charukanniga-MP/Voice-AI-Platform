@@ -7,6 +7,7 @@ interface LanguageSelectorProps {
   variant?: string;
   className?: string;
   disabled?: boolean;
+  readOnly?: boolean;
   onLanguageChange?: (lang: LanguageCode) => void;
 }
 
@@ -14,6 +15,7 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   variant = 'dropdown',
   className = '',
   disabled = false,
+  readOnly = false,
   onLanguageChange
 }) => {
   const { language, setLanguage } = useLanguage();
@@ -261,6 +263,20 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
       </div>
     </div>
   );
+
+  // Read-only Session Badge View (Used in Authenticated Views / Navbar to restrict changes after login)
+  if (readOnly || variant === 'badge') {
+    return (
+      <div
+        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 text-xs font-semibold select-none border border-slate-200/80 shadow-2xs ${className}`}
+        title={`Session language: ${currentMeta.name} (${currentMeta.nativeName}). Fixed for current session. To change, please log out and select on the login page.`}
+      >
+        <Globe className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+        <span className="font-bold text-slate-800">{currentMeta.nativeName}</span>
+        <span className="text-slate-400 font-normal hidden sm:inline">({currentMeta.name})</span>
+      </div>
+    );
+  }
 
   // --------------------------------------------------------------------------
   // Language Dropdown (Top Navbar & Header)

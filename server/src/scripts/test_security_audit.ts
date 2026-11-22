@@ -56,7 +56,12 @@ async function runSecurityAudit() {
   assert(logoutRes.status === 200 && logoutData.success === true, 'POST /api/auth/logout processes successfully');
 
   // 6. Customer details passwordHash leak test
-  const custRes = await fetch(`${BACKEND_URL}/api/customers/cmw3icw9k0002124hd1bn1nmw`, {
+  const custsRes = await fetch(`${BACKEND_URL}/api/customers`, {
+    headers: { Authorization: `Bearer ${adminData.token}` }
+  });
+  const custsData = await custsRes.json();
+  const targetId = custsData.customers?.[0]?.id || 'cmw3rvtmh00025rl6wyz7ivoz';
+  const custRes = await fetch(`${BACKEND_URL}/api/customers/${targetId}`, {
     headers: { Authorization: `Bearer ${adminData.token}` }
   });
   const custData = await custRes.json();

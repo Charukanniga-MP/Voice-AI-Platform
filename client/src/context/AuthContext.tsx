@@ -18,6 +18,17 @@ interface AuthContextType {
   loginWithGoogleIdToken: (idToken: string) => Promise<User>;
   loginWithGoogleCode: (code: string, redirectUri?: string) => Promise<User>;
   getGoogleConfig: () => Promise<{ configured: boolean; clientId: string | null }>;
+  sendOtp: (phone: string) => Promise<{
+    success: boolean;
+    message: string;
+    phone: string;
+    formatted: string;
+    masked: string;
+    expiresInSeconds: number;
+    retryAfterSeconds: number;
+    provider: string;
+  }>;
+  verifyOtp: (phone: string, otp: string, name?: string) => Promise<User>;
   setSession: (token: string, user: User) => void;
   logout: () => void;
 }
@@ -265,6 +276,46 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const sendOtp = async (phone: string) => {
+    setSessionExpiredMessage(null);
+    const res = await fetch('/api/auth/otp/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to dispatch verification code.');
+    }
+
+    return data;
+  };
+
+  const verifyOtp = async (phone: string, otp: string, name?: string): Promise<User> => {
+    setSessionExpiredMessage(null);
+    const res = await fetch('/api/auth/otp/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, otp, name })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'OTP verification failed.');
+    }
+
+    setToken(data.token);
+    setUser(data.user);
+    localStorage.setItem('kaira_token', data.token);
+    localStorage.setItem('token', data.token);
+    localStorage.setItem('kaira_user', JSON.stringify(data.user));
+
+    registerSocketUser(data.user.id, data.user.role, data.user.name);
+    scheduleTokenExpiration(data.token);
+    return data.user;
+  };
+
   const setSession = (newToken: string, newUser: User) => {
     setToken(newToken);
     setUser(newUser);
@@ -315,6 +366,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loginWithGoogleIdToken,
         loginWithGoogleCode,
         getGoogleConfig,
+        sendOtp,
+        verifyOtp,
         setSession,
         logout
       }}

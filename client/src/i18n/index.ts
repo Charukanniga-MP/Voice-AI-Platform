@@ -6,6 +6,9 @@ import { kn } from './locales/kn.js';
 import { hi } from './locales/hi.js';
 import { bn } from './locales/bn.js';
 import { mr } from './locales/mr.js';
+import { gu } from './locales/gu.js';
+import { pa } from './locales/pa.js';
+import { ur } from './locales/ur.js';
 import { ar } from './locales/ar.js';
 import { fr } from './locales/fr.js';
 import { de } from './locales/de.js';
@@ -23,13 +26,13 @@ import { LanguageCode } from '../types.js';
 
 export {
   en, ta, te, ml, kn, hi,
-  bn, mr, ar, fr, de, es,
-  zh, ja, ko, it, pt, ru,
-  tr, id, vi
+  bn, mr, gu, pa, ur, ar,
+  fr, de, es, zh, ja, ko,
+  it, pt, ru, tr, id, vi
 };
 export type { TranslationKey };
 
-export const translations: Record<string, Record<TranslationKey, string>> = {
+export const translations: Record<string, Partial<Record<TranslationKey, string>>> = {
   en,
   ta,
   te,
@@ -38,6 +41,9 @@ export const translations: Record<string, Record<TranslationKey, string>> = {
   hi,
   bn,
   mr,
+  gu,
+  pa,
+  ur,
   ar,
   fr,
   de,

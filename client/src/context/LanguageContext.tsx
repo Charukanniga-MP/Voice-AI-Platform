@@ -28,9 +28,24 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return 'en';
   });
 
-  // Automatically sync with user.preferredLanguage when user logs in
+  // Automatically preserve login-selected language and sync with backend user profile
   useEffect(() => {
-    if (user?.preferredLanguage && (SUPPORTED_LANGUAGES as any)[user.preferredLanguage]) {
+    const saved = typeof window !== 'undefined' ? (localStorage.getItem(STORAGE_KEY) as LanguageCode) : null;
+    const currentLang = saved && (SUPPORTED_LANGUAGES as any)[saved] ? saved : null;
+
+    if (user && currentLang && currentLang !== user.preferredLanguage) {
+      const currentToken = token || (typeof window !== 'undefined' ? localStorage.getItem('kaira_token') : null);
+      if (currentToken) {
+        fetch('/api/auth/preferences', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${currentToken}`
+          },
+          body: JSON.stringify({ preferredLanguage: currentLang })
+        }).catch(() => {});
+      }
+    } else if (!currentLang && user?.preferredLanguage && (SUPPORTED_LANGUAGES as any)[user.preferredLanguage]) {
       const pref = user.preferredLanguage as LanguageCode;
       setLanguageState(pref);
       voiceService.setLanguage(pref);
@@ -38,7 +53,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         localStorage.setItem(STORAGE_KEY, pref);
       } catch {}
     }
-  }, [user?.preferredLanguage]);
+  }, [user?.id]);
 
   // Sync language with voice service immediately and whenever language changes
   useEffect(() => {
@@ -48,7 +63,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } catch {}
 
     if (typeof document !== 'undefined') {
-      document.documentElement.dir = language === 'ar' ? 'rtl' : 'ltr';
+      document.documentElement.dir = (language === 'ar' || language === 'ur') ? 'rtl' : 'ltr';
       document.documentElement.lang = language;
     }
   }, [language]);

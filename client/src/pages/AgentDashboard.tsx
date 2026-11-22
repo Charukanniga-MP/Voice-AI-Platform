@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext.js';
+import { useLanguage } from '../context/LanguageContext.js';
 import { getSocket, registerSocketUser } from '../services/socket.js';
 import { telephonyVoiceManager, TelephonyCallState } from '../services/telephonyVoice.js';
 import { webrtcManager } from '../services/webrtc.js';
@@ -51,6 +52,7 @@ interface IncomingCall {
 
 export const AgentDashboard: React.FC = () => {
   const { user, token } = useAuth();
+  const { t, language } = useLanguage();
 
 
 
@@ -1546,7 +1548,7 @@ export const AgentDashboard: React.FC = () => {
                 }`}
             >
               <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-              <span>AI Calls Live Monitor</span>
+              <span>{t('agent.tab_ai_monitor')}</span>
               {activeAiCalls.length > 0 && (
                 <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-500 text-white animate-pulse">
                   {activeAiCalls.length}
@@ -1558,7 +1560,7 @@ export const AgentDashboard: React.FC = () => {
               className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 py-1.5 rounded-xl transition-all cursor-pointer ${activeTab === 'outgoing' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
                 }`}
             >
-              Outgoing Calls
+              {t('agent.tab_outgoing')}
             </button>
             <button
               onClick={() => setActiveTab('console')}
@@ -1568,14 +1570,14 @@ export const AgentDashboard: React.FC = () => {
               {activeCall && (activeCall.state === 'connected' || activeCall.state === 'on_hold') && (
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
               )}
-              Active Call {activeCall && activeCall.state !== 'ended' ? '(Live)' : ''}
+              {t('agent.tab_console')} {activeCall && activeCall.state !== 'ended' ? '(Live)' : ''}
             </button>
             <button
               onClick={() => setActiveTab('history')}
               className={`shrink-0 whitespace-nowrap min-h-[36px] px-3 py-1.5 rounded-xl transition-all cursor-pointer ${activeTab === 'history' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
                 }`}
             >
-              Call History
+              {t('agent.tab_history')}
             </button>
             <button
               onClick={() => setActiveTab('knowledge')}
@@ -1583,7 +1585,7 @@ export const AgentDashboard: React.FC = () => {
                 }`}
             >
               <BookOpen className="w-3.5 h-3.5 text-blue-600" />
-              Knowledge Base
+              {t('agent.tab_knowledge')}
             </button>
             <button
               onClick={() => setActiveTab('tickets')}
@@ -1591,7 +1593,7 @@ export const AgentDashboard: React.FC = () => {
                 }`}
             >
               <MessageSquare className="w-3.5 h-3.5 text-purple-600" />
-              Tickets
+              {t('agent.tab_tickets')}
             </button>
             <button
               onClick={() => setActiveTab('tasks')}
@@ -1599,7 +1601,7 @@ export const AgentDashboard: React.FC = () => {
                 }`}
             >
               <ListTodo className="w-3.5 h-3.5 text-amber-600" />
-              Follow-Up Tasks
+              {t('agent.tab_tasks')}
             </button>
             <button
               onClick={() => setActiveTab('insights')}
@@ -1607,7 +1609,7 @@ export const AgentDashboard: React.FC = () => {
                 }`}
             >
               <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-              Conversation Insights
+              {t('agent.tab_insights')}
             </button>
           </div>
         </div>

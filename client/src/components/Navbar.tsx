@@ -32,10 +32,10 @@ export const Navbar: React.FC = () => {
           </a>
         </div>
 
-        {/* Top-Right Controls: Language Selector + Circular Profile Icon Dropdown */}
+        {/* Top-Right Controls: Read-only Session Language Indicator + Circular Profile Icon Dropdown */}
         <div className="flex items-center gap-2 sm:gap-4">
-          {/* Global Language Selector Dropdown */}
-          <LanguageSelector variant="dropdown" />
+          {/* Active Session Language Badge (Language is selected at login and fixed for session) */}
+          <LanguageSelector variant="badge" readOnly={true} />
 
           {/* Vertical Divider */}
           <div className="h-6 sm:h-7 w-px bg-slate-200/80" />

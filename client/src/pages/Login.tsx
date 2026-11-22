@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext.js';
+import { useLanguage } from '../context/LanguageContext.js';
+import { LanguageSelector } from '../components/LanguageSelector.js';
+import { IndianMobileOtpForm } from '../components/IndianMobileOtpForm.js';
 import {
   Eye,
   EyeOff,
@@ -11,14 +14,20 @@ import {
   CheckCircle2,
   ArrowRight,
   Loader2,
-  KeyRound
+  KeyRound,
+  Globe,
+  Smartphone
 } from 'lucide-react';
 
 export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({ onAuthSuccess }) => {
   const { login, register } = useAuth();
+  const { t, language, languages } = useLanguage();
 
   // Mode: 'login' | 'register' | 'forgot'
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
+
+  // Login Method within 'login' mode: 'otp' (Indian Mobile OTP) | 'password' (Email & Password)
+  const [loginMethod, setLoginMethod] = useState<'otp' | 'password'>('otp');
 
   // Common login form state (Used by Customer, Support Agent, and Admin)
   const [email, setEmail] = useState('');
@@ -225,6 +234,24 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
 
         {/* Clean White Login Card */}
         <div className="bg-white/95 backdrop-blur-xl rounded-3xl p-5 sm:p-8 shadow-2xl shadow-black/40 border border-white/40 space-y-4 sm:space-y-5">
+          {/* Prominent Multilingual Language Selection Interface (Must appear during Login) */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3.5 border-b border-slate-100">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0 shadow-2xs">
+                <Globe className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="block text-[11px] font-bold text-slate-800 leading-tight">
+                  {t('common.login_language_label')}
+                </span>
+                <span className="block text-[10px] text-slate-500 font-medium">
+                  {languages[language]?.name} ({languages[language]?.nativeName})
+                </span>
+              </div>
+            </div>
+            <LanguageSelector variant="dropdown" />
+          </div>
+
           {/* Error Banner */}
           {error && (
             <div className="p-3.5 rounded-2xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
@@ -242,120 +269,169 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
           )}
 
           {/* ------------------------------------------------------------- */}
-          {/* VIEW 1: ONE COMMON SIGN IN FORM                                */}
-          {/* (Used for Admin, Support Agent, and Customer)                  */}
+          {/* VIEW 1: SIGN IN (Indian Mobile OTP or Email & Password)        */}
           {/* ------------------------------------------------------------- */}
           {mode === 'login' && (
-            <form onSubmit={handleLoginSubmit} className="space-y-4">
-              {/* Email Address Field */}
-              <div>
-                <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Email Address
-                </label>
-                <div className="relative">
-                  <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
-                  <input
-                    type="email"
-                    required
-                    autoComplete="email"
-                    placeholder="name@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-900 font-medium transition-colors"
-                  />
-                </div>
+            <div className="space-y-4">
+              {/* Method Switcher Tabs */}
+              <div className="grid grid-cols-2 p-1 bg-slate-100/90 rounded-2xl border border-slate-200/60 select-none">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginMethod('otp');
+                    setError(null);
+                    setSuccessMsg(null);
+                  }}
+                  className={`py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    loginMethod === 'otp'
+                      ? 'bg-white text-indigo-700 shadow-xs ring-1 ring-black/5'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>{t('auth.method_otp')}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginMethod('password');
+                    setError(null);
+                    setSuccessMsg(null);
+                  }}
+                  className={`py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    loginMethod === 'password'
+                      ? 'bg-white text-indigo-700 shadow-xs ring-1 ring-black/5'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>{t('auth.method_password')}</span>
+                </button>
               </div>
 
-              {/* Password Field */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider">
-                    Password
-                  </label>
+              {/* Sub-View A: Indian Mobile Number OTP Authentication */}
+              {loginMethod === 'otp' && (
+                <IndianMobileOtpForm
+                  onSuccess={onAuthSuccess}
+                  onError={setError}
+                  onSuccessMsg={setSuccessMsg}
+                />
+              )}
+
+              {/* Sub-View B: Standard Email & Password Authentication */}
+              {loginMethod === 'password' && (
+                <form onSubmit={handleLoginSubmit} className="space-y-4">
+                  {/* Email Address Field */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                      {t('auth.email_label')}
+                    </label>
+                    <div className="relative">
+                      <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                      <input
+                        type="email"
+                        required
+                        autoComplete="email"
+                        placeholder={t('auth.email_placeholder') || 'name@example.com'}
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-900 font-medium transition-colors"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Password Field */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                        {t('auth.password_label')}
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMode('forgot');
+                          setError(null);
+                          setSuccessMsg(null);
+                        }}
+                        className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 transition-colors cursor-pointer"
+                      >
+                        {t('auth.forgot_password')}
+                      </button>
+                    </div>
+                    <div className="relative">
+                      <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        required
+                        autoComplete="current-password"
+                        placeholder="••••••••••••"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="w-full pl-10 pr-10 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-900 font-medium transition-colors"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Remember Me Option */}
+                  <div className="flex items-center justify-between pt-1">
+                    <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-600 select-none">
+                      <input
+                        type="checkbox"
+                        checked={rememberMe}
+                        onChange={(e) => setRememberMe(e.target.checked)}
+                        className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                      />
+                      <span>{t('auth.remember_me')}</span>
+                    </label>
+                  </div>
+
+                  {/* Blue and Purple Gradient Sign In Button */}
                   <button
-                    type="button"
-                    onClick={() => {
-                      setMode('forgot');
-                      setError(null);
-                      setSuccessMsg(null);
-                    }}
-                    className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 transition-colors cursor-pointer"
+                    type="submit"
+                    disabled={loading}
+                    className="w-full min-h-[48px] py-3.5 px-4 rounded-2xl text-white font-bold text-sm bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:via-indigo-700 hover:to-purple-700 disabled:opacity-50 transition-all shadow-md shadow-indigo-500/25 hover:shadow-lg hover:shadow-indigo-500/35 active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
                   >
-                    Forgot Password?
+                    {loading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>{t('common.loading')}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>{t('auth.sign_in_btn')}</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
                   </button>
-                </div>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    required
-                    autoComplete="current-password"
-                    placeholder="••••••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-10 pr-10 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-900 font-medium transition-colors"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
 
-              {/* Remember Me Option */}
-              <div className="flex items-center justify-between pt-1">
-                <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-600 select-none">
-                  <input
-                    type="checkbox"
-                    checked={rememberMe}
-                    onChange={(e) => setRememberMe(e.target.checked)}
-                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                  />
-                  <span>Remember Me</span>
-                </label>
-              </div>
-
-              {/* Blue and Purple Gradient Sign In Button */}
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full min-h-[48px] py-3.5 px-4 rounded-2xl text-white font-bold text-sm bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:via-indigo-700 hover:to-purple-700 disabled:opacity-50 transition-all shadow-md shadow-indigo-500/25 hover:shadow-lg hover:shadow-indigo-500/35 active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Signing in...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Sign In</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </>
-                )}
-              </button>
-
-              {/* Customer Registration Option */}
-              <div className="pt-3 text-center border-t border-slate-100">
-                <p className="text-xs text-slate-500">
-                  Don't have an account?{' '}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMode('register');
-                      setError(null);
-                      setSuccessMsg(null);
-                    }}
-                    className="font-bold text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
-                  >
-                    Create New Account
-                  </button>
-                </p>
-              </div>
-            </form>
+                  {/* Customer Registration Option */}
+                  <div className="pt-3 text-center border-t border-slate-100">
+                    <p className="text-xs text-slate-500">
+                      {t('auth.no_account')}{' '}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMode('register');
+                          setError(null);
+                          setSuccessMsg(null);
+                        }}
+                        className="font-bold text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
+                      >
+                        {t('auth.create_new_account')}
+                      </button>
+                    </p>
+                  </div>
+                </form>
+              )}
+            </div>
           )}
 
           {/* ------------------------------------------------------------- */}
@@ -364,9 +440,9 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
           {mode === 'register' && (
             <div className="space-y-4">
               <div className="text-center space-y-1">
-                <h2 className="text-base font-black text-slate-900">Create New Account</h2>
+                <h2 className="text-base font-black text-slate-900">{t('auth.create_account_title')}</h2>
                 <p className="text-xs text-slate-500">
-                  Enter your details to create a verified KAIRA customer account.
+                  {t('auth.create_account_desc')}
                 </p>
               </div>
 
@@ -374,14 +450,14 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                 {/* Full Name */}
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Full Name
+                    {t('auth.full_name_label')}
                   </label>
                   <div className="relative">
                     <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                     <input
                       type="text"
                       required
-                      placeholder="e.g. Alex Morgan"
+                      placeholder={t('auth.full_name_placeholder') || 'e.g. Alex Morgan'}
                       value={regName}
                       onChange={(e) => setRegName(e.target.value)}
                       className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-900 font-medium transition-colors"
@@ -392,14 +468,14 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                 {/* Email Address */}
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Email Address
+                    {t('auth.email_label')}
                   </label>
                   <div className="relative">
                     <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                     <input
                       type="email"
                       required
-                      placeholder="name@example.com"
+                      placeholder={t('auth.email_placeholder') || 'name@example.com'}
                       value={regEmail}
                       onChange={(e) => setRegEmail(e.target.value)}
                       className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-900 font-medium transition-colors"
@@ -410,13 +486,13 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                 {/* Mobile Phone Number (Optional) */}
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Mobile Number (Optional)
+                    {t('auth.phone_label')}
                   </label>
                   <div className="relative">
                     <Phone className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                     <input
                       type="tel"
-                      placeholder="+1 (555) 000-0000"
+                      placeholder={t('auth.phone_placeholder') || '+1 (555) 000-0000'}
                       value={regPhone}
                       onChange={(e) => setRegPhone(e.target.value)}
                       className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-900 font-medium transition-colors"
@@ -427,7 +503,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                 {/* Password */}
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Password (min. 6 characters)
+                    {t('auth.password_label')}
                   </label>
                   <div className="relative">
                     <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
@@ -453,7 +529,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                 {/* Confirm Password */}
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Confirm Password
+                    {t('auth.confirm_password_label')}
                   </label>
                   <div className="relative">
                     <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
@@ -485,11 +561,11 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                   {loading ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Creating account...</span>
+                      <span>{t('common.loading')}</span>
                     </>
                   ) : (
                     <>
-                      <span>Create Account</span>
+                      <span>{t('auth.sign_up_btn')}</span>
                       <ArrowRight className="w-4 h-4" />
                     </>
                   )}
@@ -498,7 +574,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                 {/* Back to Sign In */}
                 <div className="pt-2 text-center border-t border-slate-100">
                   <p className="text-xs text-slate-500">
-                    Already have an account?{' '}
+                    {t('auth.already_have_account')}{' '}
                     <button
                       type="button"
                       onClick={() => {
@@ -508,7 +584,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                       }}
                       className="font-bold text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
                     >
-                      Sign In
+                      {t('auth.tab_sign_in')}
                     </button>
                   </p>
                 </div>
@@ -527,12 +603,9 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                     <Mail className="w-7 h-7" />
                   </div>
                   <div className="space-y-1.5">
-                    <h3 className="font-extrabold text-slate-900 text-base">Check Your Email</h3>
+                    <h3 className="font-extrabold text-slate-900 text-base">{t('auth.instructions_dispatched')}</h3>
                     <p className="text-xs text-slate-600 leading-relaxed">
-                      If an account exists for <span className="font-semibold text-slate-800 underline">{forgotEmail}</span>, a password reset link has been dispatched to your inbox.
-                    </p>
-                    <p className="text-[11px] text-slate-400 mt-2">
-                      Please check your Gmail inbox and click the <strong>Reset Password</strong> button to set a new password. The link expires in 15 minutes.
+                      {t('auth.recovery_sent_notice', { email: forgotEmail })}
                     </p>
                   </div>
 
@@ -547,28 +620,28 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                     }}
                     className="w-full py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
                   >
-                    Return to Sign In
+                    {t('auth.return_to_sign_in')}
                   </button>
                 </div>
               ) : (
                 <form onSubmit={handleForgotSubmit} className="space-y-4">
                   <div className="text-center space-y-1">
-                    <h2 className="text-base font-black text-slate-900">Reset Password</h2>
+                    <h2 className="text-base font-black text-slate-900">{t('auth.reset_password_title')}</h2>
                     <p className="text-xs text-slate-500">
-                      Enter your registered email address to receive recovery instructions.
+                      {t('auth.reset_password_desc')}
                     </p>
                   </div>
 
                   <div>
                     <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                      Account Email Address
+                      {t('auth.email_label')}
                     </label>
                     <div className="relative">
                       <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                       <input
                         type="email"
                         required
-                        placeholder="Enter your registered email address"
+                        placeholder={t('auth.email_placeholder') || 'Enter your registered email address'}
                         value={forgotEmail}
                         onChange={(e) => setForgotEmail(e.target.value)}
                         className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-900 font-medium transition-colors"
@@ -584,11 +657,11 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                     {loading ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Sending reset instructions...</span>
+                        <span>{t('common.loading')}</span>
                       </>
                     ) : (
                       <>
-                        <span>Send Reset Link</span>
+                        <span>{t('auth.send_recovery')}</span>
                         <ArrowRight className="w-4 h-4" />
                       </>
                     )}
@@ -603,7 +676,7 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                       }}
                       className="text-xs font-semibold text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
                     >
-                      ← Back to Sign In
+                      ← {t('auth.cancel_return')}
                     </button>
                   </div>
                 </form>

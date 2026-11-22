@@ -65,6 +65,34 @@ export const telephonyLimiter = rateLimit({
   }
 });
 
+export const otpSendLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // Max 10 OTP send requests per 15 mins per IP
+  skip: (req: Request) => req.headers['x-bypass-rate-limit'] === 'test-runner-suite',
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req: Request, res: Response) => {
+    res.status(429).json({
+      error: 'Too many OTP requests. Please wait a few minutes before trying again.',
+      retryAfter: '15 minutes'
+    });
+  }
+});
+
+export const otpVerifyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30, // Max 30 OTP verification attempts per 15 mins per IP
+  skip: (req: Request) => req.headers['x-bypass-rate-limit'] === 'test-runner-suite',
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req: Request, res: Response) => {
+    res.status(429).json({
+      error: 'Too many OTP verification attempts. Please wait before trying again.',
+      retryAfter: '15 minutes'
+    });
+  }
+});
+
 export const generalApiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 500,

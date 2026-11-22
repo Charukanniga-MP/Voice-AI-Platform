@@ -41,14 +41,20 @@ async function testCompleteWorkflow() {
   }
 
   // 1. Connect Admin socket
-  const adminSocket = ClientIO(URL);
-  await new Promise<void>((resolve) => adminSocket.on('connect', resolve));
+  const adminSocket = ClientIO(URL, { transports: ['websocket'], forceNew: true });
+  await new Promise<void>((resolve, reject) => {
+    adminSocket.on('connect', () => resolve());
+    adminSocket.on('connect_error', reject);
+  });
   console.log('Admin socket connected');
   adminSocket.emit('user:register', { userId: admin.id, role: 'admin', name: admin.name });
 
   // 2. Connect Customer socket
-  const customerSocket = ClientIO(URL);
-  await new Promise<void>((resolve) => customerSocket.on('connect', resolve));
+  const customerSocket = ClientIO(URL, { transports: ['websocket'], forceNew: true });
+  await new Promise<void>((resolve, reject) => {
+    customerSocket.on('connect', () => resolve());
+    customerSocket.on('connect_error', reject);
+  });
   console.log('Customer socket connected');
   customerSocket.emit('user:register', { userId: customer.id, role: 'customer', name: customer.name });
 

@@ -7,7 +7,9 @@ import { fileURLToPath } from 'url';
 import { OAuth2Client } from 'google-auth-library';
 import { prisma } from '../db.js';
 import { generateToken, authenticate, authorizeRoles } from '../middleware/auth.js';
-import { authLimiter, forgotPasswordLimiter } from '../middleware/rateLimiter.js';
+import { authLimiter, forgotPasswordLimiter, otpSendLimiter, otpVerifyLimiter } from '../middleware/rateLimiter.js';
+import { validateIndianMobile } from '../utils/indianPhone.js';
+import { smsService } from '../services/sms.js';
 import {
   validate,
   loginSchema,
@@ -1371,6 +1373,314 @@ router.post('/google/instant-login', async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error('[Instant Login] Error:', err);
     res.status(500).json({ error: 'Failed to complete instant customer sign-in.' });
+  }
+});
+
+// ============================================================================
+// CUSTOM INDIAN MOBILE NUMBER AUTHENTICATION WITH REAL-TIME OTP VERIFICATION
+// ============================================================================
+
+/**
+ * 1. Request OTP for Indian Mobile Number (+91)
+ * Validates 10-digit Indian mobile number, enforces rate-limiting & cooldown,
+ * hashes OTP with SHA-256, and dispatches via SMS gateway.
+ */
+router.post('/otp/send', otpSendLimiter, async (req: Request, res: Response) => {
+  try {
+    const { phone } = req.body;
+    const phoneValidation = validateIndianMobile(phone);
+
+    if (!phoneValidation.isValid) {
+      res.status(400).json({ error: phoneValidation.error });
+      return;
+    }
+
+    const normalizedPhone = phoneValidation.normalized;
+
+    // Check cooldown: Minimum 30 seconds between consecutive OTP requests for the same number
+    const recentOtp = await prisma.otpVerification.findFirst({
+      where: {
+        phone: normalizedPhone,
+        verified: false,
+        createdAt: {
+          gte: new Date(Date.now() - 30 * 1000)
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    if (recentOtp) {
+      const waitSeconds = Math.max(1, Math.ceil((recentOtp.createdAt.getTime() + 30000 - Date.now()) / 1000));
+      res.status(429).json({
+        error: `Please wait ${waitSeconds} second(s) before requesting another OTP.`,
+        retryAfterSeconds: waitSeconds
+      });
+      return;
+    }
+
+    // Invalidate any existing unverified OTPs for this phone number to prevent race conditions
+    await prisma.otpVerification.updateMany({
+      where: {
+        phone: normalizedPhone,
+        verified: false
+      },
+      data: {
+        verified: true
+      }
+    });
+
+    // Generate cryptographically secure random 6-digit OTP
+    const rawOtp = crypto.randomInt(100000, 1000000).toString();
+
+    // Securely hash OTP with SHA-256 before database storage (never store plaintext OTP)
+    const otpHash = crypto.createHash('sha256').update(rawOtp).digest('hex');
+
+    // 5 minutes OTP expiration
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+    // Save OTP verification record
+    await prisma.otpVerification.create({
+      data: {
+        phone: normalizedPhone,
+        otpHash,
+        expiresAt,
+        ipAddress: req.ip || req.socket.remoteAddress || 'unknown'
+      }
+    });
+
+    // Dispatch OTP through telecom SMS gateway
+    const smsResult = await smsService.sendOtpSms(normalizedPhone, rawOtp);
+
+    if (!smsResult.success) {
+      await logSecurityEvent({
+        eventType: 'OTP_FAILED',
+        email: null,
+        ipAddress: req.ip || req.socket.remoteAddress,
+        userAgent: req.headers['user-agent'] as string,
+        details: `SMS delivery failed for ${phoneValidation.masked}: ${smsResult.error}`
+      });
+
+      res.status(502).json({
+        error: smsResult.error || 'Failed to dispatch SMS through mobile telecom network. Please verify your number and try again.'
+      });
+      return;
+    }
+
+    await logSecurityEvent({
+      eventType: 'OTP_SENT',
+      email: null,
+      ipAddress: req.ip || req.socket.remoteAddress,
+      userAgent: req.headers['user-agent'] as string,
+      details: `OTP dispatched to Indian mobile ${phoneValidation.masked} via ${smsResult.provider}`
+    });
+
+    res.json({
+      success: true,
+      message: `Verification code sent to ${phoneValidation.formatted}`,
+      phone: normalizedPhone,
+      formatted: phoneValidation.formatted,
+      masked: phoneValidation.masked,
+      expiresInSeconds: 300,
+      retryAfterSeconds: 30,
+      provider: smsResult.provider
+    });
+  } catch (err: any) {
+    console.error('[OTP Send] Error:', err);
+    res.status(500).json({ error: 'Internal server error while dispatching OTP.' });
+  }
+});
+
+/**
+ * 2. Verify OTP & Authenticate / Register User
+ * Validates 6-digit code, verifies timing-safe hash, enforces 5-attempt brute-force lock,
+ * burns OTP to prevent replay attacks, and signs in or creates customer account.
+ */
+router.post('/otp/verify', otpVerifyLimiter, async (req: Request, res: Response) => {
+  try {
+    const { phone, otp, name } = req.body;
+    const phoneValidation = validateIndianMobile(phone);
+
+    if (!phoneValidation.isValid) {
+      res.status(400).json({ error: phoneValidation.error });
+      return;
+    }
+
+    const cleanOtp = String(otp || '').trim();
+    if (!/^\d{6}$/.test(cleanOtp)) {
+      res.status(400).json({ error: 'Please enter a valid 6-digit verification code.' });
+      return;
+    }
+
+    const normalizedPhone = phoneValidation.normalized;
+
+    // Find the latest unverified OTP record for this phone
+    const activeOtp = await prisma.otpVerification.findFirst({
+      where: {
+        phone: normalizedPhone,
+        verified: false
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    if (!activeOtp) {
+      res.status(400).json({ error: 'No active OTP found. Please request a new verification code.' });
+      return;
+    }
+
+    // Check expiration (5 minutes)
+    if (activeOtp.expiresAt < new Date()) {
+      await prisma.otpVerification.update({
+        where: { id: activeOtp.id },
+        data: { verified: true }
+      });
+      res.status(400).json({ error: 'Verification code has expired. Please request a new OTP.' });
+      return;
+    }
+
+    // Check brute force attempts (Maximum 5 attempts allowed)
+    if (activeOtp.attempts >= 5) {
+      await prisma.otpVerification.update({
+        where: { id: activeOtp.id },
+        data: { verified: true }
+      });
+      await logSecurityEvent({
+        eventType: 'ACCOUNT_LOCKED',
+        email: null,
+        ipAddress: req.ip || req.socket.remoteAddress,
+        userAgent: req.headers['user-agent'] as string,
+        details: `OTP brute-force threshold reached for phone ${phoneValidation.masked}`
+      });
+      res.status(429).json({ error: 'Maximum verification attempts exceeded. Please request a new OTP.' });
+      return;
+    }
+
+    // Compare candidate OTP hash securely with constant-time equality
+    const candidateHash = crypto.createHash('sha256').update(cleanOtp).digest('hex');
+    const isMatch = crypto.timingSafeEqual(
+      Buffer.from(candidateHash, 'hex'),
+      Buffer.from(activeOtp.otpHash, 'hex')
+    );
+
+    if (!isMatch) {
+      const updatedAttempts = activeOtp.attempts + 1;
+      await prisma.otpVerification.update({
+        where: { id: activeOtp.id },
+        data: { attempts: updatedAttempts }
+      });
+
+      const remaining = Math.max(0, 5 - updatedAttempts);
+      await logSecurityEvent({
+        eventType: 'OTP_FAILED',
+        email: null,
+        ipAddress: req.ip || req.socket.remoteAddress,
+        userAgent: req.headers['user-agent'] as string,
+        details: `Incorrect OTP entered for ${phoneValidation.masked} (${updatedAttempts}/5 attempts)`
+      });
+
+      if (remaining === 0) {
+        await prisma.otpVerification.update({
+          where: { id: activeOtp.id },
+          data: { verified: true }
+        });
+        res.status(400).json({
+          error: 'Incorrect OTP. Maximum attempts reached. Please request a new code.',
+          remainingAttempts: 0
+        });
+        return;
+      }
+
+      res.status(400).json({
+        error: `Incorrect OTP. You have ${remaining} attempt(s) remaining.`,
+        remainingAttempts: remaining
+      });
+      return;
+    }
+
+    // OTP is correct! Immediately burn the OTP so it cannot be reused
+    await prisma.otpVerification.update({
+      where: { id: activeOtp.id },
+      data: { verified: true }
+    });
+
+    // Check if an existing user matches this phone number
+    // Checks both normalized format (+91XXXXXXXXXX) and 10-digit national number
+    const nationalNumber = phoneValidation.nationalNumber;
+    let user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { phone: normalizedPhone },
+          { phone: nationalNumber },
+          { phone: { endsWith: nationalNumber } }
+        ]
+      }
+    });
+
+    let isNewUser = false;
+
+    if (!user) {
+      // Create new customer account with verified Indian mobile
+      const customName = (name || '').trim();
+      const defaultName = customName || `Customer (${nationalNumber.slice(-4)})`;
+      const fallbackEmail = `${nationalNumber}@mobile.kaira.ai`;
+
+      // Check if fallback email collision exists
+      const existingEmail = await prisma.user.findUnique({ where: { email: fallbackEmail } });
+      const finalEmail = existingEmail ? `${nationalNumber}_${Date.now()}@mobile.kaira.ai` : fallbackEmail;
+
+      const randomPassword = crypto.randomBytes(24).toString('hex');
+      const passwordHash = await bcrypt.hash(randomPassword, 10);
+
+      user = await prisma.user.create({
+        data: {
+          name: defaultName,
+          email: finalEmail,
+          phone: normalizedPhone,
+          role: 'customer',
+          passwordHash,
+          preferredLanguage: 'en'
+        }
+      });
+      isNewUser = true;
+    } else {
+      // Ensure phone is stored in standard normalized format
+      if (user.phone !== normalizedPhone) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: { phone: normalizedPhone }
+        });
+      }
+    }
+
+    // Reset failed login attempts and log successful login
+    await recordSuccessfulLogin(user, req);
+
+    await logSecurityEvent({
+      eventType: 'OTP_VERIFIED',
+      userId: user.id,
+      email: user.email,
+      ipAddress: req.ip || req.socket.remoteAddress,
+      userAgent: req.headers['user-agent'] as string,
+      details: `Successful Indian mobile OTP authentication (${user.role}) for ${phoneValidation.masked}`
+    });
+
+    // Generate JWT token with user's genuine database role
+    const token = generateToken({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role as 'admin' | 'agent' | 'customer'
+    });
+
+    res.json({
+      success: true,
+      message: isNewUser ? 'Account registered and authenticated successfully' : 'Login successful',
+      token,
+      user: formatUserResponse(user),
+      isNewUser
+    });
+  } catch (err: any) {
+    console.error('[OTP Verify] Error:', err);
+    res.status(500).json({ error: 'Internal server error while verifying OTP.' });
   }
 });
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext.js';
+import { useLanguage } from '../context/LanguageContext.js';
 import { getSocket } from '../services/socket.js';
 import { webrtcManager } from '../services/webrtc.js';
 import { voiceService } from '../services/voice.js';
@@ -46,6 +47,7 @@ function deduplicate<T>(items: T[], keyFn: (item: T) => string): T[] {
 
 export const AdminDashboard: React.FC = () => {
   const { user, token } = useAuth();
+  const { t, language } = useLanguage();
 
   // Active navigation section
   const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'agents' | 'calls' | 'intelligence' | 'tasks' | 'transfers' | 'knowledge' | 'tickets' | 'quality' | 'sentiment' | 'bi' | 'settings'>('overview');
@@ -1393,19 +1395,19 @@ export const AdminDashboard: React.FC = () => {
           {/* Quick horizontal scrollable navigation pills for mobile */}
           <div className="md:hidden flex overflow-x-auto gap-1.5 pb-2 pt-1 border-t border-slate-800/80 scrollbar-none">
             {[
-              { id: 'overview', label: 'Overview' },
-              { id: 'customers', label: 'Customers' },
-              { id: 'agents', label: 'Agents' },
-              { id: 'calls', label: 'Calls' },
-              { id: 'intelligence', label: 'AI Intelligence' },
-              { id: 'tasks', label: 'Tasks' },
-              { id: 'transfers', label: 'Transfers' },
-              { id: 'knowledge', label: 'KB' },
-              { id: 'quality', label: 'Quality' },
-              { id: 'sentiment', label: 'Sentiment' },
-              { id: 'tickets', label: 'Tickets' },
-              { id: 'bi', label: 'BI Reports' },
-              { id: 'settings', label: 'Settings' },
+              { id: 'overview', label: t('admin.nav_overview') },
+              { id: 'customers', label: t('admin.nav_customers') },
+              { id: 'agents', label: t('admin.nav_agents') },
+              { id: 'calls', label: t('admin.nav_calls') },
+              { id: 'intelligence', label: t('admin.nav_intelligence') },
+              { id: 'tasks', label: t('admin.nav_tasks') },
+              { id: 'transfers', label: t('admin.nav_transfers') },
+              { id: 'knowledge', label: t('admin.nav_knowledge') },
+              { id: 'quality', label: t('admin.nav_quality') },
+              { id: 'sentiment', label: t('admin.nav_sentiment') },
+              { id: 'tickets', label: t('admin.nav_tickets') },
+              { id: 'bi', label: t('admin.nav_bi') },
+              { id: 'settings', label: t('admin.nav_settings') },
             ].map(tab => (
               <button
                 key={tab.id}
@@ -1432,7 +1434,7 @@ export const AdminDashboard: React.FC = () => {
                 }`}
             >
               <Clock className="w-4 h-4" />
-              Dashboard Overview
+              {t('admin.nav_overview')}
             </button>
 
             <button
@@ -1443,7 +1445,7 @@ export const AdminDashboard: React.FC = () => {
                 }`}
             >
               <Users className="w-4 h-4" />
-              Customer Management
+              {t('admin.nav_customers')}
             </button>
 
             <button
@@ -1454,7 +1456,7 @@ export const AdminDashboard: React.FC = () => {
                 }`}
             >
               <Headphones className="w-4 h-4" />
-              Agent Management
+              {t('admin.nav_agents')}
             </button>
 
             <button
@@ -1465,7 +1467,7 @@ export const AdminDashboard: React.FC = () => {
                 }`}
             >
               <PhoneCall className="w-4 h-4" />
-              Call Monitoring
+              {t('admin.nav_calls')}
             </button>
 
             <button
@@ -1476,7 +1478,7 @@ export const AdminDashboard: React.FC = () => {
                 }`}
             >
               <Sparkles className="w-4 h-4" />
-              AI Call Intelligence
+              {t('admin.nav_intelligence')}
             </button>
 
             <button
@@ -1488,7 +1490,7 @@ export const AdminDashboard: React.FC = () => {
             >
               <div className="flex items-center gap-3">
                 <ListTodo className="w-4 h-4" />
-                Follow-Up Tasks
+                {t('admin.nav_tasks')}
               </div>
               {(intelligenceStats?.pendingFollowUpTasks ?? 0) > 0 && (
                 <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
@@ -1505,7 +1507,7 @@ export const AdminDashboard: React.FC = () => {
                 }`}
             >
               <Activity className="w-4 h-4" />
-              Call Quality & Reliability
+              {t('admin.nav_quality')}
             </button>
 
             <button
@@ -1517,7 +1519,7 @@ export const AdminDashboard: React.FC = () => {
             >
               <div className="flex items-center gap-3">
                 <PhoneForwarded className="w-4 h-4" />
-                Live Call Transfers
+                {t('admin.nav_transfers')}
               </div>
               {stats.pendingTransfers > 0 && (
                 <span className="w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center animate-pulse">
@@ -1534,7 +1536,7 @@ export const AdminDashboard: React.FC = () => {
                 }`}
             >
               <MessageSquare className="w-4 h-4" />
-              Customer Issue Management
+              {t('admin.nav_tickets')}
             </button>
 
             <button
@@ -1545,7 +1547,7 @@ export const AdminDashboard: React.FC = () => {
                 }`}
             >
               <BookOpen className="w-4 h-4" />
-              Knowledge Base
+              {t('admin.nav_knowledge')}
             </button>
 
             <button
@@ -1556,7 +1558,7 @@ export const AdminDashboard: React.FC = () => {
                 }`}
             >
               <HeartPulse className="w-4 h-4 text-rose-400" />
-              Sentiment Analysis
+              {t('admin.nav_sentiment')}
             </button>
 
             <button
@@ -1567,7 +1569,7 @@ export const AdminDashboard: React.FC = () => {
                 }`}
             >
               <TrendingUp className="w-4 h-4 text-blue-400" />
-              Business Intelligence
+              {t('admin.nav_bi')}
             </button>
 
             <button
@@ -1578,7 +1580,7 @@ export const AdminDashboard: React.FC = () => {
                 }`}
             >
               <Sliders className="w-4 h-4" />
-              Settings &amp; Policies
+              {t('admin.nav_settings')}
             </button>
           </nav>
         </div>
