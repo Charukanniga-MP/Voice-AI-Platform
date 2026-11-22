@@ -4,6 +4,7 @@ import { authenticate } from '../middleware/auth.js';
 import { validate, ticketCreateSchema, ticketUpdateSchema, ticketMessageSchema } from '../middleware/validation.js';
 import { sendEmail } from '../services/email.js';
 import { emitTicketNotification } from '../services/socket.js';
+import { notificationService } from '../services/notification.service.js';
 
 const router = Router();
 const statuses = ['open', 'in_progress', 'waiting', 'resolved', 'closed'];
@@ -36,6 +37,16 @@ async function notifyTicket(ticket: { id: string; customerId: string | null; cus
     }
     if (options.staff !== false) rooms.push(...await ticketStaffRooms(ticket.assignedTo));
     emitTicketNotification(rooms, { ticketId: ticket.id, kind, title, message });
+
+    // Persist notification for staff/admin
+    notificationService.createNotification({
+      role: 'agent',
+      type: 'support_ticket',
+      title,
+      message,
+      data: { ticketId: ticket.id, kind },
+      dedupKey: `ticket_${ticket.id}_${kind}`
+    }).catch(e => console.error('[Notification] Error persisting ticket notification:', e));
   } catch (notificationError) {
     console.error('[Tickets] Live notification failed:', notificationError);
   }

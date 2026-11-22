@@ -11,6 +11,7 @@ import { realtimeIntelligenceService } from './realtimeIntelligence.service.js';
 import { CallQualityAlert } from './callQualityAlerts.js';
 import { callReliabilityService } from './callReliability.js';
 import { handoverService, HandoverReason } from './handover.service.js';
+import { notificationService } from './notification.service.js';
 
 // Multi-turn conversational context memory for active calls
 const activeCallContexts = new Map<string, Array<{ sender: 'customer' | 'ai'; text: string; timestamp: Date }>>();
@@ -1146,6 +1147,20 @@ export function initSocketServer(io: SocketIOServer) {
           language: callLang,
           startTime: new Date().toISOString()
         });
+
+        notificationService.createNotification({
+          role: 'agent',
+          type: 'incoming_call',
+          title: 'Incoming Voice Call',
+          message: `${data.customerName || 'Customer'} initiated call in ${callLang.toUpperCase()}`,
+          data: {
+            callId: data.callId,
+            customerId: validCustomerId || data.customerId,
+            customerName: data.customerName,
+            language: callLang
+          },
+          dedupKey: `call_${data.callId}`
+        }).catch(e => console.error('[Notification] Error creating call notification:', e));
       } catch (err) {
         console.error('[Call] Error in call:start:', err);
         socket.emit('call:error', { message: 'Could not start call.' });
@@ -1225,6 +1240,21 @@ export function initSocketServer(io: SocketIOServer) {
           language: respLang,
           createdAt: transferReq.createdAt
         });
+
+        notificationService.createNotification({
+          role: 'agent',
+          type: 'escalation',
+          title: 'Specialist Escalation Requested',
+          message: `${call.customerName || 'Customer'} requested human agent transfer: ${reason}`,
+          data: {
+            transferId: transferReq.id,
+            callId: data.callId,
+            customerId: call.customerId,
+            customerName: call.customerName,
+            reason
+          },
+          dedupKey: `transfer_${transferReq.id}`
+        }).catch(e => console.error('[Notification] Error creating escalation notification:', e));
       } catch (err) {
         console.error('[Call] Error in call:escalate:', err);
       }
@@ -1438,6 +1468,21 @@ export function initSocketServer(io: SocketIOServer) {
                   notes: `Scheduled during call ${data.callId}. Ticket ID: ${ticket.id}`
                 }
               }).catch(e => console.error('[AICall] Error creating followUpTask for callback:', e));
+
+              notificationService.createNotification({
+                role: 'agent',
+                type: 'callback',
+                title: 'Customer Callback Scheduled',
+                message: `Priority callback requested for ${call.customerName || 'Customer'} at ${detectedPhone}`,
+                data: {
+                  callId: data.callId,
+                  customerId: call.customerId,
+                  customerName: call.customerName,
+                  phone: detectedPhone,
+                  ticketId: ticket.id
+                },
+                dedupKey: `callback_${call.id}_${detectedPhone}`
+              }).catch(e => console.error('[Notification] Error creating callback notification:', e));
             }
 
             await prisma.callRecord.update({
@@ -1498,7 +1543,7 @@ export function initSocketServer(io: SocketIOServer) {
             if (callLang !== 'en') {
               try {
                 declineMsg = await translationService.translateText(declineMsg, callLang, 'en');
-              } catch (e) {}
+              } catch (e) { }
             }
 
             await prisma.callTranscript.create({
@@ -1543,7 +1588,7 @@ export function initSocketServer(io: SocketIOServer) {
           if (callLang !== 'en') {
             try {
               inProgressMsg = await translationService.translateText(inProgressMsg, callLang, 'en');
-            } catch (e) {}
+            } catch (e) { }
           }
 
           const inProgRespId = `resp_inprog_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;

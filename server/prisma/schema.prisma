@@ -112,6 +112,10 @@ model CallRecord {
   wasReconnected     Boolean               @default(false)
   audioQualityScore  Float?                // estimated MOS score (1.0 - 5.0)
   audioDeviceStatus  String?               @default("healthy") // "healthy" | "mic_disconnected" | "speaker_disconnected" | "recovering"
+  connectTimeMs          Int?              // WebRTC/SIP connection time in ms
+  aiResponseTimeMs       Int?              // Average AI response latency in ms
+  humanTransferTimeMs    Int?              // Time taken to complete transfer to human agent in ms
+  audioInterruptionCount Int               @default(0) // Count of audio buffer/stream interruptions
 
   createdAt          DateTime              @default(now())
 
@@ -571,5 +575,24 @@ model RecordingAuditLog {
   @@index([recordingId])
   @@index([action, timestamp])
 }
+
+model Notification {
+  id          String    @id @default(cuid())
+  userId      String?   // Targeted user (optional if broadcast to role)
+  role        String?   // "customer" | "agent" | "admin" | "all"
+  type        String    // "incoming_call" | "callback" | "escalation" | "support_ticket" | "system"
+  title       String
+  message     String
+  data        String?   // JSON string with metadata (callId, ticketId, customerId, phone, etc.)
+  read        Boolean   @default(false)
+  dedupKey    String?   @unique
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId, read, createdAt])
+  @@index([role, read, createdAt])
+  @@index([type, createdAt])
+}
+
 
 

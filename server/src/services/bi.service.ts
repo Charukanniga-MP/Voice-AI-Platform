@@ -18,6 +18,37 @@ export interface IssueCategoryStat {
   percentage: number;
 }
 
+export interface LanguageStat {
+  language: string;
+  languageName: string;
+  count: number;
+  percentage: number;
+}
+
+export const BI_LANGUAGE_NAMES: Record<string, string> = {
+  en: 'English',
+  ta: 'Tamil',
+  te: 'Telugu',
+  ml: 'Malayalam',
+  kn: 'Kannada',
+  hi: 'Hindi',
+  bn: 'Bengali',
+  mr: 'Marathi',
+  gu: 'Gujarati',
+  ur: 'Urdu',
+  pa: 'Punjabi',
+  or: 'Odia',
+  as: 'Assamese',
+  es: 'Spanish',
+  fr: 'French',
+  de: 'German',
+  it: 'Italian',
+  pt: 'Portuguese',
+  ru: 'Russian',
+  ar: 'Arabic',
+  ja: 'Japanese'
+};
+
 export interface AgentPerformanceStat {
   agentId: string;
   name: string;
@@ -88,6 +119,9 @@ export interface BIMetrics {
     frustratedSentimentPct: number;
     totalCallsRequiringAssistance: number;
     totalActiveAgents: number;
+    totalCallbacks: number;
+    totalTickets: number;
+    callSuccessRate: number;
   };
   sentiment: {
     positiveCount: number;
@@ -99,6 +133,7 @@ export interface BIMetrics {
     topDissatisfactionReasons: Array<{ reason: string; count: number }>;
   };
   issues: IssueCategoryStat[];
+  languageStats: LanguageStat[];
   agentPerformance: AgentPerformanceStat[];
   hourlyVolume: HourlyVolumeStat[];
   dailyTrends: DailyTrendStat[];
@@ -276,13 +311,31 @@ export class BusinessIntelligenceService {
       orderBy: { startTime: 'asc' }
     });
 
-    // 2. Fetch Active Agents
-    const activeAgentsCount = await prisma.user.count({
-      where: {
-        role: 'agent',
-        agentStatus: { not: 'offline' }
-      }
-    });
+    // 2. Fetch Active Agents, Callbacks, and Tickets
+    const [activeAgentsCount, totalCallbacks, totalTickets] = await Promise.all([
+      prisma.user.count({
+        where: {
+          role: 'agent',
+          agentStatus: { not: 'offline' }
+        }
+      }),
+      prisma.followUpTask.count({
+        where: {
+          createdAt: {
+            gte: startDate,
+            lte: endDate
+          }
+        }
+      }),
+      prisma.supportTicket.count({
+        where: {
+          createdAt: {
+            gte: startDate,
+            lte: endDate
+          }
+        }
+      })
+    ]);
 
     const allAgents = await prisma.user.findMany({
       where: { role: 'agent' }
@@ -296,6 +349,7 @@ export class BusinessIntelligenceService {
     let rejectedCalls = 0;
     let totalDurationSeconds = 0;
     const customerIdsSet = new Set<string>();
+    const languageCounts: Record<string, number> = {};
 
     // Hourly volume tracking (0..23)
     const hourlyMap = Array.from({ length: 24 }, (_, h) => ({
@@ -350,6 +404,10 @@ export class BusinessIntelligenceService {
 
     // Process every call
     for (const call of calls) {
+      // Language counting
+      const lang = call.language || 'en';
+      languageCounts[lang] = (languageCounts[lang] || 0) + 1;
+
       // Status counting
       if (call.status === 'completed') completedCalls++;
       else if (call.status === 'missed') missedCalls++;
@@ -502,6 +560,17 @@ export class BusinessIntelligenceService {
     // Days covered
     const daysCovered = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
 
+    // Call success rate & language statistics
+    const callSuccessRate = calculatePct(completedCalls, totalCalls);
+    const languageStats: LanguageStat[] = Object.entries(languageCounts)
+      .map(([code, count]) => ({
+        language: code,
+        languageName: BI_LANGUAGE_NAMES[code] || code.toUpperCase(),
+        count,
+        percentage: calculatePct(count, totalCalls)
+      }))
+      .sort((a, b) => b.count - a.count);
+
     // Assemble current metrics
     const currentMetrics: BIMetrics = {
       period: {
@@ -525,7 +594,10 @@ export class BusinessIntelligenceService {
         neutralSentimentPct: calculatePct(neutralSentimentCount, totalCalls),
         frustratedSentimentPct: calculatePct(frustratedSentimentCount, totalCalls),
         totalCallsRequiringAssistance: callsRequiringAssistance,
-        totalActiveAgents: activeAgentsCount
+        totalActiveAgents: activeAgentsCount,
+        totalCallbacks,
+        totalTickets,
+        callSuccessRate
       },
       sentiment: {
         positiveCount: positiveSentimentCount,
@@ -537,6 +609,7 @@ export class BusinessIntelligenceService {
         topDissatisfactionReasons
       },
       issues: issueBreakdown,
+      languageStats,
       agentPerformance: agentPerformanceList,
       hourlyVolume: hourlyMap,
       dailyTrends,

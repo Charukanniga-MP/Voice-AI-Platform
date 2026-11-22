@@ -245,6 +245,9 @@ export interface CallStats {
   totalAgentCalls?: number;
   avgAiLatency?: number;
   escalationRate?: number;
+  totalCallbacks?: number;
+  totalTickets?: number;
+  callSuccessRate?: number;
   csat?: {
     avgRating: number;
     totalRated: number;
@@ -271,6 +274,11 @@ export interface CallQualityStats {
   avgPacketLoss: number;
   avgJitter?: number;
   avgFirstResponseMs?: number;
+  avgConnectTimeMs?: number;
+  avgAiResponseTimeMs?: number;
+  avgHumanTransferTimeMs?: number;
+  totalAudioInterruptions?: number;
+  connectionFailures?: number;
   firstResponseCalls?: number;
   speechRecognitionFailures?: number;
   recordingUploadFailures?: number;
@@ -573,6 +581,9 @@ export interface BiKpis {
   frustratedSentimentPct: number;
   totalCallsRequiringAssistance: number;
   totalActiveAgents: number;
+  totalCallbacks?: number;
+  totalTickets?: number;
+  callSuccessRate?: number;
 }
 
 export interface BiIssueCategory {
@@ -658,6 +669,19 @@ export interface BiOverviewData {
     frustratedPct: BiComparison;
   };
   executiveSummary: string[];
+  languageStats?: Array<{ language: string; languageName: string; count: number; percentage: number }>;
+}
+
+export interface NotificationItem {
+  id: string;
+  userId?: string | null;
+  role?: string | null;
+  type: 'incoming_call' | 'callback' | 'escalation' | 'support_ticket' | 'system';
+  title: string;
+  message: string;
+  data?: string | null;
+  read: boolean;
+  createdAt: string;
 }
 
 export interface BusinessReportRecord {
