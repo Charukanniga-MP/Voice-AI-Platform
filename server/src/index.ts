@@ -40,7 +40,9 @@ import biRoutes from './routes/bi.routes.js';
 import recordingsRoutes from './routes/recordings.routes.js';
 import adminSettingsRoutes from './routes/adminSettings.routes.js';
 import dataRequestsRoutes from './routes/dataRequests.routes.js';
+import notificationRoutes from './routes/notification.routes.js';
 import { initSocketServer } from './services/socket.js';
+import { notificationService } from './services/notification.service.js';
 import { initBiScheduler } from './services/biScheduler.js';
 import { initRetentionScheduler } from './services/retention.service.js';
 import { knowledgeService } from './services/knowledge.js';
@@ -248,6 +250,7 @@ app.use('/api/recordings', recordingsRoutes);
 app.use('/api/admin/recordings', recordingsRoutes);
 app.use('/api/admin/settings', adminSettingsRoutes);
 app.use('/api/data-requests', dataRequestsRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // Dev-only Team Sync API (Strictly never mounted in production)
 if (process.env.NODE_ENV !== 'production') {
@@ -308,6 +311,7 @@ process.on('unhandledRejection', (reason: any) => {
 
 // Initialize Socket.io events and signaling
 initSocketServer(io);
+notificationService.setSocketServer(io);
 
 const PORT = env.PORT || 5000;
 

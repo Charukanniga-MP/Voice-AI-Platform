@@ -569,6 +569,50 @@ export const BiReportsSection: React.FC<BiReportsSectionProps> = ({ token }) => 
                   <div className="text-[10px] font-semibold text-slate-400 mt-1">Online & Available</div>
                 </div>
               </div>
+
+              {/* Callbacks Scheduled */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-xs flex flex-col justify-between">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Callbacks</span>
+                  <div className="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                    <PhoneCall className="w-3.5 h-3.5" />
+                  </div>
+                </div>
+                <div className="mt-2.5">
+                  <div className="text-2xl font-black text-indigo-700 tracking-tight">{overview.kpis.totalCallbacks ?? 0}</div>
+                  <div className="text-[10px] font-semibold text-slate-400 mt-1">Pending & in-progress</div>
+                </div>
+              </div>
+
+              {/* Support Tickets */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-xs flex flex-col justify-between">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Tickets</span>
+                  <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+                    <FileText className="w-3.5 h-3.5" />
+                  </div>
+                </div>
+                <div className="mt-2.5">
+                  <div className="text-2xl font-black text-blue-700 tracking-tight">{overview.kpis.totalTickets ?? 0}</div>
+                  <div className="text-[10px] font-semibold text-slate-400 mt-1">Tracked inquiries</div>
+                </div>
+              </div>
+
+              {/* Call Success Rate */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-xs flex flex-col justify-between">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Success Rate</span>
+                  <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                  </div>
+                </div>
+                <div className="mt-2.5">
+                  <div className="text-2xl font-black text-emerald-700 tracking-tight">
+                    {overview.kpis.callSuccessRate ?? (overview.kpis.totalCalls > 0 ? Math.round((overview.kpis.completedCalls / overview.kpis.totalCalls) * 100) : 0)}%
+                  </div>
+                  <div className="text-[10px] font-semibold text-slate-400 mt-1">Completion rate</div>
+                </div>
+              </div>
             </div>
 
             {/* 2. Executive Summary & Observations Card */}
@@ -955,6 +999,39 @@ export const BiReportsSection: React.FC<BiReportsSectionProps> = ({ token }) => 
                 })}
               </div>
             </div>
+
+            {/* 6. Language Distribution & Regional Diversity */}
+            {overview.languageStats && overview.languageStats.length > 0 && (
+              <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900">Regional & Multilingual Voice Distribution</h4>
+                    <p className="text-[11px] text-slate-500">Live call volume segmented by spoken customer language</p>
+                  </div>
+                  <span className="text-[10px] bg-blue-50 text-blue-700 font-bold px-2 py-0.5 rounded-full">
+                    {overview.languageStats.length} Languages Detected
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2.5">
+                  {overview.languageStats.map((item, idx) => (
+                    <div key={idx} className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl space-y-1 hover:border-slate-300 transition-colors">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-slate-800 truncate">{item.languageName}</span>
+                        <span className="font-mono text-[10px] text-slate-500 font-bold">{item.percentage}%</span>
+                      </div>
+                      <div className="text-lg font-black text-slate-900">{item.count} <span className="text-[10px] text-slate-400 font-normal">calls</span></div>
+                      <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-blue-600 rounded-full"
+                          style={{ width: `${Math.max(item.percentage, 5)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )
       ) : (

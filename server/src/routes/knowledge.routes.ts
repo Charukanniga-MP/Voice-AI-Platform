@@ -251,10 +251,17 @@ router.post('/upload', authenticate, requireRole(['admin']), upload.single('file
       include: { _count: { select: { entries: true } } }
     });
 
-    if (processResult.isDuplicate) {
-      res.status(409).json({
-        error: processResult.error || 'Duplicate document detected.',
-        isDuplicate: true,
+    if (!processResult.success) {
+      if (processResult.isDuplicate) {
+        res.status(409).json({
+          error: processResult.error || 'Duplicate document detected.',
+          isDuplicate: true,
+          document: updatedDoc
+        });
+        return;
+      }
+      res.status(422).json({
+        error: processResult.error || 'Document processing failed.',
         document: updatedDoc
       });
       return;
@@ -382,6 +389,33 @@ router.post('/feedback', authenticate, requireRole(['admin', 'agent']), async (r
   } catch (err: any) {
     console.error('[Knowledge] Feedback error:', err);
     res.status(500).json({ error: 'Failed to record feedback.' });
+  }
+});
+
+// 7f. Get Knowledge Feedback for Admin & Agent Review
+router.get('/feedback', authenticate, requireRole(['admin', 'agent']), async (req: Request, res: Response) => {
+  try {
+    const feedbackList = await prisma.knowledgeFeedback.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 100
+    });
+
+    const totalFeedback = feedbackList.length;
+    const totalHelpful = feedbackList.filter(f => f.isUseful).length;
+    const totalUnhelpful = feedbackList.filter(f => !f.isUseful).length;
+    const helpfulPercentage = totalFeedback > 0 ? Math.round((totalHelpful / totalFeedback) * 100) : 100;
+
+    res.json({
+      success: true,
+      feedbackList,
+      totalFeedback,
+      totalHelpful,
+      totalUnhelpful,
+      helpfulPercentage
+    });
+  } catch (err: any) {
+    console.error('[Knowledge] Feedback fetch error:', err);
+    res.status(500).json({ error: 'Failed to retrieve knowledge feedback records.' });
   }
 });
 

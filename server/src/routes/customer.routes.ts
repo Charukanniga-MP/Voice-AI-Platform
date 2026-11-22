@@ -214,7 +214,7 @@ router.get('/:id/interaction-history', authenticate, async (req: Request, res: R
             issue: u,
             status: call.intelligence?.resolutionStatus || 'unresolved'
           }));
-        } catch (e) {}
+        } catch (e) { }
       }
     }
 

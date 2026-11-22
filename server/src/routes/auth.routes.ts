@@ -1131,12 +1131,12 @@ router.post('/forgot-password', forgotPasswordLimiter, validate(forgotPasswordSc
     } else if (req.headers.referer && typeof req.headers.referer === 'string') {
       try {
         frontendOrigin = new URL(req.headers.referer).origin;
-      } catch {}
+      } catch { }
     }
 
     // Send reset email with reset link containing the plain token pointing directly to Kaira reset page
     const resetLink = `${frontendOrigin.replace(/\/$/, '')}/reset-password?token=${rawToken}`;
-    
+
     // Await email delivery operation via SMTP
     const emailResult = await sendPasswordResetEmail(user.email, user.name, resetLink);
 

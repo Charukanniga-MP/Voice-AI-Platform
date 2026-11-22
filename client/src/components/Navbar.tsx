@@ -2,6 +2,7 @@ import React from 'react';
 import { useAuth } from '../context/AuthContext.js';
 import { LanguageSelector } from './LanguageSelector.js';
 import { ProfileDropdown } from './ProfileDropdown.js';
+import { NotificationDropdown } from './NotificationDropdown.js';
 
 export const Navbar: React.FC = () => {
   const { user } = useAuth();
@@ -32,8 +33,11 @@ export const Navbar: React.FC = () => {
           </a>
         </div>
 
-        {/* Top-Right Controls: Language Selector + Circular Profile Icon Dropdown */}
+        {/* Top-Right Controls: Notifications + Language Selector + Circular Profile Icon Dropdown */}
         <div className="flex items-center gap-2 sm:gap-4">
+          {/* Centralized Real-time Notifications */}
+          <NotificationDropdown />
+
           {/* Global Language Selector Dropdown */}
           <LanguageSelector variant="dropdown" />
 
