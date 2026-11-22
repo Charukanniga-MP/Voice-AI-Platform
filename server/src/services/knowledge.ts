@@ -895,6 +895,19 @@ class KnowledgeService {
     // Check if customer is asking for clarification / elaboration on previous turn
     const isClarificationRequest = /\b(elaborate|tell\s+me\s+more|explain\s+more|what\s+do\s+you\s+mean|can\s+you\s+clarify|details|more\s+info)\b/i.test(cleanInput);
 
+    // Handle clear food-ordering intents before fuzzy KB matching. A generic
+    // overlap such as "office" must not make an unrelated company FAQ look grounded.
+    if (/\b(?:order|ordering|delivery|deliver)\b.{0,60}\b(?:pizzas?|food|burgers?|restaurants?)\b|\b(?:pizzas?|food|burgers?|restaurants?)\b.{0,60}\b(?:order|ordering|delivery|deliver)\b/i.test(cleanInput)) {
+      return {
+        answer: "I specialize in KAIRA's AI customer communication platform and voice calling. I cannot order food, but I can connect you with a human representative for help.",
+        isGrounded: false,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 0.8,
+        latencyMs: Date.now() - t0
+      };
+    }
+
     // ---------------------------------------------------------
     // PRIORITY 2: SEARCH APPROVED KNOWLEDGE BASE (100 Q&A PDF)
     // ---------------------------------------------------------

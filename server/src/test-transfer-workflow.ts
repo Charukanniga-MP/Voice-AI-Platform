@@ -1,6 +1,32 @@
 import { io as ClientIO } from 'socket.io-client';
 import { prisma } from './db.js';
 
+function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 15000): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Timed out waiting for ${label} after ${timeoutMs}ms.`)), timeoutMs))
+  ]);
+}
+
+function waitForAnyCallEvent(socket: any, eventNames: string[], callId: string, timeoutMs = 15000): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      eventNames.forEach((eventName) => socket.off(eventName, onEvent));
+    };
+    const onEvent = (data: any) => {
+      if (data?.callId !== callId) return;
+      cleanup();
+      resolve(data);
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for an admin transfer notification for call ${callId}.`));
+    }, timeoutMs);
+    eventNames.forEach((eventName) => socket.on(eventName, onEvent));
+  });
+}
+
 async function testCompleteWorkflow() {
   console.log('=== 3. MANDATORY LIVE CALL & ADMIN TRANSFER WORKFLOW TEST ===');
   const URL = 'http://localhost:5000';
@@ -25,6 +51,10 @@ async function testCompleteWorkflow() {
   await new Promise<void>((resolve) => customerSocket.on('connect', resolve));
   console.log('Customer socket connected');
   customerSocket.emit('user:register', { userId: customer.id, role: 'customer', name: customer.name });
+
+  // Registration reads the verified user role from the database asynchronously.
+  // Let both sockets finish joining their rooms before starting the call.
+  await new Promise((resolve) => setTimeout(resolve, 600));
 
   const testCallId = 'test_call_' + Date.now();
 
@@ -75,33 +105,45 @@ async function testCompleteWorkflow() {
   });
 
   let receivedTransferId = '';
+  let customerTransferStarted = false;
 
   // Customer should receive fallback transfer message
-  const customerTransferPromise = new Promise<void>((resolve) => {
+  const customerTransferPromise = new Promise<any>((resolve) => {
     customerSocket.once('call:ai_response', (data) => {
       console.log('Step 6: AI fallback response to customer:');
       console.log('  answer =', data.answer);
       console.log('  isTransferring =', data.isTransferring);
+      customerTransferStarted = Boolean(data.isTransferring && data.transferId);
       if (data.isTransferring && data.answer.includes("connect you with our Admin")) {
         console.log('✓ Correct fallback message spoken by AI!');
       }
-      resolve();
+      resolve(data);
     });
   });
 
-  // Admin should receive incoming transfer notification
-  const adminTransferPromise = new Promise<void>((resolve) => {
-    adminSocket.once('transfer:incoming', (data) => {
-      console.log('Step 7: Admin received real-time incoming transfer notification!');
-      console.log('  Customer:', data.customerName);
-      console.log('  Question:', data.question);
-      console.log('  Reason:', data.reason);
-      receivedTransferId = data.transferId;
-      resolve();
-    });
+  // Depending on whether staff are online, the server broadcasts a transfer
+  // alert or sends the incoming call directly to an admin operator session.
+  const adminTransferPromise = waitForAnyCallEvent(
+    adminSocket,
+    ['transfer:incoming', 'call:transfer_needed', 'admin:incoming_call'],
+    testCallId
+  ).then((data) => {
+    console.log('Step 7: Admin received transfer notification:', data.reason || data.question || 'incoming call');
+    receivedTransferId = data.transferId || '';
+    return data;
   });
 
-  await Promise.all([customerTransferPromise, adminTransferPromise]);
+  const [customerTransferResponse] = await withTimeout(
+    Promise.all([customerTransferPromise, adminTransferPromise]),
+    'customer fallback and admin transfer events'
+  );
+  if (!customerTransferStarted || !customerTransferResponse.transferId) {
+    throw new Error('Unsupported question did not trigger a customer transfer response with transferId.');
+  }
+  if (receivedTransferId && customerTransferResponse.transferId !== receivedTransferId) {
+    throw new Error('Customer response and admin notification referenced different transfer requests.');
+  }
+  receivedTransferId = customerTransferResponse.transferId;
 
   // 6. Admin accepts the transfer call
   console.log('\nStep 8: Admin accepts the transfer call...');
@@ -164,12 +206,16 @@ async function testCompleteWorkflow() {
   if (check && check.status === 'completed' && check.transferred && check.transcripts.length >= 4) {
     console.log('\n🎉 ALL MANDATORY WORKFLOW REQUIREMENTS MET AND VERIFIED IN DB! 🎉');
   } else {
-    console.error('Verification failed:', check);
+    throw new Error(`Persisted call verification failed: ${JSON.stringify(check)}`);
   }
 
   adminSocket.disconnect();
   customerSocket.disconnect();
+  await prisma.$disconnect();
   process.exit(0);
 }
 
-testCompleteWorkflow();
+testCompleteWorkflow().catch((error) => {
+  console.error('AI-to-admin transfer workflow test failed:', error);
+  process.exit(1);
+});
