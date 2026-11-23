@@ -268,6 +268,8 @@ export const AdminDashboard: React.FC = () => {
   const [savingRetentionSettings, setSavingRetentionSettings] = useState(false);
   const [retentionSettingsSaved, setRetentionSettingsSaved] = useState(false);
   const [retentionSettingsError, setRetentionSettingsError] = useState('');
+  const [retentionImpact, setRetentionImpact] = useState<{ recordings: number; transcripts: number } | null>(null);
+  const [loadingRetentionImpact, setLoadingRetentionImpact] = useState(false);
 
   // Call Health & Automatic Recovery State
   const [serviceHealth, setServiceHealth] = useState<ServiceHealthReport | null>(null);
@@ -722,6 +724,28 @@ export const AdminDashboard: React.FC = () => {
       setRetentionSettingsError(error.message || 'Could not save retention settings.');
     } finally {
       setSavingRetentionSettings(false);
+    }
+  };
+
+  const previewRetentionImpact = async () => {
+    setLoadingRetentionImpact(true);
+    setRetentionSettingsError('');
+    try {
+      const response = await fetch('/api/admin/settings/retention/preview', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recordingRetentionDays: Number(retentionSettings.recordingRetentionDays),
+          transcriptRetentionDays: Number(retentionSettings.transcriptRetentionDays)
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not preview retention impact.');
+      setRetentionImpact(data);
+    } catch (error: any) {
+      setRetentionSettingsError(error.message || 'Could not preview retention impact.');
+    } finally {
+      setLoadingRetentionImpact(false);
     }
   };
 
@@ -3094,6 +3118,7 @@ export const AdminDashboard: React.FC = () => {
                         onChange={event => {
                           setRetentionSettings(current => ({ ...current, [key]: Number(event.target.value) }));
                           setRetentionSettingsSaved(false);
+                          setRetentionImpact(null);
                         }}
                         className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-100"
                       />
@@ -3104,9 +3129,13 @@ export const AdminDashboard: React.FC = () => {
                 ))}
               </div>
               <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4">
+                <button type="button" onClick={previewRetentionImpact} disabled={loadingRetentionImpact} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 cursor-pointer">
+                  {loadingRetentionImpact ? 'Checking impact…' : 'Preview impact'}
+                </button>
                 <button type="button" onClick={saveRetentionSettings} disabled={savingRetentionSettings} className="rounded-xl bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50 cursor-pointer">
                   {savingRetentionSettings ? 'Saving…' : 'Save policy'}
                 </button>
+                {retentionImpact && <span role="status" className="text-sm text-slate-600">With these periods, {retentionImpact.recordings} recordings and {retentionImpact.transcripts} transcripts are already past retention and eligible for cleanup.</span>}
                 {retentionSettingsSaved && <span className="text-sm font-medium text-emerald-700">Policy saved. Expired data will be cleaned up within an hour.</span>}
                 {retentionSettingsError && <span role="alert" className="text-sm font-medium text-red-600">{retentionSettingsError}</span>}
                 {retentionSettings.updatedAt && <span className="text-xs text-slate-400 sm:ml-auto">Last changed {new Date(retentionSettings.updatedAt).toLocaleString()} by {retentionSettings.updatedBy || 'an administrator'}</span>}

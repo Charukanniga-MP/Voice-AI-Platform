@@ -21,6 +21,27 @@ router.get('/retention', authenticate, authorizeRoles('admin'), async (_req: Req
   }
 });
 
+router.post('/retention/preview', authenticate, authorizeRoles('admin'), async (req: Request, res: Response) => {
+  const { recordingRetentionDays, transcriptRetentionDays } = req.body || {};
+  const valid = (value: unknown) => Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 3650;
+  if (!valid(recordingRetentionDays) || !valid(transcriptRetentionDays)) {
+    return res.status(400).json({ error: 'Retention periods must be whole numbers from 1 to 3650 days.' });
+  }
+  try {
+    const now = Date.now();
+    const recordingCutoff = new Date(now - recordingRetentionDays * 86400000);
+    const transcriptCutoff = new Date(now - transcriptRetentionDays * 86400000);
+    const [recordings, transcripts] = await Promise.all([
+      prisma.callRecording.count({ where: { recordingStatus: { not: 'deleted' }, createdAt: { lte: recordingCutoff } } }),
+      prisma.callTranscript.count({ where: { timestamp: { lte: transcriptCutoff } } })
+    ]);
+    return res.json({ recordings, transcripts });
+  } catch (error) {
+    console.error('[AdminSettings] Failed to preview retention policy:', error);
+    return res.status(500).json({ error: 'Could not preview retention impact.' });
+  }
+});
+
 router.put('/retention', authenticate, authorizeRoles('admin'), async (req: Request, res: Response) => {
   const { recordingRetentionDays, transcriptRetentionDays } = req.body || {};
   const valid = (value: unknown) => Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 3650;
