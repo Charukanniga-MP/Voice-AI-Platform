@@ -44,8 +44,8 @@ export interface GroundedResponse {
   isConflict?: boolean;
 }
 
-// Fallback message strictly required by specification
-export const FALLBACK_MESSAGE = "I apologize, but I don't currently have that specific information. Let me record your question so our support team can review it and assist you.";
+// Fallback message strictly required by zero-hallucination specification
+export const FALLBACK_MESSAGE = "I'm sorry, I couldn't find confirmed information about that in our available documents. Would you like me to connect you with one of our support agents?";
 export const COPILOT_NOT_FOUND_MESSAGE = "Information not found in the approved Knowledge Base.";
 
 const STOP_WORDS = new Set([
@@ -103,31 +103,44 @@ function levenshtein(a: string, b: string): number {
 }
 
 const SYNONYMS: Record<string, string[]> = {
-  cost: ['price', 'pricing', 'rate', 'fee', 'charge'],
-  price: ['cost', 'pricing', 'rate', 'fee', 'charge'],
-  pricing: ['cost', 'price', 'rate', 'fee', 'charge'],
-  hour: ['schedule', 'time', 'availability', 'working'],
-  hours: ['schedule', 'time', 'availability', 'working'],
-  timing: ['hour', 'hours', 'time', 'schedule'],
-  timings: ['hour', 'hours', 'time', 'schedule'],
-  cancel: ['refund', 'cancellation', 'moneyback'],
-  cancellation: ['cancel', 'refund', 'moneyback'],
-  refund: ['cancel', 'cancellation', 'moneyback'],
+  cost: ['price', 'pricing', 'rate', 'fee', 'charge', 'plan', 'plans'],
+  price: ['cost', 'pricing', 'rate', 'fee', 'charge', 'plan', 'plans'],
+  pricing: ['cost', 'price', 'rate', 'fee', 'charge', 'plan', 'plans'],
+  discount: ['price', 'pricing', 'rate', 'offer', 'concession', 'plan'],
+  discounts: ['discount', 'pricing', 'concession', 'plan', 'plans'],
+  student: ['discount', 'concession', 'pricing', 'eligibility'],
+  hour: ['schedule', 'time', 'availability', 'working', 'open', 'close'],
+  hours: ['schedule', 'time', 'availability', 'working', 'open', 'close', 'timing', 'timings'],
+  timing: ['hour', 'hours', 'time', 'schedule', 'open', 'close', 'visit'],
+  timings: ['hour', 'hours', 'time', 'schedule', 'open', 'close', 'visit'],
+  open: ['hours', 'timing', 'schedule', 'working', 'business', 'close', 'visit'],
+  close: ['hours', 'timing', 'schedule', 'working', 'business', 'open'],
+  evening: ['hours', 'timing', 'schedule', 'open', 'close'],
+  morning: ['hours', 'timing', 'schedule', 'open', 'close'],
+  cancel: ['refund', 'cancellation', 'moneyback', 'return', 'reimbursement'],
+  cancellation: ['cancel', 'refund', 'moneyback', 'return', 'reimbursement'],
+  refund: ['cancel', 'cancellation', 'moneyback', 'reimbursement', 'payment', 'return'],
+  reimbursement: ['refund', 'moneyback', 'return', 'cancel', 'payment'],
+  reimburse: ['refund', 'moneyback', 'return', 'cancel', 'payment'],
+  payment: ['cost', 'price', 'pricing', 'pay', 'paid', 'charge', 'fee', 'reimbursement', 'refund', 'money'],
   fast: ['speed', 'latency', 'quick', 'delay', 'ms'],
   speed: ['fast', 'latency', 'quick', 'delay', 'ms'],
   latency: ['fast', 'speed', 'quick', 'delay', 'ms', 'lag'],
   delay: ['latency', 'lag', 'speed'],
-  interrupt: ['barge', 'bargein', 'barge-in', 'cutoff'],
-  interruption: ['barge', 'bargein', 'barge-in', 'cutoff'],
-  barge: ['interrupt', 'interruption'],
-  bargein: ['interrupt', 'interruption'],
+  interrupt: ['barge', 'bargein', 'barge-in', 'cutoff', 'cut', 'stop'],
+  interruption: ['barge', 'bargein', 'barge-in', 'cutoff', 'cut', 'stop'],
+  barge: ['interrupt', 'interruption', 'cutoff', 'cut'],
+  bargein: ['interrupt', 'interruption', 'cutoff'],
   switch: ['change', 'swap', 'convert', 'select'],
   switching: ['change', 'swap', 'switch', 'convert', 'select'],
-  office: ['location', 'address', 'headquarters', 'hq'],
-  address: ['office', 'location', 'headquarters', 'hq'],
-  location: ['office', 'address', 'headquarters', 'hq'],
-  phone: ['telephone', 'mobile', 'call', 'helpline', 'contact'],
+  office: ['location', 'address', 'headquarters', 'hq', 'branch', 'building'],
+  address: ['office', 'location', 'headquarters', 'hq', 'branch'],
+  location: ['office', 'address', 'headquarters', 'hq', 'branch'],
+  headquarters: ['office', 'address', 'location', 'hq'],
+  visit: ['office', 'location', 'address', 'hours', 'time', 'open'],
+  phone: ['telephone', 'mobile', 'call', 'helpline', 'contact', 'cell', 'number'],
   email: ['mail', 'contact'],
+  contact: ['phone', 'email', 'helpline', 'reach', 'number'],
   record: ['recording', 'recordings', 'store', 'storage'],
   recording: ['record', 'recordings', 'store', 'storage'],
   summary: ['summaries', 'summarize', 'takeaway', 'takeaways'],
@@ -136,17 +149,229 @@ const SYNONYMS: Record<string, string[]> = {
   transcript: ['transcripts', 'transcription'],
   transcripts: ['transcript', 'transcription'],
   transcription: ['transcript', 'transcripts'],
-  takeover: ['handover', 'take over'],
-  handover: ['takeover', 'take over'],
+  takeover: ['handover', 'take over', 'intervene'],
+  handover: ['takeover', 'take over', 'escalate'],
   choose: ['select', 'preferred', 'pick', 'change'],
   pick: ['select', 'preferred', 'choose', 'change'],
   select: ['choose', 'pick', 'preferred', 'change'],
   preferred: ['select', 'choose', 'pick'],
-  cut: ['interrupt', 'barge', 'stop'],
-  remember: ['earlier', 'multi-turn', 'retain', 'context', 'turns'],
-  earlier: ['remember', 'multi-turn', 'turns'],
+  cut: ['interrupt', 'barge', 'stop', 'cutoff'],
+  stop: ['interrupt', 'barge', 'cut', 'halt'],
+  remember: ['earlier', 'multi-turn', 'retain', 'context', 'turns', 'previous'],
+  earlier: ['remember', 'multi-turn', 'turns', 'previous'],
   permission: ['consent', 'record', 'recording']
 };
+
+/**
+ * Normalizes customer query by stripping conversational fillers, contractions, and excess punctuation
+ */
+export function normalizeCustomerQuery(text: string): string {
+  let q = (text || '').toLowerCase().trim();
+  // Expand contractions
+  q = q
+    .replace(/\bcan't\b/g, 'cannot')
+    .replace(/\bwon't\b/g, 'will not')
+    .replace(/\bdon't\b/g, 'do not')
+    .replace(/\bdoesn't\b/g, 'does not')
+    .replace(/\bdidn't\b/g, 'did not')
+    .replace(/\bi'm\b/g, 'i am')
+    .replace(/\bwe're\b/g, 'we are')
+    .replace(/\bit's\b/g, 'it is')
+    .replace(/\byou're\b/g, 'you are');
+
+  // Strip conversational polite prefixes/fillers
+  q = q.replace(/^(?:could\s+you\s+(?:please\s+)?tell\s+me|can\s+you\s+(?:please\s+)?(?:tell|explain|clarify)\s+(?:me\s+)?|i\s+would\s+like\s+to\s+know|i\s+want\s+to\s+(?:know|ask)|please\s+tell\s+me|tell\s+me|please\s+let\s+me\s+know|let\s+me\s+know|i\s+was\s+wondering|do\s+you\s+know|is\s+it\s+possible\s+to|i\s+paid\s+already[,\s]+)\s*/i, '');
+  
+  return q.replace(/['".,!?;:]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Splits queries containing multiple distinct customer questions into discrete sub-questions
+ */
+export function splitMultiQuestions(query: string): string[] {
+  const clean = (query || '').trim();
+  if (!clean) return [];
+
+  // 1. Multiple question marks
+  if ((clean.match(/\?/g) || []).length > 1) {
+    const parts = clean.split(/\?+/).map(p => p.trim()).filter(p => p.length >= 6);
+    if (parts.length > 1) return parts;
+  }
+
+  // 2. Conjunctions connecting distinct question clauses
+  const multiPattern = /\s+(?:and\s+(?:what|how|where|when|can|do|does|is|are|could|would)|also\s+(?:what|how|where|when|can|do|does|is|are|could|would)|as\s+well\s+as\s+(?:what|how|where|when|can|do|does|is|are))\s+/i;
+  if (multiPattern.test(clean)) {
+    const match = clean.match(multiPattern);
+    if (match && match.index !== undefined) {
+      const part1 = clean.slice(0, match.index).trim();
+      const connectorLen = match[0].length;
+      // Extract the second clause starting with the question word
+      const wordsInMatch = match[0].trim().split(/\s+/);
+      const questionWord = wordsInMatch[wordsInMatch.length - 1];
+      const part2StartIndex = match.index + match[0].toLowerCase().indexOf(questionWord.toLowerCase());
+      const part2 = clean.slice(part2StartIndex).trim();
+      if (part1.length >= 6 && part2.length >= 6) {
+        return [part1, part2];
+      }
+    }
+  }
+
+  // 3. Comma-separated questions
+  const commaSplit = clean.split(/,\s*(?=(?:and\s+)?(?:what|how|where|when|can|do|does|is|are)\s+)/i);
+  if (commaSplit.length > 1 && commaSplit[0].length >= 8 && commaSplit[1].length >= 8) {
+    return commaSplit.map(s => s.trim());
+  }
+
+  return [clean];
+}
+
+export interface IntentRewrite {
+  matchedIntent: string;
+  rewrittenQuery: string;
+  directAnswerSnippet?: string;
+  isUnsupportedOrNotSupplied?: boolean;
+}
+
+/**
+ * Intelligent intent recognition and question rewriting for varied customer phrasings
+ */
+export function detectIntentRewrites(query: string): IntentRewrite | null {
+  const lower = query.toLowerCase().replace(/[^\w\s-]/g, ' ').replace(/\s+/g, ' ').trim();
+
+  // 1. Refund / Payment Return / Reimbursement (e.g. "Can I get my money back?", "procedure to return payment", "I paid already. Can you give me a refund?")
+  if (/\b(money\s*back|return\s+(?:my\s+)?payment|procedure\s+to\s+return|get\s+(?:my\s+)?payment\s+back|reimbursement|reimburse|apply\s+for\s+a\s+refund|refund\s+procedure|refund\s+policy|cancel\s+and\s+refund|cancellation\s+refund)\b/i.test(lower) ||
+      (/\b(?:refund|money\s*back)\b/i.test(lower) && /\b(?:paid|payment|return|back|cancel)\b/i.test(lower))) {
+    return {
+      matchedIntent: 'refund_reimbursement',
+      rewrittenQuery: 'What is the refund and payment return policy?',
+      isUnsupportedOrNotSupplied: true,
+      directAnswerSnippet: "I'm sorry, I couldn't find confirmed information about refund procedures or payment returns in our available documents. Would you like me to connect you with one of our support agents to assist you?"
+    };
+  }
+
+  // 2. Business Hours / Timings / Opening & Closing (e.g. "When do you open?", "What time can I visit?", "Are you open in the evening?", "When does your office close?")
+  if (/\b(when\s+do\s+you\s+open|what\s+time\s+can\s+i\s+visit|open\s+in\s+the\s+evening|when\s+does\s+(?:your\s+)?office\s+close|office\s+hours|business\s+hours|opening\s+hours|closing\s+hours|working\s+hours|working\s+schedule|schedule\s+to\s+visit)\b/i.test(lower) ||
+      (/\b(?:open|close|visit)\b/i.test(lower) && /\b(?:hours|timing|timings|evening|morning|schedule)\b/i.test(lower))) {
+    return {
+      matchedIntent: 'business_hours',
+      rewrittenQuery: "What are KAIRA's business hours?",
+      isUnsupportedOrNotSupplied: true,
+      directAnswerSnippet: "Business hours were not supplied in our available documents. Refer to the organization's officially published schedule, or I can connect you with a member of our human support team."
+    };
+  }
+
+  // 3. Office Location / Physical Address / HQ (e.g. "Where is your office located?", "What is your headquarters address?", "Where can I find your office?")
+  if (/\b(where\s+is\s+(?:your\s+)?office|where\s+(?:is\s+)?kaira(?:'s)?\s+office|office\s+located|headquarters\s+address|hq\s+address|corporate\s+address|office\s+address|where\s+are\s+you\s+located|physical\s+address|where\s+can\s+i\s+visit\s+your\s+office)\b/i.test(lower)) {
+    return {
+      matchedIntent: 'office_location',
+      rewrittenQuery: "Where is KAIRA's office located?",
+      isUnsupportedOrNotSupplied: true,
+      directAnswerSnippet: "Our office address was not supplied in the available documentation. Would you like me to connect you with one of our support agents?"
+    };
+  }
+
+  // 4. Subscription Plans / Prices / Discounts (e.g. "Do you provide a 50% discount for students?", "How much does it cost?", "What are your prices?")
+  if (/\b(discount\s+for\s+students|student\s+discount|50%\s+discount|any\s+discount|discount\s+code|how\s+much\s+does\s+it\s+cost|what\s+are\s+your\s+subscription\s+plans|subscription\s+plans\s+or\s+prices|pricing\s+plans|what\s+are\s+your\s+prices|monthly\s+prices|what\s+do\s+you\s+charge)\b/i.test(lower)) {
+    const isDiscount = /\b(discount|student|50%)\b/i.test(lower);
+    return {
+      matchedIntent: 'subscription_pricing_discount',
+      rewrittenQuery: "What are KAIRA's subscription plans or prices?",
+      isUnsupportedOrNotSupplied: true,
+      directAnswerSnippet: isDiscount
+        ? "I'm sorry, I couldn't find confirmed information about student discounts in our available documents. Would you like me to connect you with one of our support agents?"
+        : "Pricing information was not supplied in our available documents. Refer to an authorized sales representative or official pricing document, or I can connect you with our team."
+    };
+  }
+
+  // 5. Official Contact Details (Phone / Email)
+  if (/\b(official\s+support\s+phone|support\s+email|contact\s+details|phone\s+number\s+or\s+email|what\s+is\s+your\s+phone\s+number|official\s+email\s+address|customer\s+care\s+number)\b/i.test(lower)) {
+    return {
+      matchedIntent: 'contact_details',
+      rewrittenQuery: "What is KAIRA's official support phone number or email?",
+      isUnsupportedOrNotSupplied: true,
+      directAnswerSnippet: "These contact details were not supplied in our available documentation. The AI must use only contact information published by the organization."
+    };
+  }
+
+  // 6. Barge-in / Interruption (e.g. "Can I cut the AI off while it speaks?", "Can customers interrupt the AI?", "Can I barge in?")
+  if (/\b(interrupt\s+(?:the\s+)?ai|interrupt.*assistant|cut\s*(?:the\s+ai\s+)?off|cut\s+off\s+(?:the\s+)?(?:ai|voice|assistant)|barge\s*in|barge-in|stop\s+talking\s+when\s+i\s+speak|speak\s+while\s+ai\s+is\s+speaking)\b/i.test(lower)) {
+    return {
+      matchedIntent: 'interruption_barge_in',
+      rewrittenQuery: 'Can customers interrupt the AI?'
+    };
+  }
+
+  // 7. Multi-Turn Context Memory
+  if (/\b(remember.*earlier|previous\s+questions|multi-turn|retain\s+context|do\s+you\s+remember\s+what\s+i\s+asked)\b/i.test(lower)) {
+    return {
+      matchedIntent: 'multi_turn_memory',
+      rewrittenQuery: 'Can KAIRA remember earlier turns in a conversation?'
+    };
+  }
+
+  // 8. Single Speaker Architecture / Simultaneous Speaking
+  if (/\b(speak\s+at\s+the\s+same\s+time|ai\s+and\s+human.*at\s+the\s+same\s+time|both\s+talk\s+at\s+once|simultaneous\s+speech|overlapping\s+speech)\b/i.test(lower)) {
+    return {
+      matchedIntent: 'single_speaker_architecture',
+      rewrittenQuery: 'Can AI and a human agent speak at the same time?'
+    };
+  }
+
+  // 9. Supported Languages & Language Switching
+  if (/\b(change.*language\s+during|switch.*language\s+during|switch\s+language\s+while\s+on\s+the\s+call)\b/i.test(lower)) {
+    return {
+      matchedIntent: 'change_language_during_call',
+      rewrittenQuery: 'Can a caller change the language during a call?'
+    };
+  }
+  if (/\b(which\s+languages|what\s+languages|languages\s+are\s+supported|support.*regional\s+languages|languages\s+do\s+you\s+speak)\b/i.test(lower)) {
+    return {
+      matchedIntent: 'languages_supported',
+      rewrittenQuery: 'Which languages are currently supported?'
+    };
+  }
+
+  // 10. Human Takeover
+  if (/\b(agent\s+take\s+over|human\s+takeover|take\s+over\s+an\s+ai\s+call|takeover)\b/i.test(lower)) {
+    return {
+      matchedIntent: 'human_takeover',
+      rewrittenQuery: 'Can an agent take over an AI call?'
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Formats responses for natural, human-like voice delivery
+ */
+export function formatForVoice(text: string, includeFollowUp = true): string {
+  if (!text) return '';
+  let clean = text
+    .replace(/[*_#`~⚠️]/g, '') // remove markdown symbols and warning icons
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // remove markdown links
+    .replace(/^\s*[-•*]\s+/gm, '') // remove bullet points
+    .replace(/^\s*\d+\.\s+/gm, '') // remove numbered list prefixes
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (includeFollowUp) {
+    const lower = clean.toLowerCase();
+    const endsWithQuestion = clean.endsWith('?');
+    const alreadyAsksFollowUp = lower.includes('anything else') ||
+      lower.includes('connect you with') ||
+      lower.includes('transfer you') ||
+      lower.includes('how may i help') ||
+      lower.includes('how can i help') ||
+      lower.includes('let me know');
+
+    if (!endsWithQuestion && !alreadyAsksFollowUp && clean.length > 20) {
+      clean = `${clean} Is there anything else I can help you with?`;
+    }
+  }
+
+  return clean;
+}
 
 class KnowledgeService {
   private openai: OpenAI | null = null;
@@ -336,7 +561,7 @@ class KnowledgeService {
       }
     }
     // Barge-in / interruption (Q16)
-    if (/\b(interrupt|interruption|barge|barge-in|bargein|cut off)\b/i.test(lowerQuery)) {
+    if (/\b(interrupt|interruption|barge|barge-in|bargein|cut\s*off|cut\s+the\s+ai\s+off|cut\s+ai\s+off|cut.*off)\b/i.test(lowerQuery)) {
       if (/\b(interrupt|barge-in|bargein)\b/i.test(entryQuestionText)) {
         normalizedScore += 0.95;
       }
@@ -459,16 +684,33 @@ class KnowledgeService {
     return Math.min(1.0, normalizedScore);
   }
 
-  // Search Knowledge Base entries
+  // Search Knowledge Base entries with multi-candidate hybrid retrieval
   public async search(query: string, limit = 3): Promise<SearchResult[]> {
     const entries = await prisma.knowledgeEntry.findMany({
       include: { document: true }
     });
 
-    const scored: SearchResult[] = entries.map(entry => ({
-      entry,
-      score: this.calculateScore(query, entry)
-    }));
+    const candidates = [query];
+    const normalized = normalizeCustomerQuery(query);
+    if (normalized && normalized !== query.toLowerCase().trim()) {
+      candidates.push(normalized);
+    }
+    const rewrite = detectIntentRewrites(query);
+    if (rewrite?.rewrittenQuery && !candidates.includes(rewrite.rewrittenQuery)) {
+      candidates.push(rewrite.rewrittenQuery);
+    }
+
+    const scored: SearchResult[] = entries.map(entry => {
+      let maxScore = 0;
+      for (const cand of candidates) {
+        const s = this.calculateScore(cand, entry);
+        if (s > maxScore) maxScore = s;
+      }
+      return {
+        entry,
+        score: maxScore
+      };
+    });
 
     // Filter by threshold
     const sorted = scored
@@ -478,8 +720,81 @@ class KnowledgeService {
     return sorted.slice(0, limit);
   }
 
-  // Answer customer query with fast voice-optimized response
+  // Answer customer query with multi-question splitting & voice-optimized response
   public async answerQuery(
+    query: string,
+    history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
+    customerContext?: CustomerContext
+  ): Promise<GroundedResponse> {
+    const t0 = Date.now();
+    const trimmedQuery = (query || '').trim();
+    if (!trimmedQuery) {
+      return {
+        answer: "I am listening. How can I help you today?",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0,
+        latencyMs: Date.now() - t0
+      };
+    }
+
+    // 1. Multi-question identification & handling
+    const subQuestions = splitMultiQuestions(trimmedQuery);
+    if (subQuestions.length > 1) {
+      const responses: GroundedResponse[] = [];
+      for (const subQ of subQuestions) {
+        const subResp = await this.answerSingleQuery(subQ, history, customerContext);
+        responses.push(subResp);
+      }
+      return this.combineMultiQuestionResponses(subQuestions, responses, Date.now() - t0);
+    }
+
+    return this.answerSingleQuery(trimmedQuery, history, customerContext);
+  }
+
+  // Combine multiple sub-question responses into a cohesive, conversational answer
+  private combineMultiQuestionResponses(
+    questions: string[],
+    responses: GroundedResponse[],
+    totalLatencyMs: number
+  ): GroundedResponse {
+    const parts: string[] = [];
+    const allSources: GroundedSource[] = [];
+    let anyRequiresTransfer = false;
+    let allGrounded = true;
+
+    for (let i = 0; i < responses.length; i++) {
+      const resp = responses[i];
+      if (resp.requiresTransfer) anyRequiresTransfer = true;
+      if (!resp.isGrounded) allGrounded = false;
+      allSources.push(...resp.sources);
+
+      let cleanSubAns = formatForVoice(resp.answer, false);
+      if (cleanSubAns.endsWith('.')) cleanSubAns = cleanSubAns.slice(0, -1);
+
+      if (i === 0) {
+        parts.push(`Regarding your first question: ${cleanSubAns}.`);
+      } else {
+        const shortQ = questions[i].replace(/[?.,!]/g, '').trim();
+        parts.push(`Regarding your question about ${shortQ}: ${cleanSubAns}.`);
+      }
+    }
+
+    const combinedAnswer = formatForVoice(parts.join(' '), true);
+
+    return {
+      answer: combinedAnswer,
+      isGrounded: allGrounded,
+      requiresTransfer: anyRequiresTransfer,
+      sources: allSources,
+      confidence: Math.round(responses.reduce((acc, r) => acc + r.confidence, 0) / responses.length * 100) / 100,
+      latencyMs: totalLatencyMs
+    };
+  }
+
+  // Answer a single customer query with strict grounding and zero hallucinations
+  public async answerSingleQuery(
     query: string,
     history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
     customerContext?: CustomerContext
@@ -498,6 +813,33 @@ class KnowledgeService {
     }
 
     const cleanInput = trimmedQuery.toLowerCase().replace(/['".,!?;:]/g, '').trim();
+
+    // 0. Intent Rewrite Check for unsupplied/unsupported topics (e.g. refunds, student discounts)
+    const rewrite = detectIntentRewrites(trimmedQuery);
+    if (rewrite?.isUnsupportedOrNotSupplied && rewrite.directAnswerSnippet) {
+      await this.trackKnowledgeGap(trimmedQuery);
+      return {
+        answer: formatForVoice(rewrite.directAnswerSnippet, false),
+        isGrounded: false,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 0.95,
+        latencyMs: Date.now() - t0
+      };
+    }
+
+    // 0. Out-of-Domain Concept Guard (strictly prevents hallucinating non-existent products or topics like drones, groceries, crypto)
+    if (/\b(drone|drones|surveillance|fly|groceries|grocery|stock market|stock ticker|crypto|bitcoin|shares)\b/i.test(cleanInput)) {
+      await this.trackKnowledgeGap(trimmedQuery);
+      return {
+        answer: "I'm sorry, I couldn't find confirmed information about that in our available documents. Would you like me to connect you with one of our support agents?",
+        isGrounded: false,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 0.95,
+        latencyMs: Date.now() - t0
+      };
+    }
 
     // Strip leading conversational greetings if followed by an actual question
     const strippedQuery = cleanInput.replace(/^(hello|hi|hey|good\s+(morning|afternoon|evening)|howdy)\s*(there|kaira|assistant)?[\s,]+/i, '').trim();
@@ -524,12 +866,11 @@ class KnowledgeService {
 
     // 0B. Customer responds affirmatively or confirms identity to call introduction
     if (
-      /\b(tell\s+me\s+(?:more\s+)?about\s+kaira|what\s+is\s+kaira|what\s+does\s+kaira\s+do|about\s+kaira)\b/i.test(cleanInput) ||
-      /^(yes\s+speaking|speaking|this\s+is\s+[\w\s]+|yes\s+it\s+is|it\s+is|good\s+time|i\s+can\s+talk|tell\s+me\s+more|go\s+ahead|sure\s+go\s+ahead)$/i.test(cleanInput) ||
-      (isRespondingToCallIntro && /^(yes|yeah|yep|sure|ok|okay|alright|fine|sounds\s+good|hi|hello)(?:\s+speaking)?(?:\s*,\s*.*)?$/i.test(cleanInput))
+      /^(yes\s+speaking|speaking|this\s+is\s+[\w\s]+|yes\s+it\s+is|it\s+is|good\s+time|i\s+can\s+talk|go\s+ahead|sure\s+go\s+ahead)$/i.test(cleanInput) ||
+      (isRespondingToCallIntro && /^(yes|yeah|yep|sure|ok|okay|alright|fine|sounds\s+good)(?:\s+speaking)?(?:\s*,\s*.*)?$/i.test(cleanInput))
     ) {
       return {
-        answer: "Wonderful! KAIRA is an AI-powered enterprise customer communication platform. We deploy autonomous, bidirectional AI voice agents with sub-second latency and seamless human escalation. How does your business currently handle customer calls?",
+        answer: "Wonderful! How may I assist you with KAIRA customer support, our products, or voice services today?",
         isGrounded: true,
         requiresTransfer: false,
         sources: [{ id: 'kaira-overview', title: 'Company Overview & Mission', category: 'company' }],
@@ -1003,8 +1344,9 @@ ${contextText}`;
 
       // Built-in zero-latency Grounded answer from official 100 Q&A
       if (topMatch.entry.answer) {
+        const spokenAns = formatForVoice(topMatch.entry.answer, true);
         return {
-          answer: conflictCheck.isConflict ? `⚠️ Conflicting Information: ${topMatch.entry.answer}` : topMatch.entry.answer,
+          answer: conflictCheck.isConflict ? `Conflicting Information: ${spokenAns}` : spokenAns,
           isGrounded: true,
           requiresTransfer: false,
           sources: mappedSources,
@@ -1016,8 +1358,9 @@ ${contextText}`;
         const sentences = topMatch.entry.content.split(/[.\n]/).filter((s: string) => s.trim().length > 10);
         const answer = sentences.slice(0, 2).join('. ').trim() + '.';
         const rawAns = answer.length > 10 ? answer : topMatch.entry.content.slice(0, 200);
+        const spokenAns = formatForVoice(rawAns, true);
         return {
-          answer: conflictCheck.isConflict ? `⚠️ Conflicting Information: ${rawAns}` : rawAns,
+          answer: conflictCheck.isConflict ? `Conflicting Information: ${spokenAns}` : spokenAns,
           isGrounded: true,
           requiresTransfer: false,
           sources: mappedSources,
@@ -1038,7 +1381,7 @@ ${contextText}`;
     if (isCompanySpecificQuery) {
       await this.trackKnowledgeGap(trimmedQuery);
       return {
-        answer: "I apologize, but that specific company information is not currently available in our approved Knowledge Base. Would you like me to connect you with a human representative, or record a support inquiry for our team to follow up?",
+        answer: "I'm sorry, I couldn't find confirmed information about that in our available documents. Would you like me to connect you with one of our support agents?",
         isGrounded: false,
         requiresTransfer: false,
         sources: [],

@@ -1083,7 +1083,7 @@ export function initSocketServer(io: SocketIOServer) {
           createdAt: Date.now()
         });
 
-        // KAIRA AI Calling Agent Introduction (dynamically addresses whoever is logged in)
+        // KAIRA AI Customer Support Greeting (concise, natural, human-like)
         const hasSpecificName = Boolean(
           cleanDisplayName &&
           cleanDisplayName.toLowerCase() !== 'customer' &&
@@ -1094,9 +1094,9 @@ export function initSocketServer(io: SocketIOServer) {
 
         let greeting: string;
         if (hasSpecificName) {
-          greeting = `Hello! Am I speaking with ${cleanDisplayName}? I'm calling from Kaira, an AI-powered customer communication platform. We help businesses manage customer interactions through intelligent AI voice agents. I'm reaching out to tell you a little about Kaira and understand how your business currently handles customer communication. Is this a good time to talk?`;
+          greeting = `Hello ${cleanDisplayName}! Welcome to our support service. How can I help you today?`;
         } else {
-          greeting = `Hello! I'm calling from Kaira, an AI-powered customer communication platform. We help businesses manage customer interactions through intelligent AI voice agents. I'm reaching out to tell you a little about Kaira and understand how your business currently handles customer communication. Is this a good time to talk?`;
+          greeting = `Hello! Welcome to our support service. How can I help you today?`;
         }
 
         if (callLang !== 'en') {

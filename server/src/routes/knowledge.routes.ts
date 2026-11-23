@@ -7,6 +7,7 @@ import { authenticate, requireRole } from '../middleware/auth.js';
 import { validate, knowledgeEntrySchema } from '../middleware/validation.js';
 import { processUploadedDocument, reindexDocument, deleteDocument } from '../services/documentProcessor.js';
 import { translationService } from '../services/translation.js';
+import { kbCleanupService } from '../services/kbCleanup.service.js';
 
 const router = Router();
 
@@ -475,6 +476,28 @@ router.get('/file/:filename', authenticate, requireRole(['admin', 'agent']), asy
     res.sendFile(resolvedPath);
   } catch (err: any) {
     res.status(500).json({ error: 'Error retrieving requested file.' });
+  }
+});
+
+// 10. Scan Knowledge Base for duplicate PDFs (Dry-run report, Admin only)
+router.get('/cleanup/scan', authenticate, requireRole(['admin']), async (req: Request, res: Response) => {
+  try {
+    const report = await kbCleanupService.generateDuplicateReport();
+    res.json({ success: true, report });
+  } catch (err: any) {
+    console.error('[Knowledge] Duplicate scan error:', err);
+    res.status(500).json({ error: 'Failed to scan Knowledge Base for duplicates.' });
+  }
+});
+
+// 11. Execute safe, reversible duplicate cleanup (Admin only)
+router.post('/cleanup/execute', authenticate, requireRole(['admin']), async (req: Request, res: Response) => {
+  try {
+    const report = await kbCleanupService.executeSafeCleanup();
+    res.json({ success: true, report });
+  } catch (err: any) {
+    console.error('[Knowledge] Safe cleanup error:', err);
+    res.status(500).json({ error: 'Failed to execute safe duplicate cleanup.' });
   }
 });
 

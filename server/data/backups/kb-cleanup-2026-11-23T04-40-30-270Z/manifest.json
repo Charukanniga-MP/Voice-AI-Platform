@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-11-23T04:40:30.378Z",
+  "backupDir": "D:\\Voice agent\\server\\data\\backups\\kb-cleanup-2026-11-23T04-40-30-270Z",
+  "removedFiles": [
+    {
+      "originalPath": "D:\\Voice agent\\server\\data\\KAIRA_Voice_AI_Platform_100_FAQ.pdf",
+      "backupPath": "D:\\Voice agent\\server\\data\\backups\\kb-cleanup-2026-11-23T04-40-30-270Z\\KAIRA_Voice_AI_Platform_100_FAQ.pdf",
+      "fileName": "KAIRA_Voice_AI_Platform_100_FAQ.pdf"
+    }
+  ],
+  "removedDbRecords": []
+}
