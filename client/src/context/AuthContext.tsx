@@ -284,9 +284,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       body: JSON.stringify({ phone })
     });
 
-    const data = await res.json();
+    const data = await res.json().catch(() => ({} as any));
     if (!res.ok) {
-      throw new Error(data.error || 'Failed to dispatch verification code.');
+      throw new Error(data.error || `Failed to dispatch verification code (HTTP ${res.status}). Check that the backend is running and SMS is configured.`);
+    }
+
+    if (!data || typeof data !== 'object' || !data.success) {
+      throw new Error(data?.error || 'The server returned an invalid response while requesting the verification code.');
     }
 
     return data;
@@ -300,9 +304,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       body: JSON.stringify({ phone, otp, name })
     });
 
-    const data = await res.json();
+    const data = await res.json().catch(() => ({} as any));
     if (!res.ok) {
-      throw new Error(data.error || 'OTP verification failed.');
+      throw new Error(data.error || `OTP verification failed (HTTP ${res.status}). Check that the backend is running.`);
     }
 
     setToken(data.token);

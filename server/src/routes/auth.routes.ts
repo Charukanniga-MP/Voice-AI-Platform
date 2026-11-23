@@ -1485,8 +1485,8 @@ router.post('/otp/send', otpSendLimiter, async (req: Request, res: Response) => 
       provider: smsResult.provider
     });
   } catch (err: any) {
-    console.error('[OTP Send] Error:', err);
-    res.status(500).json({ error: 'Internal server error while dispatching OTP.' });
+    console.error('[OTP Send] Error:', err?.message || err);
+    res.status(500).json({ error: 'OTP request failed inside the server. Check the backend terminal for [OTP Send] details.' });
   }
 });
 
