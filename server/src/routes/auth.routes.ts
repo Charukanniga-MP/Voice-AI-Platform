@@ -1438,16 +1438,6 @@ router.post('/otp/send', otpSendLimiter, async (req: Request, res: Response) => 
     // 5 minutes OTP expiration
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
-    // Save OTP verification record
-    await prisma.otpVerification.create({
-      data: {
-        phone: normalizedPhone,
-        otpHash,
-        expiresAt,
-        ipAddress: req.ip || req.socket.remoteAddress || 'unknown'
-      }
-    });
-
     // Dispatch OTP through telecom SMS gateway
     const smsResult = await smsService.sendOtpSms(normalizedPhone, rawOtp);
 
@@ -1460,11 +1450,22 @@ router.post('/otp/send', otpSendLimiter, async (req: Request, res: Response) => 
         details: `SMS delivery failed for ${phoneValidation.masked}: ${smsResult.error}`
       });
 
-      res.status(502).json({
+      const statusCode = smsResult.provider === 'none' ? 503 : 502;
+      res.status(statusCode).json({
         error: smsResult.error || 'Failed to dispatch SMS through mobile telecom network. Please verify your number and try again.'
       });
       return;
     }
+
+    // Save OTP verification record only after successful telecom dispatch confirmation
+    await prisma.otpVerification.create({
+      data: {
+        phone: normalizedPhone,
+        otpHash,
+        expiresAt,
+        ipAddress: req.ip || req.socket.remoteAddress || 'unknown'
+      }
+    });
 
     await logSecurityEvent({
       eventType: 'OTP_SENT',
@@ -1485,8 +1486,8 @@ router.post('/otp/send', otpSendLimiter, async (req: Request, res: Response) => 
       provider: smsResult.provider
     });
   } catch (err: any) {
-    console.error('[OTP Send] Error:', err?.message || err);
-    res.status(500).json({ error: 'OTP request failed inside the server. Check the backend terminal for [OTP Send] details.' });
+    console.error('[OTP Send] Error occurred during OTP processing');
+    res.status(500).json({ error: 'Unable to process OTP request at this time. Please try again or contact support.' });
   }
 });
 

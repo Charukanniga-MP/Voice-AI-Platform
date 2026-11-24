@@ -1,9 +1,13 @@
 import { prisma } from '../db.js';
 import OpenAI from 'openai';
+import { embeddingService } from './embedding.service.js';
 
 interface SearchResult {
   entry: any;
   score: number;
+  semanticScore?: number;
+  bm25Score?: number;
+  lexicalScore?: number;
 }
 
 export interface CustomerContext {
@@ -42,6 +46,10 @@ export interface GroundedResponse {
   language?: string;
   latencyMs?: number;
   isConflict?: boolean;
+  supportingDocument?: string;
+  supportingPage?: number;
+  retrievedEvidence?: string;
+  handoverRecommendation?: boolean;
 }
 
 // Fallback message strictly required by zero-hallucination specification
@@ -181,7 +189,7 @@ export function normalizeCustomerQuery(text: string): string {
 
   // Strip conversational polite prefixes/fillers
   q = q.replace(/^(?:could\s+you\s+(?:please\s+)?tell\s+me|can\s+you\s+(?:please\s+)?(?:tell|explain|clarify)\s+(?:me\s+)?|i\s+would\s+like\s+to\s+know|i\s+want\s+to\s+(?:know|ask)|please\s+tell\s+me|tell\s+me|please\s+let\s+me\s+know|let\s+me\s+know|i\s+was\s+wondering|do\s+you\s+know|is\s+it\s+possible\s+to|i\s+paid\s+already[,\s]+)\s*/i, '');
-  
+
   return q.replace(/['".,!?;:]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -240,7 +248,7 @@ export function detectIntentRewrites(query: string): IntentRewrite | null {
 
   // 1. Refund / Payment Return / Reimbursement (e.g. "Can I get my money back?", "procedure to return payment", "I paid already. Can you give me a refund?")
   if (/\b(money\s*back|return\s+(?:my\s+)?payment|procedure\s+to\s+return|get\s+(?:my\s+)?payment\s+back|reimbursement|reimburse|apply\s+for\s+a\s+refund|refund\s+procedure|refund\s+policy|cancel\s+and\s+refund|cancellation\s+refund)\b/i.test(lower) ||
-      (/\b(?:refund|money\s*back)\b/i.test(lower) && /\b(?:paid|payment|return|back|cancel)\b/i.test(lower))) {
+    (/\b(?:refund|money\s*back)\b/i.test(lower) && /\b(?:paid|payment|return|back|cancel)\b/i.test(lower))) {
     return {
       matchedIntent: 'refund_reimbursement',
       rewrittenQuery: 'What is the refund and payment return policy?',
@@ -251,7 +259,7 @@ export function detectIntentRewrites(query: string): IntentRewrite | null {
 
   // 2. Business Hours / Timings / Opening & Closing (e.g. "When do you open?", "What time can I visit?", "Are you open in the evening?", "When does your office close?")
   if (/\b(when\s+do\s+you\s+open|what\s+time\s+can\s+i\s+visit|open\s+in\s+the\s+evening|when\s+does\s+(?:your\s+)?office\s+close|office\s+hours|business\s+hours|opening\s+hours|closing\s+hours|working\s+hours|working\s+schedule|schedule\s+to\s+visit)\b/i.test(lower) ||
-      (/\b(?:open|close|visit)\b/i.test(lower) && /\b(?:hours|timing|timings|evening|morning|schedule)\b/i.test(lower))) {
+    (/\b(?:open|close|visit)\b/i.test(lower) && /\b(?:hours|timing|timings|evening|morning|schedule)\b/i.test(lower))) {
     return {
       matchedIntent: 'business_hours',
       rewrittenQuery: "What are KAIRA's business hours?",
@@ -271,7 +279,7 @@ export function detectIntentRewrites(query: string): IntentRewrite | null {
   }
 
   // 4. Subscription Plans / Prices / Discounts (e.g. "Do you provide a 50% discount for students?", "How much does it cost?", "What are your prices?")
-  if (/\b(discount\s+for\s+students|student\s+discount|50%\s+discount|any\s+discount|discount\s+code|how\s+much\s+does\s+it\s+cost|what\s+are\s+your\s+subscription\s+plans|subscription\s+plans\s+or\s+prices|pricing\s+plans|what\s+are\s+your\s+prices|monthly\s+prices|what\s+do\s+you\s+charge)\b/i.test(lower)) {
+  if (/\b(discount\s+(?:for\s+)?(?:university\s+|college\s+)?students?|student\s+discount|50%\s+discount|any\s+discount|discount\s+code|how\s+much\s+does\s+it\s+cost|what\s+are\s+your\s+subscription\s+plans|subscription\s+plans\s+or\s+prices|pricing\s+plans|what\s+are\s+your\s+prices|monthly\s+prices|what\s+do\s+you\s+charge)\b/i.test(lower)) {
     const isDiscount = /\b(discount|student|50%)\b/i.test(lower);
     return {
       matchedIntent: 'subscription_pricing_discount',
@@ -280,6 +288,30 @@ export function detectIntentRewrites(query: string): IntentRewrite | null {
       directAnswerSnippet: isDiscount
         ? "I'm sorry, I couldn't find confirmed information about student discounts in our available documents. Would you like me to connect you with one of our support agents?"
         : "Pricing information was not supplied in our available documents. Refer to an authorized sales representative or official pricing document, or I can connect you with our team."
+    };
+  }
+
+  // 4B. Accessing other customer details & privacy (Q73)
+  if (/\b(access\s+another\s+customer|another\s+customer(?:'s)?\s+(?:details|data|calls|information|private\s+details))\b/i.test(lower)) {
+    return {
+      matchedIntent: 'access_another_customer_details',
+      rewrittenQuery: "73. Can one customer access another customer's details?"
+    };
+  }
+
+  // 4C. Call Recording by default / always recorded (Q80)
+  if (/\b(are\s+phone\s+calls\s+always\s+recorded|are\s+calls\s+always\s+recorded|calls\s+always\s+recorded|recorded\s+by\s+default|record\s+all\s+calls)\b/i.test(lower)) {
+    return {
+      matchedIntent: 'calls_always_recorded',
+      rewrittenQuery: '80. Are calls always recorded?'
+    };
+  }
+
+  // 4D. Select preferred language (Q27)
+  if (/\b(choose.*preferred\s+language|select.*preferred\s+language|pick.*language|select.*language)\b/i.test(lower)) {
+    return {
+      matchedIntent: 'select_preferred_language',
+      rewrittenQuery: '27. Can the customer select a preferred language?'
     };
   }
 
@@ -684,11 +716,94 @@ class KnowledgeService {
     return Math.min(1.0, normalizedScore);
   }
 
-  // Search Knowledge Base entries with multi-candidate hybrid retrieval
+  /**
+   * Compute BM25 scores for a list of tokens across entries
+   */
+  private computeBM25Scores(tokens: string[], entries: any[]): number[] {
+    const N = entries.length;
+    if (N === 0 || tokens.length === 0) return new Array(N).fill(0);
+
+    const docTokensList: string[][] = entries.map(e => {
+      const fullText = `${e.title || ''} ${e.question || ''} ${e.content || ''} ${e.keywords || ''}`;
+      return this.tokenize(fullText);
+    });
+
+    const docLengths = docTokensList.map(t => t.length);
+    const avgdl = docLengths.reduce((a, b) => a + b, 0) / Math.max(1, N);
+
+    const dfMap = new Map<string, number>();
+    for (const t of tokens) {
+      let count = 0;
+      for (const dTokens of docTokensList) {
+        if (dTokens.includes(t)) count++;
+      }
+      dfMap.set(t, count);
+    }
+
+    const k1 = 1.2;
+    const b = 0.75;
+    const rawScores = entries.map((_, i) => {
+      let score = 0;
+      const dTokens = docTokensList[i];
+      const dLen = docLengths[i];
+
+      for (const t of tokens) {
+        const df = dfMap.get(t) || 0;
+        const idf = Math.log(1 + (N - df + 0.5) / (df + 0.5));
+        const tf = dTokens.filter(x => x === t).length;
+        if (tf > 0) {
+          const num = tf * (k1 + 1);
+          const denom = tf + k1 * (1 - b + b * (dLen / Math.max(1, avgdl)));
+          score += idf * (num / denom);
+        }
+      }
+      return score;
+    });
+
+    return rawScores.map(s => (s > 0 ? s / (s + 5.0) : 0));
+  }
+
+  /**
+   * Format structured traceable grounded response
+   */
+  private createGroundedResponse(data: {
+    answer: string;
+    isGrounded: boolean;
+    requiresTransfer: boolean;
+    sources: GroundedSource[];
+    confidence: number;
+    language?: string;
+    latencyMs?: number;
+    isConflict?: boolean;
+    supportingDocument?: string;
+    supportingPage?: number;
+    retrievedEvidence?: string;
+    handoverRecommendation?: boolean;
+  }): GroundedResponse {
+    const topSource = data.sources && data.sources.length > 0 ? data.sources[0] : undefined;
+    return {
+      answer: data.answer,
+      isGrounded: data.isGrounded,
+      requiresTransfer: data.requiresTransfer,
+      sources: data.sources,
+      confidence: data.confidence,
+      language: data.language,
+      latencyMs: data.latencyMs,
+      isConflict: data.isConflict,
+      supportingDocument: data.supportingDocument ?? (topSource?.documentTitle || topSource?.documentFileName || topSource?.title),
+      supportingPage: data.supportingPage ?? (topSource?.pageNumber || (topSource ? 1 : undefined)),
+      retrievedEvidence: data.retrievedEvidence ?? (topSource?.snippet || topSource?.title),
+      handoverRecommendation: data.handoverRecommendation ?? (data.requiresTransfer || !data.isGrounded)
+    };
+  }
+
+  // Search Knowledge Base entries with multi-candidate hybrid retrieval (Semantic Cosine + BM25 + Lexical)
   public async search(query: string, limit = 3): Promise<SearchResult[]> {
     const entries = await prisma.knowledgeEntry.findMany({
       include: { document: true }
     });
+
+    if (entries.length === 0) return [];
 
     const candidates = [query];
     const normalized = normalizeCustomerQuery(query);
@@ -700,19 +815,73 @@ class KnowledgeService {
       candidates.push(rewrite.rewrittenQuery);
     }
 
-    const scored: SearchResult[] = entries.map(entry => {
-      let maxScore = 0;
-      for (const cand of candidates) {
-        const s = this.calculateScore(cand, entry);
-        if (s > maxScore) maxScore = s;
+    // Pre-parse or calculate vectors for entries
+    const entryVectors: number[][] = entries.map(e => {
+      if (e.embedding) {
+        try {
+          const parsed = JSON.parse(e.embedding);
+          if (Array.isArray(parsed) && parsed.length === embeddingService.vectorDimension) {
+            return parsed;
+          }
+        } catch (_) { }
       }
+      return embeddingService.generateLocalEmbedding(e.content || `${e.title} ${e.question}`);
+    });
+
+    const scored: SearchResult[] = entries.map((entry, idx) => {
+      let bestScore = 0;
+      let bestSemantic = 0;
+      let bestBm25 = 0;
+      let bestLexical = 0;
+
+      for (const cand of candidates) {
+        // 1. Semantic Cosine Similarity
+        const queryVec = embeddingService.generateLocalEmbedding(cand);
+        const cosine = embeddingService.cosineSimilarity(queryVec, entryVectors[idx]);
+
+        // 2. BM25 Score
+        const candTokens = this.getSignificantTokens(this.tokenize(cand));
+        const bm25List = this.computeBM25Scores(candTokens, [entry]);
+        const bm25 = bm25List[0] || 0;
+
+        // 3. Lexical / Rule Score
+        const lexical = this.calculateScore(cand, entry);
+
+        // Blended Hybrid Score:
+        // Preserves tuned lexical baseline while boosting with dense semantic cosine & BM25
+        let hybrid = lexical;
+
+        if (cosine >= 0.22) {
+          hybrid = Math.max(hybrid, cosine * 0.95);
+          hybrid += cosine * 0.15;
+        }
+
+        if (bm25 >= 0.10) {
+          hybrid += bm25 * 0.20;
+        }
+
+        if (lexical >= 0.85) {
+          hybrid = Math.max(hybrid, lexical);
+        }
+
+        if (hybrid > bestScore) {
+          bestScore = hybrid;
+          bestSemantic = cosine;
+          bestBm25 = bm25;
+          bestLexical = lexical;
+        }
+      }
+
       return {
         entry,
-        score: maxScore
+        score: Math.min(1.0, Math.round(bestScore * 1000) / 1000),
+        semanticScore: Math.round(bestSemantic * 1000) / 1000,
+        bm25Score: Math.round(bestBm25 * 1000) / 1000,
+        lexicalScore: Math.round(bestLexical * 1000) / 1000
       };
     });
 
-    // Filter by threshold
+    // Filter by threshold and rank
     const sorted = scored
       .filter(item => item.score > 0.18)
       .sort((a, b) => b.score - a.score);
@@ -783,18 +952,32 @@ class KnowledgeService {
 
     const combinedAnswer = formatForVoice(parts.join(' '), true);
 
-    return {
+    return this.createGroundedResponse({
       answer: combinedAnswer,
       isGrounded: allGrounded,
       requiresTransfer: anyRequiresTransfer,
       sources: allSources,
       confidence: Math.round(responses.reduce((acc, r) => acc + r.confidence, 0) / responses.length * 100) / 100,
-      latencyMs: totalLatencyMs
-    };
+      latencyMs: totalLatencyMs,
+      supportingDocument: allSources[0]?.documentTitle || allSources[0]?.documentFileName || allSources[0]?.title,
+      supportingPage: allSources[0]?.pageNumber || 1,
+      retrievedEvidence: allSources.map(s => s.snippet || s.title).slice(0, 2).join(' | '),
+      handoverRecommendation: anyRequiresTransfer || !allGrounded
+    });
   }
 
   // Answer a single customer query with strict grounding and zero hallucinations
   public async answerSingleQuery(
+    query: string,
+    history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
+    customerContext?: CustomerContext
+  ): Promise<GroundedResponse> {
+    const res = await this.internalAnswerSingleQuery(query, history, customerContext);
+    return this.createGroundedResponse(res);
+  }
+
+  // Internal single customer query processor
+  private async internalAnswerSingleQuery(
     query: string,
     history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
     customerContext?: CustomerContext
@@ -1478,7 +1661,7 @@ Do not guess or fabricate private corporate details.`;
 
     if (/\b(help|assist|guidance|what\s+can\s+you\s+help|features)\b/i.test(cleanInput)) {
       return {
-        answer: "I can assist you with KAIRA's voice agent features, subscription tiers, multi-language support across six languages, or connect you to our live team.",
+        answer: "I can assist you with KAIRA's voice agent features, subscription tiers, multi-language support across 21 languages, or connect you to our live team.",
         isGrounded: true,
         requiresTransfer: false,
         sources: [],

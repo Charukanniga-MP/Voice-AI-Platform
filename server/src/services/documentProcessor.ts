@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
 import { prisma } from '../db.js';
+import { embeddingService } from './embedding.service.js';
 
 export interface DocumentChunk {
   title: string;
@@ -15,6 +16,13 @@ export interface DocumentChunk {
   answer: string | null;
   content: string;
   keywords: string;
+  contentHash?: string;
+  embedding?: number[];
+}
+
+export interface ChunkingOptions {
+  chunkSize?: number;
+  chunkOverlap?: number;
 }
 
 export interface IngestionResult {
@@ -28,9 +36,9 @@ export interface IngestionResult {
 }
 
 /**
- * Calculates SHA-256 hash of a file for duplicate detection
+ * Calculates SHA-256 hash of a file or chunk for duplicate detection
  */
-export function calculateFileHash(buffer: Buffer): string {
+export function calculateFileHash(buffer: Buffer | string): string {
   return crypto.createHash('sha256').update(buffer).digest('hex');
 }
 
@@ -42,6 +50,7 @@ export function cleanDocumentText(text: string): string {
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
     // Remove repeated page headers and footers like "KAIRA Voice AI Platform | Starter FAQ Knowledge Base Page X"
+    // Note: preserves [[PAGE:X]] markers if present
     .replace(/KAIRA Voice AI Platform \| Starter FAQ Knowledge Base\s*(Page\s*\d+)?/gi, '')
     // Normalize excessive horizontal whitespace while preserving paragraph breaks
     .replace(/[ \t]+/g, ' ')
@@ -51,11 +60,36 @@ export function cleanDocumentText(text: string): string {
 }
 
 /**
+ * Extracts page number from text containing [[PAGE:X]] boundary markers
+ */
+function findPageForOffset(text: string, offset: number): number {
+  const pageMarkerRegex = /\[\[PAGE:(\d+)\]\]/g;
+  let match;
+  let currentPage = 1;
+  while ((match = pageMarkerRegex.exec(text)) !== null) {
+    if (match.index <= offset) {
+      currentPage = parseInt(match[1], 10);
+    } else {
+      break;
+    }
+  }
+  return currentPage;
+}
+
+/**
  * Smart chunker: parses structured Q&A, sections, or sliding windows with overlap
  */
-export function chunkDocumentText(rawText: string, baseTitle: string): DocumentChunk[] {
+export function chunkDocumentText(
+  rawText: string,
+  baseTitle: string,
+  options?: ChunkingOptions
+): DocumentChunk[] {
   const cleaned = cleanDocumentText(rawText);
   const chunks: DocumentChunk[] = [];
+  const seenChunkHashes = new Set<string>();
+
+  const CHUNK_SIZE = options?.chunkSize || 500;
+  const CHUNK_OVERLAP = options?.chunkOverlap || 100;
 
   // 1. Detect Sections (e.g. "A. KAIRA Overview and Core Capabilities", "Section 1: ...")
   const sectionSplitRegex = /(?:^|\n)(?:([A-Z]\.\s+[^\n]+)|(SECTION\s+[A-Z0-9]+[:\s]+[^\n]+))/gi;
@@ -69,8 +103,7 @@ export function chunkDocumentText(rawText: string, baseTitle: string): DocumentC
   }
 
   // 2. Parse Numbered Q&A Pattern (e.g., "1. What is KAIRA?\nKAIRA is a ...")
-  // or standard "Q: ... A: ..."
-  const numberedQARegex = /(?:^|\n)\s*(\d+)\.\s*([^\n\?]+\?)\s*\n+([\s\S]*?)(?=(?:\n\s*\d+\.\s*[^\n\?]+\?)|(?:\n[A-Z]\.\s+)|$)/gi;
+  const numberedQARegex = /(?:^|\n)\s*(\d+)\.\s*([^\n\?]+\?)\s*\n+([\s\S]*?)(?=(?:\n\s*\d+\.\s*[^\n\?]+\?)|(?:\n[A-Z]\.\s+)|(?:\n\s*\[\[PAGE:\d+\]\])|$)/gi;
   let qMatch;
   let qaFound = 0;
 
@@ -78,7 +111,8 @@ export function chunkDocumentText(rawText: string, baseTitle: string): DocumentC
     qaFound++;
     const num = qMatch[1];
     const questionText = qMatch[2].trim();
-    const answerText = qMatch[3].trim();
+    // Strip page boundary tags that might be inside answer
+    const answerText = qMatch[3].replace(/\[\[PAGE:\d+\]\]/g, '').trim();
     const fullQuestion = `${num}. ${questionText}`;
 
     // Find active section
@@ -104,8 +138,14 @@ export function chunkDocumentText(rawText: string, baseTitle: string): DocumentC
 
     if (lowerQ.includes('price') || lowerQ.includes('cost') || lowerQ.includes('plan')) category = 'pricing';
 
-    // Calculate approximate page (average ~1800 characters per printed page)
-    const pageNumber = Math.max(1, Math.min(7, Math.floor(qMatch.index / 1800) + 1));
+    // Calculate exact page number from page boundary markers or fallback
+    let pageNumber = findPageForOffset(cleaned, qMatch.index);
+    if (pageNumber <= 1 && cleaned.includes('[[PAGE:')) {
+      // In case Q1 starts right on page 2
+      pageNumber = Math.max(1, findPageForOffset(cleaned, qMatch.index));
+    } else if (!cleaned.includes('[[PAGE:')) {
+      pageNumber = Math.max(1, Math.min(7, Math.floor(qMatch.index / 1800) + 1));
+    }
 
     // Keyword extraction
     const kwTokens = (questionText + ' ' + answerText)
@@ -115,6 +155,15 @@ export function chunkDocumentText(rawText: string, baseTitle: string): DocumentC
       .filter(w => w.length > 2);
     const keywords = Array.from(new Set(kwTokens)).slice(0, 15).join(' ');
 
+    const chunkContent = `Section: ${activeSection}\nQuestion: ${fullQuestion}\nAnswer: ${answerText}`;
+    const chunkHash = calculateFileHash(chunkContent);
+
+    // Chunk deduplication: skip if identical content hash already chunked
+    if (seenChunkHashes.has(chunkHash)) {
+      continue;
+    }
+    seenChunkHashes.add(chunkHash);
+
     chunks.push({
       title: `${baseTitle} - Q${num}: ${questionText.slice(0, 60)}`,
       category,
@@ -122,33 +171,43 @@ export function chunkDocumentText(rawText: string, baseTitle: string): DocumentC
       pageNumber,
       question: fullQuestion,
       answer: answerText,
-      content: `Section: ${activeSection}\nQuestion: ${fullQuestion}\nAnswer: ${answerText}`,
-      keywords
+      content: chunkContent,
+      keywords,
+      contentHash: chunkHash
     });
   }
 
   // 3. Fallback to Paragraph Chunking with Sliding Window Overlap if no Q&A syntax found
   if (qaFound === 0) {
-    const paragraphs = cleaned.split(/\n\s*\n/).map(p => p.trim()).filter(p => p.length > 20);
-    const CHUNK_SIZE = 500;
-    const CHUNK_OVERLAP = 100;
+    const rawParagraphs = cleaned
+      .replace(/\[\[PAGE:\d+\]\]/g, '')
+      .split(/\n\s*\n/)
+      .map(p => p.trim())
+      .filter(p => p.length > 20);
 
     let rollingBuffer = '';
     let chunkIdx = 1;
 
-    for (const para of paragraphs) {
+    for (const para of rawParagraphs) {
       if ((rollingBuffer + '\n\n' + para).length > CHUNK_SIZE && rollingBuffer.length > 100) {
-        const pageNumber = Math.max(1, Math.floor(chunks.length / 3) + 1);
-        chunks.push({
-          title: `${baseTitle} - Part ${chunkIdx++}`,
-          category: 'general',
-          section: 'Main Content',
-          pageNumber,
-          question: null,
-          answer: rollingBuffer.slice(0, 300),
-          content: rollingBuffer,
-          keywords: baseTitle.toLowerCase()
-        });
+        const pageNumber = findPageForOffset(cleaned, cleaned.indexOf(para.slice(0, 30)));
+        const chunkHash = calculateFileHash(rollingBuffer);
+
+        if (!seenChunkHashes.has(chunkHash)) {
+          seenChunkHashes.add(chunkHash);
+          chunks.push({
+            title: `${baseTitle} - Part ${chunkIdx++}`,
+            category: 'general',
+            section: 'Main Content',
+            pageNumber: pageNumber > 0 ? pageNumber : Math.max(1, Math.floor(chunks.length / 3) + 1),
+            question: null,
+            answer: rollingBuffer.slice(0, 300),
+            content: rollingBuffer,
+            keywords: baseTitle.toLowerCase(),
+            contentHash: chunkHash
+          });
+        }
+
         // Retain overlap
         rollingBuffer = rollingBuffer.slice(-CHUNK_OVERLAP) + '\n\n' + para;
       } else {
@@ -157,16 +216,21 @@ export function chunkDocumentText(rawText: string, baseTitle: string): DocumentC
     }
 
     if (rollingBuffer.trim().length > 20) {
-      chunks.push({
-        title: `${baseTitle} - Part ${chunkIdx}`,
-        category: 'general',
-        section: 'Main Content',
-        pageNumber: Math.max(1, Math.floor(chunks.length / 3) + 1),
-        question: null,
-        answer: rollingBuffer.slice(0, 300),
-        content: rollingBuffer,
-        keywords: baseTitle.toLowerCase()
-      });
+      const chunkHash = calculateFileHash(rollingBuffer);
+      if (!seenChunkHashes.has(chunkHash)) {
+        seenChunkHashes.add(chunkHash);
+        chunks.push({
+          title: `${baseTitle} - Part ${chunkIdx}`,
+          category: 'general',
+          section: 'Main Content',
+          pageNumber: Math.max(1, Math.floor(chunks.length / 3) + 1),
+          question: null,
+          answer: rollingBuffer.slice(0, 300),
+          content: rollingBuffer,
+          keywords: baseTitle.toLowerCase(),
+          contentHash: chunkHash
+        });
+      }
     }
   }
 
@@ -176,6 +240,63 @@ export function chunkDocumentText(rawText: string, baseTitle: string): DocumentC
 /**
  * Ingest, extract, clean, chunk, and index an uploaded document
  */
+export async function extractDocumentText(filePath: string, fileType: string): Promise<{
+  text: string;
+  pageCount: number;
+  pages: Array<{ page: number; text: string }>;
+}> {
+  if (!fsSync.existsSync(filePath)) {
+    throw new Error(`File not found on disk at: ${filePath}`);
+  }
+
+  const dataBuffer = await fs.readFile(filePath);
+  if (dataBuffer.length < 10) {
+    throw new Error('File is corrupted or empty (less than 10 bytes).');
+  }
+
+  const ext = path.extname(filePath).toLowerCase();
+  const pages: Array<{ page: number; text: string }> = [];
+  let extractedText = '';
+
+  if (ext === '.pdf' || fileType.includes('pdf')) {
+    const customOptions = {
+      pagerender: async function (pageData: any) {
+        const textContent = await pageData.getTextContent({
+          normalizeWhitespace: false,
+          disableCombineTextItems: false
+        });
+        let lastY: number | null = null;
+        let pageText = '';
+        for (const item of textContent.items) {
+          if (lastY === null || Math.abs(item.transform[5] - lastY) > 5) {
+            pageText += '\n' + item.str;
+          } else {
+            pageText += ' ' + item.str;
+          }
+          lastY = item.transform[5];
+        }
+        pages.push({ page: pageData.pageIndex + 1, text: pageText.trim() });
+        return `\n\n[[PAGE:${pageData.pageIndex + 1}]]\n\n` + pageText;
+      }
+    };
+    const pdfData = await pdfParse(dataBuffer, customOptions);
+    extractedText = pdfData.text || '';
+  } else if (ext === '.docx' || fileType.includes('word') || fileType.includes('officedocument')) {
+    const result = await mammoth.extractRawText({ path: filePath });
+    extractedText = result.value || '';
+    pages.push({ page: 1, text: extractedText });
+  } else {
+    extractedText = dataBuffer.toString('utf-8');
+    pages.push({ page: 1, text: extractedText });
+  }
+
+  return {
+    text: extractedText,
+    pageCount: pages.length > 0 ? pages.length : 1,
+    pages
+  };
+}
+
 export async function processUploadedDocument(
   documentId: string,
   filePath: string,
@@ -190,6 +311,10 @@ export async function processUploadedDocument(
     }
 
     const dataBuffer = await fs.readFile(filePath);
+    if (dataBuffer.length < 10) {
+      throw new Error('File is corrupted or empty (less than 10 bytes).');
+    }
+
     const fileHash = calculateFileHash(dataBuffer);
 
     // Duplicate detection: check if another indexed document has identical content hash
@@ -222,18 +347,8 @@ export async function processUploadedDocument(
       };
     }
 
-    let extractedText = '';
-    const ext = path.extname(filePath).toLowerCase();
-
-    if (ext === '.pdf' || fileType.includes('pdf')) {
-      const pdfData = await pdfParse(dataBuffer);
-      extractedText = pdfData.text || '';
-    } else if (ext === '.docx' || fileType.includes('word') || fileType.includes('officedocument')) {
-      const result = await mammoth.extractRawText({ path: filePath });
-      extractedText = result.value || '';
-    } else {
-      extractedText = dataBuffer.toString('utf-8');
-    }
+    const extraction = await extractDocumentText(filePath, fileType);
+    const extractedText = extraction.text;
 
     if (!extractedText.trim()) {
       throw new Error('No readable text could be extracted from document.');
@@ -246,13 +361,21 @@ export async function processUploadedDocument(
       throw new Error('Failed to generate knowledge chunks from extracted document text.');
     }
 
+    // Pre-calculate embeddings for all chunks in batch
+    const chunkEmbeddings: string[] = [];
+    for (const chunk of chunks) {
+      const emb = await embeddingService.generateEmbedding(chunk.content);
+      chunkEmbeddings.push(JSON.stringify(emb));
+    }
+
     // Atomically remove prior entries for this document (if re-indexing) and insert new chunks
     await prisma.$transaction(async (tx) => {
       await tx.knowledgeEntry.deleteMany({
         where: { documentId }
       });
 
-      for (const chunk of chunks) {
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
         await tx.knowledgeEntry.create({
           data: {
             documentId,
@@ -263,7 +386,8 @@ export async function processUploadedDocument(
             question: chunk.question,
             answer: chunk.answer,
             content: chunk.content,
-            keywords: chunk.keywords
+            keywords: chunk.keywords,
+            embedding: chunkEmbeddings[i]
           }
         });
       }
@@ -281,7 +405,7 @@ export async function processUploadedDocument(
       });
     });
 
-    console.log(`[DocProcessor] Successfully indexed ${chunks.length} chunks for document: "${baseTitle}"`);
+    console.log(`[DocProcessor] Successfully indexed ${chunks.length} chunks with embeddings for document: "${baseTitle}"`);
 
     return {
       success: true,
@@ -336,9 +460,16 @@ export async function reindexDocument(documentId: string): Promise<IngestionResu
     // If physical file moved, re-index from saved extractedText
     if (doc.extractedText && doc.extractedText.length > 50) {
       const chunks = chunkDocumentText(doc.extractedText, doc.title);
+      const chunkEmbeddings: string[] = [];
+      for (const chunk of chunks) {
+        const emb = await embeddingService.generateEmbedding(chunk.content);
+        chunkEmbeddings.push(JSON.stringify(emb));
+      }
+
       await prisma.$transaction(async (tx) => {
         await tx.knowledgeEntry.deleteMany({ where: { documentId } });
-        for (const chunk of chunks) {
+        for (let i = 0; i < chunks.length; i++) {
+          const chunk = chunks[i];
           await tx.knowledgeEntry.create({
             data: {
               documentId,
@@ -349,7 +480,8 @@ export async function reindexDocument(documentId: string): Promise<IngestionResu
               question: chunk.question,
               answer: chunk.answer,
               content: chunk.content,
-              keywords: chunk.keywords
+              keywords: chunk.keywords,
+              embedding: chunkEmbeddings[i]
             }
           });
         }
@@ -409,6 +541,7 @@ export const documentProcessor = {
   calculateFileHash,
   cleanDocumentText,
   chunkDocumentText,
+  extractDocumentText,
   processUploadedDocument,
   reindexDocument,
   deleteDocument
