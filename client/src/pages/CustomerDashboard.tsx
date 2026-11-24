@@ -1535,7 +1535,7 @@ export const CustomerDashboard: React.FC = () => {
         {/* Central Call Actions & Active UI */}
         <div className="p-4 sm:p-8 text-center flex flex-col items-center justify-center">
           {callStatus === 'idle' && (
-            <div className="w-full max-w-2xl py-2 sm:py-4 space-y-4 sm:space-y-6">
+            <div className="w-full max-w-2xl py-2 sm:py-4">
               {/* PRIMARY HERO: Call KAIRA AI Voice Agent */}
               <div className="p-4 sm:p-6 lg:p-8 rounded-3xl border-2 border-emerald-200/80 bg-gradient-to-br from-emerald-50/60 via-white to-teal-50/40 text-left shadow-xl shadow-emerald-100/50 relative overflow-hidden transition-all hover:border-emerald-400">
                 <div className="absolute -top-12 -right-12 w-48 h-48 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
@@ -1580,28 +1580,6 @@ export const CustomerDashboard: React.FC = () => {
                     <span>{t('call.card_ai_btn')}</span>
                   </button>
                 </div>
-              </div>
-
-              {/* SECONDARY OPTION: Live Support Specialist */}
-              <div className="p-4 sm:p-5 rounded-2xl border border-slate-200/90 bg-white text-left flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center shrink-0">
-                    <Headphones className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-800">{t('call.card_agent_title')}</h4>
-                    <p className="text-[11px] text-slate-500">
-                      {t('call.card_agent_desc', { language: SUPPORTED_LANGUAGES[selectedLanguage]?.name, nativeName: SUPPORTED_LANGUAGES[selectedLanguage]?.nativeName })}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => requestRecordingConsent('agent')}
-                  className="px-4 py-2.5 rounded-xl border border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold cursor-pointer transition-colors flex items-center justify-center gap-2"
-                >
-                  <PhoneCall className="w-3.5 h-3.5 text-slate-500" />
-                  <span>{t('call.card_agent_btn')}</span>
-                </button>
               </div>
             </div>
           )}
