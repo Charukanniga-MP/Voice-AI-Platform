@@ -105,6 +105,7 @@ export const CustomerDashboard: React.FC = () => {
   const [textInput, setTextInput] = useState('');
 
   const lastSentQueryRef = useRef<{ text: string; time: number }>({ text: '', time: 0 });
+  const queryWatchdogRef = useRef<any>(null);
 
   // Agent/Admin details
   const [activePartner, setActivePartner] = useState<{
@@ -696,6 +697,12 @@ export const CustomerDashboard: React.FC = () => {
       clientMessageId?: string;
       latency?: { aiMs: number; totalRoundTripMs: number };
     }) => {
+      // Clear query watchdog timer since response arrived
+      if (queryWatchdogRef.current) {
+        clearTimeout(queryWatchdogRef.current);
+        queryWatchdogRef.current = null;
+      }
+
       // Calculate true round-trip latency
       const roundTrip = speechEndTimeRef.current ? (Date.now() - speechEndTimeRef.current) : (data.latency?.totalRoundTripMs || data.latency?.aiMs || 0);
       setLiveLatency(roundTrip);
@@ -706,6 +713,8 @@ export const CustomerDashboard: React.FC = () => {
       }
 
       transitionState('SPEAKING', 'AI response received, playing speech');
+      // Pause microphone listening during AI speech playback to prevent self-pickup through speakers
+      voiceService.pauseListening();
       setAiIsSpeaking(true);
       aiIsSpeakingRef.current = true;
       currentAiSpeechTextRef.current = data.answer;
@@ -762,6 +771,10 @@ export const CustomerDashboard: React.FC = () => {
 
     // 7B. AI speech interrupted (barge-in broadcast)
     socket.on('call:interrupted', () => {
+      if (queryWatchdogRef.current) {
+        clearTimeout(queryWatchdogRef.current);
+        queryWatchdogRef.current = null;
+      }
       console.log('[Customer] AI speech interrupted');
       voiceOutputController.stop();
       voiceService.cancelSpeech();
@@ -1146,6 +1159,17 @@ export const CustomerDashboard: React.FC = () => {
             language: currentActiveLang
           });
         } else {
+          if (queryWatchdogRef.current) {
+            clearTimeout(queryWatchdogRef.current);
+          }
+          queryWatchdogRef.current = setTimeout(() => {
+            if (conversationStateRef.current === 'PROCESSING' && (callStatusRef.current === 'active_ai')) {
+              console.warn('[CustomerDashboard] AI query response timeout watchdog triggered. Resuming listening...');
+              transitionState('LISTENING', 'Response timeout watchdog restored listening state');
+              startSpeechRecognition(callIdRef.current || activeCallId, false);
+            }
+          }, 9000);
+
           socket.emit('call:query', {
             callId: activeCallId,
             query: text.trim(),
@@ -1337,6 +1361,10 @@ export const CustomerDashboard: React.FC = () => {
   };
 
   const cleanupCall = () => {
+    if (queryWatchdogRef.current) {
+      clearTimeout(queryWatchdogRef.current);
+      queryWatchdogRef.current = null;
+    }
     transitionState('ENDED', 'Call cleanup and reset');
     setCallStatus('idle');
     setCallId(null);

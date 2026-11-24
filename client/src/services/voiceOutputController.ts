@@ -136,11 +136,21 @@ export class VoiceOutputController {
     const candWords = candNorm.split(/\s+/).filter(w => w.length >= 2);
     if (candWords.length === 0) return false;
 
-    // If AI is not actively speaking, short conversational customer answers (<= 8 words and < 45 chars)
-    // are genuine responses (e.g. "Yes speaking, tell me more about Kaira"), never acoustic feedback
-    if (!this.isSpeaking() && candWords.length <= 8 && candNorm.length < 45) {
+    // Common conversational words that should NOT count towards echo match thresholds
+    const COMMON_CONVERSATIONAL_WORDS = new Set([
+      'can', 'you', 'help', 'me', 'today', 'i', 'want', 'to', 'know', 'what', 'is', 'are', 'the',
+      'a', 'an', 'how', 'please', 'tell', 'do', 'in', 'on', 'at', 'for', 'with', 'and', 'my', 'your',
+      'we', 'our', 'of', 'about', 'some', 'any', 'there', 'this', 'that', 'hello', 'hi', 'hey'
+    ]);
+
+    // If AI is not actively speaking, short conversational customer answers (<= 10 words and < 60 chars)
+    // are genuine responses (e.g. "Yes speaking, tell me more about Kaira", "Can you help me today?"), never acoustic feedback
+    if (!this.isSpeaking() && candWords.length <= 10 && candNorm.length < 60) {
       return false;
     }
+
+    // Filter significant content words (excluding common stop words)
+    const candContentWords = candWords.filter(w => !COMMON_CONVERSATIONAL_WORDS.has(w) && w.length >= 3);
 
     // Collect all AI utterances to compare against:
     // 1. Currently active spoken text
@@ -163,15 +173,15 @@ export class VoiceOutputController {
       const targetNorm = norm(target);
       if (!targetNorm) continue;
 
-      // 1. Direct substring matching
-      if (targetNorm.includes(candNorm) || (candNorm.length >= 10 && candNorm.includes(targetNorm))) {
+      // 1. Direct substantial substring matching (at least 20 chars)
+      if ((candNorm.length >= 20 && targetNorm.includes(candNorm)) || (targetNorm.length >= 20 && candNorm.includes(targetNorm))) {
         return true;
       }
 
-      // 2. Continuous shingle substring match (16+ characters)
-      if (candNorm.length >= 16) {
-        for (let i = 0; i <= candNorm.length - 16; i += 5) {
-          const slice = candNorm.substring(i, i + 16);
+      // 2. Continuous shingle substring match (22+ characters)
+      if (candNorm.length >= 22) {
+        for (let i = 0; i <= candNorm.length - 22; i += 6) {
+          const slice = candNorm.substring(i, i + 22);
           if (targetNorm.includes(slice)) {
             return true;
           }
@@ -181,35 +191,37 @@ export class VoiceOutputController {
       const targetWords = new Set(targetNorm.split(/\s+/).filter(w => w.length >= 2));
       if (targetWords.size === 0) continue;
 
-      // 3. 3-word n-gram (trigram) matching
-      // If ANY 3-word phrase in candidate appears consecutively in target text
-      if (candWords.length >= 3) {
+      // 3. 3-word n-gram (trigram) matching with content word requirement
+      if (candWords.length >= 4) {
         let trigramMatches = 0;
         for (let i = 0; i <= candWords.length - 3; i++) {
           const trigram = `${candWords[i]} ${candWords[i + 1]} ${candWords[i + 2]}`;
           if (targetNorm.includes(trigram)) {
-            trigramMatches++;
+            // Ensure at least one word in the trigram is a significant content word
+            if (candContentWords.some(cw => trigram.includes(cw))) {
+              trigramMatches++;
+            }
           }
         }
-        // If 2 or more trigrams match, or 1 trigram matches for short candidate (<= 6 words)
-        if (trigramMatches >= 2 || (candWords.length <= 6 && trigramMatches >= 1)) {
+        if (trigramMatches >= 2) {
           return true;
         }
       }
 
-      // 4. Token overlap ratio (Jaccard-like)
-      const matchingWords = candWords.filter(w => targetWords.has(w));
-      const matchRatio = matchingWords.length / candWords.length;
+      // 4. Token overlap ratio using content words only
+      if (candContentWords.length >= 3) {
+        const matchingContentWords = candContentWords.filter(w => targetWords.has(w));
+        const contentRatio = matchingContentWords.length / candContentWords.length;
 
-      // When AI is actively playing: threshold is more sensitive (30% overlap or 2 words)
-      if (this.isSpeaking()) {
-        if (matchRatio >= 0.30 && matchingWords.length >= 2) {
-          return true;
-        }
-      } else {
-        // Cooldown period after AI speech: require at least 3 matching words and >= 40% ratio
-        if (matchRatio >= 0.40 && matchingWords.length >= 3) {
-          return true;
+        if (this.isSpeaking()) {
+          if (contentRatio >= 0.60 && matchingContentWords.length >= 3) {
+            return true;
+          }
+        } else {
+          // Cooldown period after AI speech: require high overlap of content words
+          if (contentRatio >= 0.70 && matchingContentWords.length >= 4) {
+            return true;
+          }
         }
       }
     }
@@ -377,13 +389,13 @@ export class VoiceOutputController {
               reason: `Server audio stream unavailable (${reason})`
             });
           }
-        } catch {}
+        } catch { }
 
         if (this.currentAudio) {
           try {
             this.currentAudio.pause();
             this.currentAudio.removeAttribute('src');
-          } catch {}
+          } catch { }
           this.currentAudio = null;
         }
         this.speakWithSpeechSynthesis(cleanText, targetLang, playbackId, options).then(resolve);

@@ -257,14 +257,20 @@ export function detectIntentRewrites(query: string): IntentRewrite | null {
     };
   }
 
-  // 2. Business Hours / Timings / Opening & Closing (e.g. "When do you open?", "What time can I visit?", "Are you open in the evening?", "When does your office close?")
-  if (/\b(when\s+do\s+you\s+open|what\s+time\s+can\s+i\s+visit|open\s+in\s+the\s+evening|when\s+does\s+(?:your\s+)?office\s+close|office\s+hours|business\s+hours|opening\s+hours|closing\s+hours|working\s+hours|working\s+schedule|schedule\s+to\s+visit)\b/i.test(lower) ||
-    (/\b(?:open|close|visit)\b/i.test(lower) && /\b(?:hours|timing|timings|evening|morning|schedule)\b/i.test(lower))) {
+  // 1B. Services overview and inquiry (e.g. "Hi, I want to know your services", "What services do you offer?", "I want to know about your services")
+  if (/\b(want\s+to\s+know\s+(?:about\s+)?(?:your|kaira(?:'s)?)\s+services|tell\s+me\s+about\s+your\s+services|what\s+services\s+do\s+you\s+(?:offer|provide|have)|what\s+are\s+your\s+services|what\s+services\s+kaira\s+offers?|know\s+about\s+kaira\s+services|know\s+your\s+services)\b/i.test(lower)) {
+    return {
+      matchedIntent: 'company_services_overview',
+      rewrittenQuery: "1. What is KAIRA and what is its main purpose?"
+    };
+  }
+
+  // 2. Business Hours / Timings / Opening & Closing (e.g. "When do you open?", "What time can I visit?", "Are you open in the evening?", "Can I contact you in the evening?", "What are your working hours?", "What time does your office close?")
+  if (/\b(when\s+do\s+you\s+open|what\s+time\s+can\s+i\s+visit|open\s+in\s+the\s+evening|when\s+does\s+(?:your\s+)?office\s+close|what\s+time\s+does\s+(?:your\s+)?(?:office\s+)?close|what\s+time\s+do\s+you\s+close|office\s+hours|business\s+hours|opening\s+hours|closing\s+hours|working\s+hours|working\s+schedule|schedule\s+to\s+visit|contact\s+(?:you\s+)?(?:in\s+the\s+)?(?:evening|morning|night|afternoon|weekend)|reach\s+(?:you\s+)?(?:in\s+the\s+)?(?:evening|morning|night|afternoon|weekend))\b/i.test(lower) ||
+    (/\b(?:open|close|visit|contact|reach|call)\b/i.test(lower) && /\b(?:hours|timing|timings|evening|morning|night|afternoon|schedule|weekend|saturday|sunday|time|times)\b/i.test(lower))) {
     return {
       matchedIntent: 'business_hours',
-      rewrittenQuery: "What are KAIRA's business hours?",
-      isUnsupportedOrNotSupplied: true,
-      directAnswerSnippet: "Business hours were not supplied in our available documents. Refer to the organization's officially published schedule, or I can connect you with a member of our human support team."
+      rewrittenQuery: "98. What are KAIRA's business hours?"
     };
   }
 
@@ -377,13 +383,17 @@ export function detectIntentRewrites(query: string): IntentRewrite | null {
 /**
  * Formats responses for natural, human-like voice delivery
  */
-export function formatForVoice(text: string, includeFollowUp = true): string {
+export function formatForVoice(text: string, includeFollowUp = false): string {
   if (!text) return '';
   let clean = text
     .replace(/[*_#`~⚠️]/g, '') // remove markdown symbols and warning icons
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // remove markdown links
     .replace(/^\s*[-•*]\s+/gm, '') // remove bullet points
     .replace(/^\s*\d+\.\s+/gm, '') // remove numbered list prefixes
+    .replace(/\bFAQ\b/g, 'frequently asked questions')
+    .replace(/&/g, 'and')
+    .replace(/@/g, 'at')
+    .replace(/\b(\d+)%/g, '$1 percent')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -1024,6 +1034,29 @@ class KnowledgeService {
       };
     }
 
+    // 0C. Services Inquiry / Overview Handling (e.g. "Hi, I want to know your services", "What services do you offer?")
+    if (rewrite?.matchedIntent === 'company_services_overview') {
+      const q1 = await prisma.knowledgeEntry.findFirst({
+        where: { question: { contains: 'What is KAIRA?' } },
+        include: { document: true }
+      });
+      return {
+        answer: "Of course! I'd be happy to help. KAIRA is a multilingual voice-based customer support platform providing autonomous AI assistance, live human agent call transfer, and customer support management. Could you tell me which service you would like to know about?",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: q1 ? [{
+          id: q1.id,
+          title: q1.question || 'What is KAIRA?',
+          category: q1.category || 'general',
+          pageNumber: q1.pageNumber || 1,
+          snippet: q1.answer || undefined,
+          documentTitle: q1.document?.title || 'KAIRA Knowledge Base'
+        }] : [],
+        confidence: 1.0,
+        latencyMs: Date.now() - t0
+      };
+    }
+
     // Strip leading conversational greetings if followed by an actual question
     const strippedQuery = cleanInput.replace(/^(hello|hi|hey|good\s+(morning|afternoon|evening)|howdy)\s*(there|kaira|assistant)?[\s,]+/i, '').trim();
     const effectiveQuery = strippedQuery.length >= 3 ? strippedQuery : cleanInput;
@@ -1071,6 +1104,19 @@ class KnowledgeService {
     if (isPureGreeting) {
       return {
         answer: "Hello! Welcome to KAIRA. I am your AI voice assistant. How can I help you today with our platform, pricing, or voice services?",
+        isGrounded: true,
+        requiresTransfer: false,
+        sources: [],
+        confidence: 1.0,
+        latencyMs: Date.now() - t0
+      };
+    }
+
+    // Gratitude and Polite Closing
+    const isGratitude = /^(thank\s*you|thanks|thank\s*you\s*so\s*much|thanks\s*a\s*lot|much\s*appreciated)[\s!.]*$/i.test(cleanInput);
+    if (isGratitude) {
+      return {
+        answer: "You're very welcome! I'm glad I could help. Please let me know if you have any other questions.",
         isGrounded: true,
         requiresTransfer: false,
         sources: [],
@@ -1527,7 +1573,11 @@ ${contextText}`;
 
       // Built-in zero-latency Grounded answer from official 100 Q&A
       if (topMatch.entry.answer) {
-        const spokenAns = formatForVoice(topMatch.entry.answer, true);
+        let rawAnswer = topMatch.entry.answer;
+        if (topMatch.entry.question.includes('98') || topMatch.entry.question.toLowerCase().includes('business hours')) {
+          rawAnswer = "Business hours were not supplied in our approved documentation. Please refer to our officially published schedule, or I would be happy to connect you with a member of our human support team.";
+        }
+        const spokenAns = formatForVoice(rawAnswer, false);
         return {
           answer: conflictCheck.isConflict ? `Conflicting Information: ${spokenAns}` : spokenAns,
           isGrounded: true,
@@ -1541,7 +1591,7 @@ ${contextText}`;
         const sentences = topMatch.entry.content.split(/[.\n]/).filter((s: string) => s.trim().length > 10);
         const answer = sentences.slice(0, 2).join('. ').trim() + '.';
         const rawAns = answer.length > 10 ? answer : topMatch.entry.content.slice(0, 200);
-        const spokenAns = formatForVoice(rawAns, true);
+        const spokenAns = formatForVoice(rawAns, false);
         return {
           answer: conflictCheck.isConflict ? `Conflicting Information: ${spokenAns}` : spokenAns,
           isGrounded: true,

@@ -125,26 +125,29 @@ export class TranslationService {
     }
 
     const lower = trimmed.toLowerCase();
+    const words = lower.split(/\s+/).filter(w => w.length >= 2);
+    // Never switch language on a single Latin word to prevent greeting-triggered false switches
+    if (words.length < 2) return 'en';
 
-    // Latin-script patterns
-    if (/\b(bonjour|merci|comment|aide|commande|compte|salut|s'il vous plait)\b/.test(lower)) return 'fr';
-    if (/\b(hola|gracias|por favor|como|buenos|dias|tardes|ayuda|pedido|cuenta)\b/.test(lower)) return 'es';
-    if (/\b(hallo|guten|danke|bitte|wie|hilfe|bestellung|konto)\b/.test(lower)) return 'de';
-    if (/\b(ciao|buongiorno|grazie|prego|aiuto|ordine|conto)\b/.test(lower)) return 'it';
-    if (/\b(ol[aá]|obrigad[oa]|por favor|ajuda|pedido|conta|voc[eê]|pre[cç]os?|quais)\b/i.test(lower) || /[\u00E3\u00F5\u00E7]/.test(lower)) return 'pt';
-    if (/\b(merhaba|tesekkur|lutfen|nasil|yardim|siparis|hesap)\b/.test(lower)) return 'tr';
-    if (/\b(halo|terima kasih|tolong|bagaimana|bantuan|pesanan|akun)\b/.test(lower)) return 'id';
-    if (/\b(xin ch[aà]o|c[aá]m [oơ]n|l[aà]m [oơ]n|th[eế] n[aà]o|gi[uú]p [dđ][oõỡ]|b[aạ]n)\b/i.test(lower)) return 'vi';
+    // Latin-script multi-word patterns
+    if (/\b(bonjour\s+comment|s'il\s+vous\s+pla[iî]t|je\s+voudrais|merci\s+beaucoup|aidez\s+moi)\b/.test(lower)) return 'fr';
+    if (/\b(por\s+favor|buenos\s+d[ií]as|buenas\s+tardes|c[oó]mo\s+est[aá]|muchas\s+gracias)\b/.test(lower)) return 'es';
+    if (/\b(guten\s+tag|guten\s+morgen|vielen\s+dank|bitte\s+sch[oö]n|wie\s+geht)\b/.test(lower)) return 'de';
+    if (/\b(buon\s+giorno|buona\s+sera|per\s+favore|molte\s+grazie|come\s+sta)\b/.test(lower)) return 'it';
+    if (/\b(por\s+favor|muito\s+obrigad[oa]|bom\s+dia|boa\s+tarde|como\s+vai)\b/.test(lower)) return 'pt';
+    if (/\b(te[sş]ekk[uü]r\s+ederim|l[uü]tfen\s+yard[iı]m|nas[iı]ls[iı]n[iı]z)\b/.test(lower)) return 'tr';
+    if (/\b(terima\s+kasih|tolong\s+saya|bagaimana\s+cara|selamat\s+pagi)\b/.test(lower)) return 'id';
+    if (/\b(xin\s+ch[aà]o|c[aá]m\s+[oơ]n|l[aà]m\s+[oơ]n)\b/.test(lower)) return 'vi';
 
-    // Transliterated Indian language patterns
-    if (/\b(vanakkam|ennudaiya|thaniya|solunga|nandri|eppadi|ungalukku|thirumba)\b/.test(lower)) return 'ta';
-    if (/\b(namaste|dhanyavad|kaise|kripya|apka|madad|bataiye|samajh)\b/.test(lower)) return 'hi';
-    if (/\b(namaskaramu|ela|unnaru|dhanyavadalu|meeru|sahayam)\b/.test(lower)) return 'te';
-    if (/\b(namaskara|hegidira|dhanyavada|enu|nimma|sahaya)\b/.test(lower)) return 'kn';
-    if (/\b(namaskaram|enthoke|vishesham|nandi|sahayikkan|ningalude)\b/.test(lower)) return 'ml';
-    if (/\b(nomoshkar|dhonnobad|kemon|achen|amake|sahajjo)\b/.test(lower)) return 'bn';
-    if (/\b(namaskar|kasa|kay|ahe|nahi|dhanyavad)\b/.test(lower)) return 'mr';
-    if (/\b(marhaba|shukran|afwan|kayf|halik|musaada)\b/.test(lower)) return 'ar';
+    // Transliterated Indian language multi-word patterns (require at least 2 distinct language tokens)
+    if (/\b(vanakkam|solunga|eppadi|ungalukku|nandri)\b/.test(lower) && /\b(ennudaiya|thaniya|thirumba|irukku|panriga)\b/.test(lower)) return 'ta';
+    if (/\b(namaste|kaise|kripya|madad|bataiye)\b/.test(lower) && /\b(apka|samajh|kahiye|chahiye|karein)\b/.test(lower)) return 'hi';
+    if (/\b(namaskaramu|ela|unnaru|dhanyavadalu|meeru)\b/.test(lower) && /\b(sahayam|cheyandi|undi|kavali)\b/.test(lower)) return 'te';
+    if (/\b(namaskara|hegidira|dhanyavada|enu|nimma)\b/.test(lower) && /\b(sahaya|madi|beku|ide)\b/.test(lower)) return 'kn';
+    if (/\b(namaskaram|enthoke|vishesham|nandi|sahayikkan)\b/.test(lower) && /\b(ningalude|undu|venam|ariyamo)\b/.test(lower)) return 'ml';
+    if (/\b(nomoshkar|dhonnobad|kemon|achen|amake)\b/.test(lower) && /\b(sahajjo|korun|bolun|lagbe)\b/.test(lower)) return 'bn';
+    if (/\b(namaskar|kasa|kay|ahe|nahi)\b/.test(lower) && /\b(dhanyavad|bolto|kay)\b/.test(lower)) return 'mr';
+    if (/\b(marhaba|shukran|afwan)\b/.test(lower) && /\b(kayf|halik|musaada)\b/.test(lower)) return 'ar';
 
     return 'en';
   }
