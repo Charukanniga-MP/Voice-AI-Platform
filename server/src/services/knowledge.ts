@@ -2,12 +2,13 @@ import { prisma } from '../db.js';
 import OpenAI from 'openai';
 import { embeddingService } from './embedding.service.js';
 
-interface SearchResult {
+export interface SearchResult {
   entry: any;
   score: number;
   semanticScore?: number;
   bm25Score?: number;
   lexicalScore?: number;
+  rrfScore?: number;
 }
 
 export interface CustomerContext {
@@ -52,8 +53,8 @@ export interface GroundedResponse {
   handoverRecommendation?: boolean;
 }
 
-// Fallback message strictly required by zero-hallucination specification
-export const FALLBACK_MESSAGE = "I'm sorry, I couldn't find confirmed information about that in our available documents. Would you like me to connect you with one of our support agents?";
+// Fallback message strictly required by Phase 3 zero-hallucination specification
+export const FALLBACK_MESSAGE = "I don't have that information in my available company documents. Would you like me to connect you with one of our support agents?";
 export const COPILOT_NOT_FOUND_MESSAGE = "Information not found in the approved Knowledge Base.";
 
 const STOP_WORDS = new Set([
@@ -79,6 +80,8 @@ function normalizeToken(token: string): string {
   if (t === 'langauge' || t === 'langauges') return 'language';
   if (t === 'suport' || t === 'suports') return 'support';
   if (t === 'interupt') return 'interrupt';
+  if (t === 'webrtc' || t === 'web-rtc') return 'webrtc';
+  if (t === 'socketio' || t === 'socket-io') return 'socketio';
   if (t.endsWith('ing') && t.length > 5) t = t.slice(0, -3);
   else if (t.endsWith('ies') && t.length > 4) t = t.slice(0, -3) + 'y';
   else if (t.endsWith('es') && t.length > 4) t = t.slice(0, -2);
@@ -157,7 +160,7 @@ const SYNONYMS: Record<string, string[]> = {
   transcript: ['transcripts', 'transcription'],
   transcripts: ['transcript', 'transcription'],
   transcription: ['transcript', 'transcripts'],
-  takeover: ['handover', 'take over', 'intervene'],
+  takeover: ['handover', 'take over', 'intervene', 'escalate'],
   handover: ['takeover', 'take over', 'escalate'],
   choose: ['select', 'preferred', 'pick', 'change'],
   pick: ['select', 'preferred', 'choose', 'change'],
@@ -187,6 +190,14 @@ export function normalizeCustomerQuery(text: string): string {
     .replace(/\bit's\b/g, 'it is')
     .replace(/\byou're\b/g, 'you are');
 
+  // Common STT corrections
+  q = q
+    .replace(/\bweb\s+rtc\b/g, 'webrtc')
+    .replace(/\bsocket\s+io\b/g, 'socketio')
+    .replace(/\bbarge\s+in\b/g, 'barge-in')
+    .replace(/\b(?:cut\s*(?:the\s+ai\s+)?off|cut\s+off|cut\s+you\s+off)\b/g, 'interrupt')
+    .replace(/\bsub\s+300\s*(?:ms)?\b/g, 'sub-300ms');
+
   // Strip conversational polite prefixes/fillers
   q = q.replace(/^(?:could\s+you\s+(?:please\s+)?tell\s+me|can\s+you\s+(?:please\s+)?(?:tell|explain|clarify)\s+(?:me\s+)?|i\s+would\s+like\s+to\s+know|i\s+want\s+to\s+(?:know|ask)|please\s+tell\s+me|tell\s+me|please\s+let\s+me\s+know|let\s+me\s+know|i\s+was\s+wondering|do\s+you\s+know|is\s+it\s+possible\s+to|i\s+paid\s+already[,\s]+)\s*/i, '');
 
@@ -212,8 +223,6 @@ export function splitMultiQuestions(query: string): string[] {
     const match = clean.match(multiPattern);
     if (match && match.index !== undefined) {
       const part1 = clean.slice(0, match.index).trim();
-      const connectorLen = match[0].length;
-      // Extract the second clause starting with the question word
       const wordsInMatch = match[0].trim().split(/\s+/);
       const questionWord = wordsInMatch[wordsInMatch.length - 1];
       const part2StartIndex = match.index + match[0].toLowerCase().indexOf(questionWord.toLowerCase());
@@ -241,251 +250,75 @@ export interface IntentRewrite {
 }
 
 /**
- * Intelligent intent recognition and question rewriting for varied customer phrasings
+ * Lightweight intent recognition and question rewrites for varied customer phrasings
  */
 export function detectIntentRewrites(query: string): IntentRewrite | null {
   const lower = query.toLowerCase().replace(/[^\w\s-]/g, ' ').replace(/\s+/g, ' ').trim();
 
-  // 1. Refund / Payment Return / Reimbursement (e.g. "Can I get my money back?", "procedure to return payment", "I paid already. Can you give me a refund?")
-  if (/\b(money\s*back|return\s+(?:my\s+)?payment|procedure\s+to\s+return|get\s+(?:my\s+)?payment\s+back|reimbursement|reimburse|apply\s+for\s+a\s+refund|refund\s+procedure|refund\s+policy|cancel\s+and\s+refund|cancellation\s+refund)\b/i.test(lower) ||
+  // 1. Refund / Payment Return / Reimbursement
+  if (/\b(can\s+kaira\s+answer\s+refund\s+questions)\b/i.test(lower)) {
+    return {
+      matchedIntent: 'can_kaira_answer_refund',
+      rewrittenQuery: '70. Can KAIRA answer refund questions?'
+    };
+  }
+  if (/\b(money\s*back|return\s+(?:my\s+)?payment|procedure\s+to\s+return|get\s+(?:my\s+)?payment\s+back|reimbursement|reimburse|apply\s+for\s+a\s+refund|refund\s+procedure|refund\s+policy|cancel\s+and\s+refund|cancellation\s+refund|refund\s+for\s+my\s+recent\s+payment)\b/i.test(lower) ||
     (/\b(?:refund|money\s*back)\b/i.test(lower) && /\b(?:paid|payment|return|back|cancel)\b/i.test(lower))) {
     return {
       matchedIntent: 'refund_reimbursement',
       rewrittenQuery: 'What is the refund and payment return policy?',
       isUnsupportedOrNotSupplied: true,
-      directAnswerSnippet: "I'm sorry, I couldn't find confirmed information about refund procedures or payment returns in our available documents. Would you like me to connect you with one of our support agents to assist you?"
+      directAnswerSnippet: "I don't have that information in my available company documents regarding refunds or payment returns. Would you like me to connect you with one of our support agents to assist you?"
     };
   }
 
-  // 1B. Services overview and inquiry (e.g. "Hi, I want to know your services", "What services do you offer?", "I want to know about your services")
-  if (/\b(want\s+to\s+know\s+(?:about\s+)?(?:your|kaira(?:'s)?)\s+services|tell\s+me\s+about\s+your\s+services|what\s+services\s+do\s+you\s+(?:offer|provide|have)|what\s+are\s+your\s+services|what\s+services\s+kaira\s+offers?|know\s+about\s+kaira\s+services|know\s+your\s+services)\b/i.test(lower)) {
+  // 2. Student Discount (not supplied in document)
+  if (/\b(student\s+discount|50%\s+discount|discount\s+(?:for\s+)?(?:university\s+|college\s+)?students?)\b/i.test(lower)) {
     return {
-      matchedIntent: 'company_services_overview',
-      rewrittenQuery: "1. What is KAIRA and what is its main purpose?"
+      matchedIntent: 'student_discount',
+      rewrittenQuery: 'Do you offer student discounts?',
+      isUnsupportedOrNotSupplied: true,
+      directAnswerSnippet: "I don't have that information in my available company documents regarding student discounts. Would you like me to connect you with a support agent?"
     };
   }
 
-  // 1C. Platform Overview / What is KAIRA / Explain Platform
-  if (/\b(what\s+is\s+kaira|explain\s+(?:the\s+|your\s+)?platform|can\s+you\s+explain\s+your\s+platform|tell\s+me\s+about\s+kaira|introduce\s+kaira|what\s+does\s+kaira\s+do|about\s+kaira)\b/i.test(lower)) {
+  // 3. Office Location / Physical Address / HQ (Q99)
+  if (/\b(where\s+is\s+(?:your\s+)?office|where\s+(?:is\s+)?kaira(?:'s)?\s+office|office\s+located|headquarters\s+address|hq\s+address|corporate\s+address|office\s+address|where\s+are\s+you\s+located|physical\s+address|where\s+can\s+i\s+visit\s+your\s+office)\b/i.test(lower)) {
     return {
-      matchedIntent: 'platform_overview',
-      rewrittenQuery: "1. What is KAIRA?"
+      matchedIntent: 'office_location',
+      rewrittenQuery: "99. Where is KAIRA's office located?"
     };
   }
 
-  // 1D. Problem Solved by KAIRA
-  if (/\b(what\s+problem\s+does\s+kaira\s+solve|what\s+problems?\s+(?:do\s+you|does\s+kaira|does\s+this\s+platform)\s+solve|why\s+do\s+we\s+need\s+kaira|purpose\s+of\s+kaira|main\s+purpose\s+of\s+kaira|what\s+problem\s+is\s+solved)\b/i.test(lower)) {
+  // 4. Subscription Plans / Prices (Q100)
+  if (/\b(subscription\s+plans?|monthly\s+subscription|subscription\s+prices?|how\s+much\s+does\s+it\s+cost|what\s+are\s+your\s+subscription\s+plans|subscription\s+plans\s+or\s+prices|pricing\s+plans|what\s+are\s+your\s+prices|monthly\s+prices|what\s+do\s+you\s+charge)\b/i.test(lower)) {
     return {
-      matchedIntent: 'problem_solved',
-      rewrittenQuery: "2. What is the main purpose of KAIRA?"
+      matchedIntent: 'subscription_pricing',
+      rewrittenQuery: "100. What are KAIRA's subscription plans or prices?"
     };
   }
 
-  // 1E. Main Platform Features
-  if (/\b(what\s+are\s+the\s+main\s+features|main\s+features|key\s+features|core\s+features|platform\s+features|features\s+of\s+kaira|what\s+features\s+does\s+kaira\s+have)\b/i.test(lower)) {
+  // 5. Official Contact Details (Q97)
+  if (/\b(official\s+support\s+phone|support\s+email|contact\s+details|phone\s+number\s+or\s+email|what\s+is\s+your\s+phone\s+number|official\s+email\s+address|customer\s+care\s+number)\b/i.test(lower)) {
     return {
-      matchedIntent: 'main_features',
-      rewrittenQuery: "1. What is KAIRA and what is its main purpose?"
+      matchedIntent: 'contact_details',
+      rewrittenQuery: "97. What is KAIRA's official support phone number or email?"
     };
   }
 
-  // 1F. Technologies Used
-  if (/\b(what\s+technologies\s+are\s+used|what\s+tech\s+stack|technology\s+stack|tech\s+stack\s+used|which\s+technologies\s+(?:are|do\s+you)\s+use|what\s+tools\s+and\s+technologies)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'technologies_used',
-      rewrittenQuery: "35. What technology provides live audio calling?"
-    };
-  }
-
-  // 1G. Why specific technologies were chosen
-  if (/\b(why\s+(?:are|were)\s+these\s+technologies\s+used|why\s+choose\s+these\s+technologies|why\s+use\s+webrtc|why\s+use\s+socket\s*io|why\s+was\s+this\s+tech\s+stack\s+chosen|why\s+did\s+you\s+choose\s+these\s+technologies)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'why_technologies_used',
-      rewrittenQuery: "35. What technology provides live audio calling?"
-    };
-  }
-
-  // 1H. How AI Voice Assistant works
-  if (/\b(how\s+does\s+the\s+(?:ai\s+)?voice\s+assistant\s+work|how\s+does\s+voice\s+assistant\s+work|how\s+does\s+the\s+voice\s+bot\s+work|voice\s+assistant\s+workflow|how\s+does\s+the\s+assistant\s+work)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'how_voice_assistant_works',
-      rewrittenQuery: "3. Can customers speak instead of typing?"
-    };
-  }
-
-  // 1I. How Speech Recognition works
-  if (/\b(how\s+does\s+speech\s+recognition\s+work|how\s+does\s+stt\s+work|how\s+do\s+you\s+convert\s+speech\s+to\s+text|speech\s+to\s+text\s+process|how\s+does\s+voice\s+recognition\s+work)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'how_speech_recognition_works',
-      rewrittenQuery: "31. Does KAIRA convert speech into text?"
-    };
-  }
-
-  // 1J. How Knowledge Base / RAG works
-  if (/\b(how\s+does\s+the\s+knowledge\s+base\s+work|how\s+does\s+kb\s+work|how\s+does\s+rag\s+work|how\s+do\s+you\s+answer\s+from\s+pdf|how\s+does\s+pdf\s+retrieval\s+work)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'how_knowledge_base_works',
-      rewrittenQuery: "64. What is the Knowledge Base?"
-    };
-  }
-
-  // 1K. How Human Handover / Takeover works
-  if (/\b(how\s+does\s+(?:human[\s-]+)?(?:agent[\s-]+)?(?:handover|handoff|takeover|escalation)\s+work|how\s+does\s+human[\s-]+handover\s+work|how\s+do\s+agents\s+take\s+over|how\s+does\s+transfer\s+work)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'how_handover_works',
-      rewrittenQuery: "12. Can an agent take over an AI call?"
-    };
-  }
-
-  // 1L. Security Features
-  if (/\b(what\s+security\s+features\s+are\s+implemented|security\s+features|how\s+is\s+data\s+secured|how\s+do\s+you\s+protect\s+customer\s+data|security\s+and\s+privacy|security\s+measures|how\s+secure\s+is\s+kaira)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'security_features',
-      rewrittenQuery: "83. How does KAIRA protect customer information?"
-    };
-  }
-
-  // 1M. Current Limitations
-  if (/\b(what\s+are\s+the\s+current\s+limitations|current\s+limitations|what\s+are\s+the\s+limitations|what\s+can\s+kaira\s+not\s+do|known\s+limitations|weaknesses\s+of\s+kaira)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'current_limitations',
-      rewrittenQuery: "90. Does KAIRA guarantee perfect speech recognition?"
-    };
-  }
-
-  // 1N. Customer Workflow
-  if (/\b(what\s+is\s+the\s+customer\s+workflow|customer\s+workflow|customer\s+journey|how\s+do\s+customers\s+use\s+kaira|customer\s+process)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'customer_workflow',
-      rewrittenQuery: "75. What can customers do in the customer dashboard?"
-    };
-  }
-
-  // 1O. Agent Workflow
-  if (/\b(what\s+is\s+the\s+agent\s+workflow|agent\s+workflow|agent\s+journey|how\s+do\s+agents\s+use\s+kaira|agent\s+process)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'agent_workflow',
-      rewrittenQuery: "76. What can agents do in the agent dashboard?"
-    };
-  }
-
-  // 1P. Admin Workflow
-  if (/\b(what\s+is\s+the\s+admin\s+workflow|admin\s+workflow|how\s+do\s+admins\s+use\s+kaira|administrator\s+workflow|admin\s+process)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'admin_workflow',
-      rewrittenQuery: "77. What can administrators do in the admin dashboard?"
-    };
-  }
-
-  // 2. Business Hours / Timings / Opening & Closing (e.g. "When do you open?", "What time can I visit?", "Are you open in the evening?", "Can I contact you in the evening?", "What are your working hours?", "What time does your office close?")
-  if (/\b(when\s+do\s+you\s+open|what\s+time\s+can\s+i\s+visit|open\s+in\s+the\s+evening|when\s+does\s+(?:your\s+)?office\s+close|what\s+time\s+does\s+(?:your\s+)?(?:office\s+)?close|what\s+time\s+do\s+you\s+close|office\s+hours|business\s+hours|opening\s+hours|closing\s+hours|working\s+hours|working\s+schedule|schedule\s+to\s+visit|contact\s+(?:you\s+)?(?:in\s+the\s+)?(?:evening|morning|night|afternoon|weekend)|reach\s+(?:you\s+)?(?:in\s+the\s+)?(?:evening|morning|night|afternoon|weekend))\b/i.test(lower) ||
-    (/\b(?:open|close|visit|contact|reach|call)\b/i.test(lower) && /\b(?:hours|timing|timings|evening|morning|night|afternoon|schedule|weekend|saturday|sunday|time|times)\b/i.test(lower))) {
+  // 6. Operating Hours (Q98)
+  if (/\b(when\s+(?:is|are|do)\s+(?:the\s+|your\s+)?(?:office\s+)?(?:open|closed?)|when\s+do\s+you\s+open|what\s+time\s+can\s+i\s+visit|open\s+in\s+the\s+evening|when\s+does\s+(?:your\s+)?office\s+close|what\s+time\s+does\s+(?:your\s+)?(?:office\s+)?(?:open|close)|what\s+time\s+do\s+you\s+(?:open|close)|office\s+hours|business\s+hours|opening\s+hours|closing\s+hours|working\s+hours|working\s+schedule|schedule\s+to\s+visit)\b/i.test(lower)) {
     return {
       matchedIntent: 'business_hours',
       rewrittenQuery: "98. What are KAIRA's business hours?"
     };
   }
 
-  // 3. Office Location / Physical Address / HQ (e.g. "Where is your office located?", "What is your headquarters address?", "Where can I find your office?")
-  if (/\b(where\s+is\s+(?:your\s+)?office|where\s+(?:is\s+)?kaira(?:'s)?\s+office|office\s+located|headquarters\s+address|hq\s+address|corporate\s+address|office\s+address|where\s+are\s+you\s+located|physical\s+address|where\s+can\s+i\s+visit\s+your\s+office)\b/i.test(lower)) {
+  // 7. Barge-in / Interruption (Q16)
+  if (/\b(cut\s*(?:the\s+ai\s+)?off|cut\s+off|cut\s+you\s+off|interrupt\s+(?:the\s+)?ai|interrupt|barge\s*in|barge-in)\b/i.test(lower)) {
     return {
-      matchedIntent: 'office_location',
-      rewrittenQuery: "Where is KAIRA's office located?",
-      isUnsupportedOrNotSupplied: true,
-      directAnswerSnippet: "Our office address was not supplied in the available documentation. Would you like me to connect you with one of our support agents?"
-    };
-  }
-
-  // 4. Subscription Plans / Prices / Discounts (e.g. "Do you provide a 50% discount for students?", "How much does it cost?", "What are your prices?")
-  if (/\b(subscription\s+plans?|monthly\s+subscription|subscription\s+prices?|discount\s+(?:for\s+)?(?:university\s+|college\s+)?students?|student\s+discount|50%\s+discount|any\s+discount|discount\s+code|how\s+much\s+does\s+it\s+cost|what\s+are\s+your\s+subscription\s+plans|subscription\s+plans\s+or\s+prices|pricing\s+plans|what\s+are\s+your\s+prices|monthly\s+prices|what\s+do\s+you\s+charge)\b/i.test(lower)) {
-    const isDiscount = /\b(discount|student|50%)\b/i.test(lower);
-    return {
-      matchedIntent: 'subscription_pricing_discount',
-      rewrittenQuery: "What are KAIRA's subscription plans or prices?",
-      isUnsupportedOrNotSupplied: true,
-      directAnswerSnippet: isDiscount
-        ? "I'm sorry, I couldn't find confirmed information about student discounts in our available documents. Would you like me to connect you with one of our support agents?"
-        : "Pricing information was not supplied in our available documents. Refer to an authorized sales representative or official pricing document, or I can connect you with our team."
-    };
-  }
-
-  // 4B. Accessing other customer details & privacy (Q73)
-  if (/\b(access\s+another\s+customer|another\s+customer(?:'s)?\s+(?:details|data|calls|information|private\s+details))\b/i.test(lower)) {
-    return {
-      matchedIntent: 'access_another_customer_details',
-      rewrittenQuery: "73. Can one customer access another customer's details?"
-    };
-  }
-
-  // 4C. Call Recording by default / always recorded (Q80)
-  if (/\b(are\s+phone\s+calls\s+always\s+recorded|are\s+calls\s+always\s+recorded|calls\s+always\s+recorded|recorded\s+by\s+default|record\s+all\s+calls)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'calls_always_recorded',
-      rewrittenQuery: '80. Are calls always recorded?'
-    };
-  }
-
-  // 4D. Select preferred language (Q27)
-  if (/\b(choose.*preferred\s+language|select.*preferred\s+language|pick.*language|select.*language)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'select_preferred_language',
-      rewrittenQuery: '27. Can the customer select a preferred language?'
-    };
-  }
-
-  // 5. Official Contact Details (Phone / Email)
-  if (/\b(official\s+support\s+phone|support\s+email|contact\s+details|phone\s+number\s+or\s+email|what\s+is\s+your\s+phone\s+number|official\s+email\s+address|customer\s+care\s+number)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'contact_details',
-      rewrittenQuery: "What is KAIRA's official support phone number or email?",
-      isUnsupportedOrNotSupplied: true,
-      directAnswerSnippet: "These contact details were not supplied in our available documentation. The AI must use only contact information published by the organization."
-    };
-  }
-
-  // 6. Barge-in / Interruption (e.g. "Can I cut the AI off while it speaks?", "Can customers interrupt the AI?", "Can I barge in?")
-  if (/\b(interrupt\s+(?:the\s+)?ai|interrupt.*assistant|cut\s*(?:the\s+ai\s+)?off|cut\s+off\s+(?:the\s+)?(?:ai|voice|assistant)|barge\s*in|barge-in|stop\s+talking\s+when\s+i\s+speak|speak\s+while\s+ai\s+is\s+speaking)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'interruption_barge_in',
-      rewrittenQuery: 'Can customers interrupt the AI?'
-    };
-  }
-
-  // 7. Multi-Turn Context Memory
-  if (/\b(remember.*earlier|previous\s+questions|multi-turn|retain\s+context|do\s+you\s+remember\s+what\s+i\s+asked)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'multi_turn_memory',
-      rewrittenQuery: 'Can KAIRA remember earlier turns in a conversation?'
-    };
-  }
-
-  // 8. Single Speaker Architecture / Simultaneous Speaking
-  if (/\b(speak\s+at\s+the\s+same\s+time|ai\s+and\s+human.*at\s+the\s+same\s+time|both\s+talk\s+at\s+once|simultaneous\s+speech|overlapping\s+speech)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'single_speaker_architecture',
-      rewrittenQuery: 'Can AI and a human agent speak at the same time?'
-    };
-  }
-
-  // 9. Supported Languages & Language Switching
-  if (/\b(change.*language\s+during|switch.*language\s+during|switch\s+language\s+while\s+on\s+the\s+call)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'change_language_during_call',
-      rewrittenQuery: 'Can a caller change the language during a call?'
-    };
-  }
-  if (/\b(which\s+languages|what\s+languages|languages\s+are\s+supported|support.*regional\s+languages|languages\s+do\s+you\s+speak)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'languages_supported',
-      rewrittenQuery: 'Which languages are currently supported?'
-    };
-  }
-
-  // 10. Human Takeover
-  if (/\b(agent\s+take\s+over|human\s+takeover|take\s+over\s+an\s+ai\s+call|takeover)\b/i.test(lower)) {
-    return {
-      matchedIntent: 'human_takeover',
-      rewrittenQuery: 'Can an agent take over an AI call?'
+      matchedIntent: 'barge_in',
+      rewrittenQuery: "16. Can customers interrupt the AI?"
     };
   }
 
@@ -506,6 +339,8 @@ export function formatForVoice(text: string, includeFollowUp = false): string {
     .replace(/&/g, 'and')
     .replace(/@/g, 'at')
     .replace(/\b(\d+)%/g, '$1 percent')
+    .replace(/\bms\b/g, 'milliseconds')
+    .replace(/\bsub-300ms\b/g, 'sub 300 milliseconds')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -527,9 +362,32 @@ export function formatForVoice(text: string, includeFollowUp = false): string {
   return clean;
 }
 
+interface PreIndexedEntry {
+  entry: any;
+  tokens: string[];
+  significantTokens: string[];
+  vector: number[];
+  questionLower: string;
+  titleLower: string;
+  contentLower: string;
+  keywordsLower: string;
+  docLength: number;
+}
+
 class KnowledgeService {
   private openai: OpenAI | null = null;
   public isQuotaExhausted: boolean = false;
+
+  // In-Memory Index & Caching System
+  private cacheVersion: number = 1;
+  private preIndexedEntries: PreIndexedEntry[] | null = null;
+  private avgDocLength: number = 0;
+  private dfMap: Map<string, number> = new Map();
+
+  // In-Memory Fast FAQ Answer Cache
+  private faqResponseCache: Map<string, { response: GroundedResponse; timestamp: number }> = new Map();
+  private readonly MAX_CACHE_SIZE = 500;
+  private readonly CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
   constructor() {
     if (process.env.OPENAI_API_KEY && !process.env.OPENAI_API_KEY.includes('your-')) {
@@ -537,8 +395,29 @@ class KnowledgeService {
     }
   }
 
-  // Pre-warm AI provider and detect quota exhaustion at boot
+  /**
+   * Invalidate in-memory document index and query cache
+   */
+  public invalidateCache(): void {
+    this.cacheVersion++;
+    this.preIndexedEntries = null;
+    this.avgDocLength = 0;
+    this.dfMap.clear();
+    this.faqResponseCache.clear();
+    console.log(`[KnowledgeService] Cache invalidated. New cache version: ${this.cacheVersion}`);
+  }
+
+  /**
+   * Pre-warm AI provider and index documents at boot
+   */
   public async warmup(): Promise<void> {
+    try {
+      await this.getOrBuildIndex();
+      console.log(`[KnowledgeService] Pre-indexed ${this.preIndexedEntries?.length || 0} Knowledge Base entries in memory.`);
+    } catch (err) {
+      console.warn('[KnowledgeService] Warmup index build error:', err);
+    }
+
     if (this.openai && !this.isQuotaExhausted) {
       try {
         await this.openai.chat.completions.create({
@@ -555,11 +434,11 @@ class KnowledgeService {
     }
   }
 
-  // Tokenize and clean text for lexical relevance (Full Unicode support for all languages)
+  // Tokenize and clean text for lexical relevance
   private tokenize(text: string): string[] {
     return text
       .toLowerCase()
-      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
       .split(/\s+/)
       .map(w => normalizeToken(w))
       .filter(w => w.length > 1);
@@ -571,6 +450,73 @@ class KnowledgeService {
     return filtered.length > 0 ? filtered : tokens;
   }
 
+  /**
+   * Build or retrieve pre-indexed document entries from memory (<1ms on cache hit)
+   */
+  private async getOrBuildIndex(): Promise<PreIndexedEntry[]> {
+    if (this.preIndexedEntries && this.preIndexedEntries.length > 0) {
+      return this.preIndexedEntries;
+    }
+
+    const entries = await prisma.knowledgeEntry.findMany({
+      include: { document: true }
+    });
+
+    if (entries.length === 0) {
+      this.preIndexedEntries = [];
+      return [];
+    }
+
+    let totalLength = 0;
+    const df = new Map<string, number>();
+
+    const indexed: PreIndexedEntry[] = entries.map(e => {
+      const fullText = `${e.title || ''} ${e.question || ''} ${e.content || ''} ${e.keywords || ''}`;
+      const tokens = this.tokenize(fullText);
+      const significantTokens = this.getSignificantTokens(tokens);
+
+      // Unique tokens in this doc for Document Frequency
+      const uniqueTokens = new Set(significantTokens);
+      for (const t of uniqueTokens) {
+        df.set(t, (df.get(t) || 0) + 1);
+      }
+
+      totalLength += tokens.length;
+
+      // Extract or compute vector
+      let vector: number[] | null = null;
+      if (e.embedding) {
+        try {
+          const parsed = JSON.parse(e.embedding);
+          if (Array.isArray(parsed) && parsed.length === embeddingService.vectorDimension) {
+            vector = parsed;
+          }
+        } catch (_) { }
+      }
+      if (!vector) {
+        vector = embeddingService.generateLocalEmbedding(e.content || `${e.title} ${e.question}`);
+      }
+
+      return {
+        entry: e,
+        tokens,
+        significantTokens,
+        vector,
+        questionLower: (e.question || '').toLowerCase(),
+        titleLower: (e.title || '').toLowerCase(),
+        contentLower: (e.content || '').toLowerCase(),
+        keywordsLower: (e.keywords || '').toLowerCase(),
+        docLength: tokens.length
+      };
+    });
+
+    this.preIndexedEntries = indexed;
+    this.avgDocLength = totalLength / Math.max(1, indexed.length);
+    this.dfMap = df;
+
+    return indexed;
+  }
+
   // Exact or synonym matching
   private matchTokenExactOrSynonym(t: string, targets: string[]): boolean {
     if (targets.includes(t)) return true;
@@ -580,18 +526,6 @@ class KnowledgeService {
     return targets.some(target => {
       const s = STEM(target);
       return syns.some(syn => s === syn || target === syn || STEM(syn) === s);
-    });
-  }
-
-  // Fuzzy matching for speech recognition quirks and typos (strictly for words >= 4 chars)
-  private matchTokenFuzzy(t: string, targets: string[]): boolean {
-    if (t.length < 4) return false;
-    const maxDist = t.length >= 7 ? 2 : 1;
-    return targets.some(target => {
-      if (target.length >= 4 && Math.abs(t.length - target.length) <= maxDist) {
-        return levenshtein(t, target) <= maxDist;
-      }
-      return false;
     });
   }
 
@@ -615,9 +549,7 @@ class KnowledgeService {
             (a1.includes('always') && a2.includes('never')) ||
             (a1.includes('never') && a2.includes('always')) ||
             (a1.includes('sub-300') && a2.includes('2500ms')) ||
-            (a2.includes('sub-300') && a1.includes('2500ms')) ||
-            (a1.includes('under') && a2.includes('never under')) ||
-            (a2.includes('under') && a1.includes('never under'))
+            (a2.includes('sub-300') && a1.includes('2500ms'))
           );
           if (isContradiction) {
             return {
@@ -631,258 +563,175 @@ class KnowledgeService {
     return { isConflict: false };
   }
 
-  // Calculate similarity between customer query and a KB entry
-  private calculateScore(query: string, entry: any): number {
-    const rawQueryTokens = this.tokenize(query);
-    const queryTokens = this.getSignificantTokens(rawQueryTokens);
-    if (queryTokens.length === 0) return 0;
-
-    const titleTokens = this.tokenize(entry.title || '');
-    const questionTokens = this.tokenize(entry.question || '');
-    const contentTokens = this.tokenize(entry.content || '');
-    const keywordsTokens = this.tokenize(entry.keywords || '');
-
-    const entryQuestionText = (entry.question || '').toLowerCase();
-    const entryTitleText = (entry.title || '').toLowerCase();
-    const lowerQuery = query.toLowerCase().trim();
-
-    // Exact phrase match bonus
-    if (entryQuestionText.includes(lowerQuery) || (lowerQuery.length > 8 && entryQuestionText.length > 8 && (lowerQuery.includes(entryQuestionText) || entryQuestionText.includes(lowerQuery)))) {
-      return 1.0;
-    }
-
-    let matchedNonGenericCount = 0;
-    let score = 0;
-
-    for (const token of queryTokens) {
-      const isGeneric = (token === 'call' || token === 'system' || token === 'platform' || token === 'voice' || token === 'kaira' || token === 'ai');
-      const tokenWeight = isGeneric ? 0.05 : 0.40;
-
-      let bestMatchWeight = 0;
-      if (questionTokens.includes(token) || titleTokens.includes(token)) {
-        bestMatchWeight = 1.0;
-      } else if (this.matchTokenExactOrSynonym(token, questionTokens) || this.matchTokenExactOrSynonym(token, titleTokens)) {
-        bestMatchWeight = 0.85;
-      } else if (this.matchTokenFuzzy(token, questionTokens) || this.matchTokenFuzzy(token, titleTokens)) {
-        bestMatchWeight = 0.70;
-      } else if (keywordsTokens.includes(token)) {
-        bestMatchWeight = 0.50;
-      } else if (contentTokens.includes(token)) {
-        bestMatchWeight = 0.25;
-      } else if (this.matchTokenExactOrSynonym(token, contentTokens)) {
-        bestMatchWeight = 0.15;
-      }
-
-      if (bestMatchWeight > 0) {
-        if (!isGeneric) matchedNonGenericCount++;
-        score += bestMatchWeight * tokenWeight;
-      }
-    }
-
-    const nonGenericTokens = queryTokens.filter(t => t !== 'call' && t !== 'system' && t !== 'platform' && t !== 'voice' && t !== 'kaira' && t !== 'ai');
-    if (nonGenericTokens.length > 0 && matchedNonGenericCount === 0) {
-      return 0;
-    }
-
-    const divisor = Math.max(1, nonGenericTokens.length);
-    let normalizedScore = score / (1 + 0.15 * Math.max(0, divisor - 1));
-
-    // Question-specific intent bonuses
-    // Latency / speed (Q4)
-    if (/\b(latency|delay|speed|response time|fast|sub-300|ms)\b/i.test(lowerQuery)) {
-      if (/\b(latency|response time|sub-300|voicecore)\b/i.test(entryQuestionText + ' ' + (entry.keywords || ''))) {
-        normalizedScore += 0.50;
-      }
-    }
-    // Language / regional languages (Q20, Q21)
-    if (/\b(language|languages|regional|tamil|telugu|hindi|kannada|malayalam|langauge|langauges)\b/i.test(lowerQuery)) {
-      if (/\b(switch|change|during)\b/i.test(lowerQuery) && /\b(change|switch)\b/i.test(entryQuestionText)) {
-        normalizedScore += 0.55;
-      } else if (/\b(regional languages|which languages|what languages|languages.*support|support.*language|regional langauges)\b/i.test(lowerQuery)) {
-        if (!/\b(summary|summaries)\b/i.test(lowerQuery)) {
-          if (/\b(languages are currently supported|which languages)\b/i.test(entryQuestionText) || (entry.keywords && entry.keywords.includes('tamil') && entry.keywords.includes('telugu'))) {
-            normalizedScore += 0.95;
-          }
-        }
-      } else if (/\b(regional|languages|support)\b/i.test(entryQuestionText) && !/\b(change|switch)\b/i.test(entryQuestionText)) {
-        normalizedScore += 0.45;
-      }
-    }
-    // Prevent Q86 (summaries in regional languages) from stealing language support questions
-    if (/\b(summaries.*regional languages|regional languages.*summaries)\b/i.test(entryQuestionText)) {
-      if (!/\b(summary|summaries|generate|generated)\b/i.test(lowerQuery)) {
-        normalizedScore -= 0.60;
-      }
-    }
-    // Barge-in / interruption (Q16)
-    if (/\b(interrupt|interruption|barge|barge-in|bargein|cut\s*off|cut\s+the\s+ai\s+off|cut\s+ai\s+off|cut.*off)\b/i.test(lowerQuery)) {
-      if (/\b(interrupt|barge-in|bargein)\b/i.test(entryQuestionText)) {
-        normalizedScore += 0.95;
-      }
-    }
-    // Memory / multi-turn context (Q17)
-    if (/\b(remember|earlier|earlier turns|multi-turn|previous questions|asked earlier)\b/i.test(lowerQuery)) {
-      if (/\b(remember|earlier turns|multi-turn)\b/i.test(entryQuestionText + ' ' + (entry.answer || ''))) {
-        normalizedScore += 0.95;
-      }
-    }
-    // Single voice architecture / simultaneous speaking (Q13)
-    if (/\b(speak at the same time|together|simultaneous|simultaneously|both speak|collision)\b/i.test(lowerQuery)) {
-      if (/\b(speak at the same time|single-voice|collision)\b/i.test(entryQuestionText + ' ' + (entry.content || ''))) {
-        normalizedScore += 0.55;
-      }
-    }
-    // Recording & consent (Q25, Q30)
-    if (/\b(record|recorded|recording|consent)\b/i.test(lowerQuery)) {
-      if (/\b(download|audio files?|mp3|wav)\b/i.test(lowerQuery) && /\b(download)\b/i.test(entryQuestionText)) {
-        normalizedScore += 0.55;
-      } else if (/\b(automatically|by default|consent)\b/i.test(lowerQuery) && /\b(automatically|consent)\b/i.test(entryQuestionText)) {
-        normalizedScore += 0.55;
-      }
-    }
-    // Post-call summary storage (Q84) vs summary contents (Q85)
-    if (/\b(summary|summaries)\b/i.test(lowerQuery)) {
-      if (/\b(save|saved|store|stored|saving|storing|keep|retained)\b/i.test(lowerQuery)) {
-        if (/\b(summaries|summary)\b/i.test(entryQuestionText) && /\b(stored|saved|store|save)\b/i.test(entryQuestionText)) {
-          normalizedScore += 0.95;
-        }
-      } else if (/\b(what information|captured|included|details)\b/i.test(lowerQuery)) {
-        if (/\b(what information is captured|captured in a call summary)\b/i.test(entryQuestionText)) {
-          normalizedScore += 0.95;
-        }
-      } else if (/\b(post-call|post call)\b/i.test(lowerQuery)) {
-        if (/\b(summary|post-call)\b/i.test(entryQuestionText)) {
-          normalizedScore += 0.55;
-        }
-      }
-    }
-    // Prevent Q83 (entity extraction) from falsely matching queries looking for phone numbers/CEOs
-    if (/\b(entities|extract|extraction)\b/i.test(entryQuestionText)) {
-      if (!/\b(entities|extract|extraction)\b/i.test(lowerQuery)) {
-        normalizedScore -= 0.60;
-      }
-    }
-    // Real-time transcripts (Q32)
-    if (/\b(transcript|transcripts|transcription)\b/i.test(lowerQuery)) {
-      if (/\b(transcript|real time)\b/i.test(entryQuestionText)) {
-        normalizedScore += 0.45;
-      }
-    }
-    // Human takeover (Q88)
-    if (/\b(take over|takeover|handover)\b/i.test(lowerQuery)) {
-      if (/\b(take over|takeover|handover)\b/i.test(entryQuestionText)) {
-        normalizedScore += 0.55;
-      }
-    }
-    // Human agent correct answer (Q89)
-    if (/\b(correct|correction)\b/i.test(lowerQuery) && /\b(agent|human)\b/i.test(lowerQuery)) {
-      if (/\b(correct)\b/i.test(entryQuestionText)) {
-        normalizedScore += 0.55;
-      }
-    }
-    // Primary user groups (Q2)
-    if (/\b(user groups?|primary users?|serve|who does kaira serve|customer agent admin)\b/i.test(lowerQuery)) {
-      if (/\b(user groups|serve)\b/i.test(entryQuestionText)) {
-        normalizedScore += 0.55;
-      }
-    }
-    // Disconnect / network loss (Q61)
-    if (/\b(disconnect|abruptly|network loss|drops? internet|offline)\b/i.test(lowerQuery)) {
-      if (/\b(disconnect|network loss)\b/i.test(entryQuestionText)) {
-        normalizedScore += 0.55;
-      }
-    }
-    // STT Fallback (Q63)
-    if (/\b(fallback|stt service failure|stt failure|speech to text failure)\b/i.test(lowerQuery)) {
-      if (/\b(fallback|stt)\b/i.test(entryQuestionText)) {
-        normalizedScore += 0.55;
-      }
-    }
-    // Encryption / security (Q71)
-    if (/\b(encrypt|encryption|srtp|tls|secure communications?)\b/i.test(lowerQuery)) {
-      if (/\b(encrypt|srtp|tls)\b/i.test(entryQuestionText)) {
-        normalizedScore += 0.55;
-      }
-    }
-    // Sensitive customer details / PII (Q74)
-    if (/\b(sensitive|pii|redact|protected in transcripts)\b/i.test(lowerQuery)) {
-      if (/\b(sensitive|protected in transcripts|pii)\b/i.test(entryQuestionText)) {
-        normalizedScore += 0.55;
-      }
-    }
-    // Missing info: phone/email (Q97)
-    if (/\b(official support phone|support email|contact details|phone number or email)\b/i.test(lowerQuery)) {
-      if (/\b(phone number|email|contact details)\b/i.test(entryQuestionText)) {
-        normalizedScore += 0.65;
-      }
-    }
-    // Missing info: business hours (Q98)
-    if (/\b(business hours|working hours|office hours|hours of operation)\b/i.test(lowerQuery)) {
-      if (/\b(business hours)\b/i.test(entryQuestionText)) {
-        normalizedScore += 0.65;
-      }
-    }
-    // Missing info: office address (Q99)
-    if (/\b(office located|corporate office|physical office|headquarters address|office address)\b/i.test(lowerQuery)) {
-      if (/\b(office located|office address)\b/i.test(entryQuestionText)) {
-        normalizedScore += 0.65;
-      }
-    }
-    // Missing info: subscription plans or prices (Q100)
-    if (/\b(subscription plans|monthly prices|plans or prices|pricing plans|how much does it cost)\b/i.test(lowerQuery)) {
-      if (/\b(subscription plans or prices|pricing information was not supplied)\b/i.test(entryQuestionText + ' ' + (entry.answer || ''))) {
-        normalizedScore += 0.65;
-      }
-    }
-
-    return Math.min(1.0, normalizedScore);
-  }
-
   /**
-   * Compute BM25 scores for a list of tokens across entries
+   * Search Knowledge Base entries with BM25 + Vector + Reciprocal Rank Fusion (RRF) & Lightweight Reranking
    */
-  private computeBM25Scores(tokens: string[], entries: any[]): number[] {
-    const N = entries.length;
-    if (N === 0 || tokens.length === 0) return new Array(N).fill(0);
+  public async search(query: string, limit = 3): Promise<SearchResult[]> {
+    const indexedEntries = await this.getOrBuildIndex();
+    if (indexedEntries.length === 0) return [];
 
-    const docTokensList: string[][] = entries.map(e => {
-      const fullText = `${e.title || ''} ${e.question || ''} ${e.content || ''} ${e.keywords || ''}`;
-      return this.tokenize(fullText);
-    });
-
-    const docLengths = docTokensList.map(t => t.length);
-    const avgdl = docLengths.reduce((a, b) => a + b, 0) / Math.max(1, N);
-
-    const dfMap = new Map<string, number>();
-    for (const t of tokens) {
-      let count = 0;
-      for (const dTokens of docTokensList) {
-        if (dTokens.includes(t)) count++;
-      }
-      dfMap.set(t, count);
+    const candidates = [query];
+    const normalized = normalizeCustomerQuery(query);
+    if (normalized && normalized !== query.toLowerCase().trim()) {
+      candidates.push(normalized);
+    }
+    const rewrite = detectIntentRewrites(query);
+    if (rewrite?.rewrittenQuery && !candidates.includes(rewrite.rewrittenQuery)) {
+      candidates.push(rewrite.rewrittenQuery);
     }
 
+    const N = indexedEntries.length;
     const k1 = 1.2;
     const b = 0.75;
-    const rawScores = entries.map((_, i) => {
-      let score = 0;
-      const dTokens = docTokensList[i];
-      const dLen = docLengths[i];
+    const RRF_K = 60; // Standard Cormack constant for RRF
 
-      for (const t of tokens) {
-        const df = dfMap.get(t) || 0;
-        const idf = Math.log(1 + (N - df + 0.5) / (df + 0.5));
-        const tf = dTokens.filter(x => x === t).length;
-        if (tf > 0) {
-          const num = tf * (k1 + 1);
-          const denom = tf + k1 * (1 - b + b * (dLen / Math.max(1, avgdl)));
-          score += idf * (num / denom);
+    let bestRrfScored: Array<{
+      entry: any;
+      score: number;
+      semanticScore: number;
+      bm25Score: number;
+      lexicalScore: number;
+      rrfScore: number;
+    }> = [];
+
+    let overallMaxScore = -1;
+
+    for (const cand of candidates) {
+      const candClean = cand.toLowerCase().trim();
+      const candTokens = this.tokenize(cand);
+      const candSigTokens = this.getSignificantTokens(candTokens);
+      const queryVector = embeddingService.generateLocalEmbedding(cand);
+
+      // 1. BM25 Scoring
+      const bm25List: Array<{ index: number; score: number }> = [];
+      for (let i = 0; i < N; i++) {
+        const item = indexedEntries[i];
+        let score = 0;
+        for (const t of candSigTokens) {
+          const df = this.dfMap.get(t) || 0;
+          const idf = Math.log(1 + (N - df + 0.5) / (df + 0.5));
+          const tf = item.tokens.filter(x => x === t).length;
+          if (tf > 0) {
+            const num = tf * (k1 + 1);
+            const denom = tf + k1 * (1 - b + b * (item.docLength / Math.max(1, this.avgDocLength)));
+            score += idf * (num / denom);
+          }
         }
+        bm25List.push({ index: i, score });
       }
-      return score;
-    });
 
-    return rawScores.map(s => (s > 0 ? s / (s + 5.0) : 0));
+      // Rank by BM25 (1-based)
+      bm25List.sort((a, b) => b.score - a.score);
+      const bm25Ranks = new Map<number, number>();
+      bm25List.forEach((item, r) => bm25Ranks.set(item.index, r + 1));
+
+      // 2. Vector Cosine Scoring
+      const vectorList: Array<{ index: number; score: number }> = [];
+      for (let i = 0; i < N; i++) {
+        const cosine = embeddingService.cosineSimilarity(queryVector, indexedEntries[i].vector);
+        vectorList.push({ index: i, score: cosine });
+      }
+
+      // Rank by Vector Cosine (1-based)
+      vectorList.sort((a, b) => b.score - a.score);
+      const vectorRanks = new Map<number, number>();
+      vectorList.forEach((item, r) => vectorRanks.set(item.index, r + 1));
+
+      // 3. Reciprocal Rank Fusion (RRF)
+      const rrfCandidates = indexedEntries.map((item, idx) => {
+        const rBm25 = bm25Ranks.get(idx) || N;
+        const rVec = vectorRanks.get(idx) || N;
+
+        const rrfRaw = (1.0 / (RRF_K + rBm25)) + (1.0 / (RRF_K + rVec));
+        const rrfNormalized = rrfRaw * ((RRF_K + 1) / 2.0); // scales top-1 from ~0.0328 to ~1.0
+
+        const bm25Raw = bm25List.find(x => x.index === idx)?.score || 0;
+        const bm25Norm = bm25Raw > 0 ? bm25Raw / (bm25Raw + 5.0) : 0;
+        const vecScore = vectorList.find(x => x.index === idx)?.score || 0;
+
+        return {
+          index: idx,
+          item,
+          rrfScore: rrfNormalized,
+          bm25Score: bm25Norm,
+          semanticScore: vecScore
+        };
+      });
+
+      // Sort by RRF score descending to get top candidates for reranking
+      rrfCandidates.sort((a, b) => b.rrfScore - a.rrfScore);
+      const topPool = rrfCandidates.slice(0, 8);
+
+      // 4. Lightweight Reranker on Top Pool
+      const reranked = topPool.map(candItem => {
+        const item = candItem.item;
+        let bonus = 0;
+
+        // Exact question match or substring match bonus
+        const qClean = item.questionLower.replace(/^\d+\.\s*/, '').replace(/[?.,!]/g, '').trim();
+        const candStripped = candClean.replace(/[?.,!]/g, '').trim();
+
+        if (qClean === candStripped || qClean.includes(candStripped) || candStripped.includes(qClean)) {
+          bonus += 0.45;
+        }
+
+        // Token coverage in question
+        const qTokens = this.tokenize(item.entry.question || '');
+        const nonGenericTokens = candSigTokens.filter(t => t !== 'kaira' && t !== 'platform' && t !== 'voice');
+        let matchedCount = 0;
+        for (const t of nonGenericTokens) {
+          if (qTokens.includes(t) || this.matchTokenExactOrSynonym(t, qTokens)) {
+            matchedCount++;
+          }
+        }
+        const coverage = nonGenericTokens.length > 0 ? matchedCount / nonGenericTokens.length : 0;
+        bonus += 0.35 * coverage;
+
+        // Domain-specific keyword boosts
+        if (/\b(operating hours|business hours|timing|office open|close)\b/i.test(candClean)) {
+          if (item.questionLower.includes('business hours') || item.questionLower.includes('operating hours')) {
+            bonus += 0.50;
+          }
+        }
+        if (/\b(interrupt|barge-in|barge in|cut off)\b/i.test(candClean)) {
+          if (item.questionLower.includes('interrupt') || item.questionLower.includes('barge-in')) {
+            bonus += 0.50;
+          }
+        }
+        if (/\b(languages?|regional)\b/i.test(candClean) && !/\b(summary|summaries)\b/i.test(candClean)) {
+          if (item.questionLower.includes('languages are currently supported') || item.questionLower.includes('which languages')) {
+            bonus += 0.50;
+          }
+        }
+        if (/\b(technolog(?:y|ies)|audio calling|live calling)\b/i.test(candClean)) {
+          if (item.questionLower.includes('technology provides live audio calling') || item.questionLower.includes('webrtc')) {
+            bonus += 0.50;
+          }
+        }
+
+        const finalScore = Math.min(1.0, (candItem.rrfScore * 0.45) + (candItem.semanticScore * 0.20) + bonus);
+
+        return {
+          entry: item.entry,
+          score: Math.round(finalScore * 1000) / 1000,
+          semanticScore: Math.round(candItem.semanticScore * 1000) / 1000,
+          bm25Score: Math.round(candItem.bm25Score * 1000) / 1000,
+          lexicalScore: Math.round(coverage * 1000) / 1000,
+          rrfScore: Math.round(candItem.rrfScore * 1000) / 1000
+        };
+      });
+
+      reranked.sort((a, b) => b.score - a.score);
+
+      if (reranked.length > 0 && reranked[0].score > overallMaxScore) {
+        overallMaxScore = reranked[0].score;
+        bestRrfScored = reranked;
+      }
+    }
+
+    return bestRrfScored
+      .filter(item => item.score >= 0.20)
+      .slice(0, limit);
   }
 
   /**
@@ -919,99 +768,9 @@ class KnowledgeService {
     };
   }
 
-  // Search Knowledge Base entries with multi-candidate hybrid retrieval (Semantic Cosine + BM25 + Lexical)
-  public async search(query: string, limit = 3): Promise<SearchResult[]> {
-    const entries = await prisma.knowledgeEntry.findMany({
-      include: { document: true }
-    });
-
-    if (entries.length === 0) return [];
-
-    const candidates = [query];
-    const normalized = normalizeCustomerQuery(query);
-    if (normalized && normalized !== query.toLowerCase().trim()) {
-      candidates.push(normalized);
-    }
-    const rewrite = detectIntentRewrites(query);
-    if (rewrite?.rewrittenQuery && !candidates.includes(rewrite.rewrittenQuery)) {
-      candidates.push(rewrite.rewrittenQuery);
-    }
-
-    // Pre-parse or calculate vectors for entries
-    const entryVectors: number[][] = entries.map(e => {
-      if (e.embedding) {
-        try {
-          const parsed = JSON.parse(e.embedding);
-          if (Array.isArray(parsed) && parsed.length === embeddingService.vectorDimension) {
-            return parsed;
-          }
-        } catch (_) { }
-      }
-      return embeddingService.generateLocalEmbedding(e.content || `${e.title} ${e.question}`);
-    });
-
-    const scored: SearchResult[] = entries.map((entry, idx) => {
-      let bestScore = 0;
-      let bestSemantic = 0;
-      let bestBm25 = 0;
-      let bestLexical = 0;
-
-      for (const cand of candidates) {
-        // 1. Semantic Cosine Similarity
-        const queryVec = embeddingService.generateLocalEmbedding(cand);
-        const cosine = embeddingService.cosineSimilarity(queryVec, entryVectors[idx]);
-
-        // 2. BM25 Score
-        const candTokens = this.getSignificantTokens(this.tokenize(cand));
-        const bm25List = this.computeBM25Scores(candTokens, [entry]);
-        const bm25 = bm25List[0] || 0;
-
-        // 3. Lexical / Rule Score
-        const lexical = this.calculateScore(cand, entry);
-
-        // Blended Hybrid Score:
-        // Preserves tuned lexical baseline while boosting with dense semantic cosine & BM25
-        let hybrid = lexical;
-
-        if (cosine >= 0.22) {
-          hybrid = Math.max(hybrid, cosine * 0.95);
-          hybrid += cosine * 0.15;
-        }
-
-        if (bm25 >= 0.10) {
-          hybrid += bm25 * 0.20;
-        }
-
-        if (lexical >= 0.85) {
-          hybrid = Math.max(hybrid, lexical);
-        }
-
-        if (hybrid > bestScore) {
-          bestScore = hybrid;
-          bestSemantic = cosine;
-          bestBm25 = bm25;
-          bestLexical = lexical;
-        }
-      }
-
-      return {
-        entry,
-        score: Math.min(1.0, Math.round(bestScore * 1000) / 1000),
-        semanticScore: Math.round(bestSemantic * 1000) / 1000,
-        bm25Score: Math.round(bestBm25 * 1000) / 1000,
-        lexicalScore: Math.round(bestLexical * 1000) / 1000
-      };
-    });
-
-    // Filter by threshold and rank
-    const sorted = scored
-      .filter(item => item.score > 0.18)
-      .sort((a, b) => b.score - a.score);
-
-    return sorted.slice(0, limit);
-  }
-
-  // Answer customer query with multi-question splitting & voice-optimized response
+  /**
+   * Answer customer query with multi-question splitting, in-memory FAQ caching, & direct extraction
+   */
   public async answerQuery(
     query: string,
     history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
@@ -1030,6 +789,18 @@ class KnowledgeService {
       };
     }
 
+    // 0. In-Memory FAQ Query Cache Lookup (< 1ms latency for cached queries)
+    const normKey = `${this.cacheVersion}:${normalizeCustomerQuery(trimmedQuery)}`;
+    if (this.faqResponseCache.has(normKey) && (!history || history.length === 0)) {
+      const cached = this.faqResponseCache.get(normKey)!;
+      if (Date.now() - cached.timestamp < this.CACHE_TTL_MS) {
+        return {
+          ...cached.response,
+          latencyMs: Date.now() - t0
+        };
+      }
+    }
+
     // 1. Multi-question identification & handling
     const subQuestions = splitMultiQuestions(trimmedQuery);
     if (subQuestions.length > 1) {
@@ -1041,7 +812,18 @@ class KnowledgeService {
       return this.combineMultiQuestionResponses(subQuestions, responses, Date.now() - t0);
     }
 
-    return this.answerSingleQuery(trimmedQuery, history, customerContext);
+    const res = await this.answerSingleQuery(trimmedQuery, history, customerContext);
+
+    // Save in memory cache if query is general/unpersonalized
+    if (!customerContext && (!history || history.length === 0) && res.confidence >= 0.70) {
+      if (this.faqResponseCache.size >= this.MAX_CACHE_SIZE) {
+        const firstKey = this.faqResponseCache.keys().next().value;
+        if (firstKey) this.faqResponseCache.delete(firstKey);
+      }
+      this.faqResponseCache.set(normKey, { response: res, timestamp: Date.now() });
+    }
+
+    return res;
   }
 
   // Combine multiple sub-question responses into a cohesive, conversational answer
@@ -1119,7 +901,7 @@ class KnowledgeService {
 
     const cleanInput = trimmedQuery.toLowerCase().replace(/['".,!?;:]/g, '').trim();
 
-    // 0. Intent Rewrite Check for unsupplied/unsupported topics (e.g. refunds, student discounts)
+    // 0. Intent Rewrite Check for unsupplied/unsupported topics
     const rewrite = detectIntentRewrites(trimmedQuery);
     if (rewrite?.isUnsupportedOrNotSupplied && rewrite.directAnswerSnippet) {
       await this.trackKnowledgeGap(trimmedQuery);
@@ -1133,11 +915,11 @@ class KnowledgeService {
       };
     }
 
-    // 0. Out-of-Domain Concept Guard (strictly prevents hallucinating non-existent products or topics like drones, groceries, crypto)
+    // 0A. Out-of-Domain Concept Guard (strictly prevents hallucinating non-existent products or topics like drones, groceries, crypto)
     if (/\b(drone|drones|surveillance|fly|groceries|grocery|stock market|stock ticker|stock price|nasdaq|nyse|share price|crypto|bitcoin|shares)\b/i.test(cleanInput)) {
       await this.trackKnowledgeGap(trimmedQuery);
       return {
-        answer: "I'm sorry, I couldn't find confirmed information about that in our available documents. Would you like me to connect you with one of our support agents?",
+        answer: FALLBACK_MESSAGE,
         isGrounded: false,
         requiresTransfer: false,
         sources: [],
@@ -1146,415 +928,11 @@ class KnowledgeService {
       };
     }
 
-    // 0C. Services Inquiry / Overview Handling (e.g. "Hi, I want to know your services", "What services do you offer?")
-    if (rewrite?.matchedIntent === 'company_services_overview') {
-      const q1 = await prisma.knowledgeEntry.findFirst({
-        where: { question: { contains: 'What is KAIRA?' } },
-        include: { document: true }
-      });
-      return {
-        answer: "Of course! I'd be happy to help. KAIRA is a multilingual voice-based customer support platform providing autonomous AI assistance, live human agent call transfer, and customer support management. Could you tell me which service you would like to know about?",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: q1 ? [{
-          id: q1.id,
-          title: q1.question || 'What is KAIRA?',
-          category: q1.category || 'general',
-          pageNumber: q1.pageNumber || 1,
-          snippet: q1.answer || undefined,
-          documentTitle: q1.document?.title || 'KAIRA Knowledge Base'
-        }] : [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 0D. Platform Overview / What is KAIRA
-    if (rewrite?.matchedIntent === 'platform_overview') {
-      const q1 = await prisma.knowledgeEntry.findFirst({
-        where: { question: { contains: 'What is KAIRA?' } },
-        include: { document: true }
-      });
-      return {
-        answer: "KAIRA is a multilingual voice-based customer support platform that provides automated AI assistance and live human-agent calling. It enables customers to get immediate support through natural spoken voice conversations grounded in verified company documents, while allowing human agents to seamlessly take over when needed.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: q1 ? [{
-          id: q1.id,
-          title: q1.question || '1. What is KAIRA?',
-          category: q1.category || 'general',
-          pageNumber: q1.pageNumber || 2,
-          snippet: q1.answer || undefined,
-          documentTitle: q1.document?.title || 'KAIRA 100 Customer Questions and Answers'
-        }] : [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 0E. Problem Solved by KAIRA
-    if (rewrite?.matchedIntent === 'problem_solved') {
-      const q2 = await prisma.knowledgeEntry.findFirst({
-        where: { question: { contains: 'main purpose of KAIRA' } },
-        include: { document: true }
-      });
-      return {
-        answer: "KAIRA solves customer support delays and language barriers by providing real-time voice-first automated assistance. Instead of typing or navigating complex phone menus, customers can speak naturally in their preferred language. The system answers questions accurately using approved knowledge documents, and seamlessly escalates to human specialists whenever complex assistance is required.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: q2 ? [{
-          id: q2.id,
-          title: q2.question || '2. What is the main purpose of KAIRA?',
-          category: q2.category || 'general',
-          pageNumber: q2.pageNumber || 2,
-          snippet: q2.answer || undefined,
-          documentTitle: q2.document?.title || 'KAIRA 100 Customer Questions and Answers'
-        }] : [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 0F. Main Platform Features
-    if (rewrite?.matchedIntent === 'main_features') {
-      const q = await prisma.knowledgeEntry.findFirst({
-        where: { question: { contains: 'What is KAIRA?' } },
-        include: { document: true }
-      });
-      return {
-        answer: "KAIRA's key features include real-time voice calling over WebRTC, multilingual speech recognition supporting six regional languages, grounded Knowledge Base answering from ingested PDFs, and conversational barge-in support. It also features seamless human-agent takeover, automated post-call conversation summaries, and dedicated dashboards for customers, agents, and administrators.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: q ? [{
-          id: q.id,
-          title: q.question || '1. What is KAIRA?',
-          category: q.category || 'general',
-          pageNumber: q.pageNumber || 2,
-          snippet: q.answer || undefined,
-          documentTitle: q.document?.title || 'KAIRA 100 Customer Questions and Answers'
-        }] : [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 0G. Technologies Used
-    if (rewrite?.matchedIntent === 'technologies_used') {
-      const q35 = await prisma.knowledgeEntry.findFirst({
-        where: { question: { contains: '35. What technology provides live audio calling?' } },
-        include: { document: true }
-      });
-      return {
-        answer: "KAIRA uses WebRTC for low-latency peer-to-peer audio streaming, Socket.IO for real-time signaling and bidirectional call events, and deep speech recognition for accurate multilingual transcription. On the backend, Node.js, Prisma, and PostgreSQL provide robust data isolation, while vector search and LLM synthesis power grounded Knowledge Base retrieval.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: q35 ? [{
-          id: q35.id,
-          title: q35.question || '35. What technology provides live audio calling?',
-          category: q35.category || 'technical',
-          pageNumber: q35.pageNumber || 3,
-          snippet: q35.answer || undefined,
-          documentTitle: q35.document?.title || 'KAIRA 100 Customer Questions and Answers'
-        }] : [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 0H. Why Technologies Were Chosen
-    if (rewrite?.matchedIntent === 'why_technologies_used') {
-      const q35 = await prisma.knowledgeEntry.findFirst({
-        where: { question: { contains: '35. What technology provides live audio calling?' } },
-        include: { document: true }
-      });
-      return {
-        answer: "These technologies were chosen to deliver high reliability and low latency for voice conversations. WebRTC eliminates traditional telephony latency and costs, Socket.IO provides resilient event streaming, Node.js ensures high concurrent call capacity, and Prisma with PostgreSQL guarantees strict customer data isolation and transactional consistency.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: q35 ? [{
-          id: q35.id,
-          title: q35.question || '35. What technology provides live audio calling?',
-          category: q35.category || 'technical',
-          pageNumber: q35.pageNumber || 3,
-          snippet: q35.answer || undefined,
-          documentTitle: q35.document?.title || 'KAIRA 100 Customer Questions and Answers'
-        }] : [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 0I. How Voice Assistant Works
-    if (rewrite?.matchedIntent === 'how_voice_assistant_works') {
-      const q3 = await prisma.knowledgeEntry.findFirst({
-        where: { question: { contains: '3. Can customers speak instead of typing?' } },
-        include: { document: true }
-      });
-      return {
-        answer: "The AI voice assistant captures spoken audio from the caller's microphone, converts it to text using speech-to-text, and searches the approved Knowledge Base for grounded evidence. It then synthesizes a natural answer, converts that text into speech, and streams the audio back into the live call while maintaining conversational context and listening for barge-in interruptions.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: q3 ? [{
-          id: q3.id,
-          title: q3.question || '3. Can customers speak instead of typing?',
-          category: q3.category || 'general',
-          pageNumber: q3.pageNumber || 2,
-          snippet: q3.answer || undefined,
-          documentTitle: q3.document?.title || 'KAIRA 100 Customer Questions and Answers'
-        }] : [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 0J. How Speech Recognition Works
-    if (rewrite?.matchedIntent === 'how_speech_recognition_works') {
-      const q31 = await prisma.knowledgeEntry.findFirst({
-        where: { question: { contains: '31. Does KAIRA convert speech into text?' } },
-        include: { document: true }
-      });
-      return {
-        answer: "Speech recognition captures the caller's microphone audio stream at 16 kilohertz and processes it through speech-to-text models that support multilingual accents and regional languages. The service performs endpointing and voice activity detection to identify complete sentences, producing real-time transcripts that are passed to the Knowledge Base engine.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: q31 ? [{
-          id: q31.id,
-          title: q31.question || '31. Does KAIRA convert speech into text?',
-          category: q31.category || 'voice',
-          pageNumber: q31.pageNumber || 3,
-          snippet: q31.answer || undefined,
-          documentTitle: q31.document?.title || 'KAIRA 100 Customer Questions and Answers'
-        }] : [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 0K. How Knowledge Base Works
-    if (rewrite?.matchedIntent === 'how_knowledge_base_works') {
-      const q64 = await prisma.knowledgeEntry.findFirst({
-        where: { question: { contains: '64. What is the Knowledge Base?' } },
-        include: { document: true }
-      });
-      return {
-        answer: "The Knowledge Base is the approved repository of company documents and FAQs. When a PDF or document is uploaded, it is parsed, chunked, and indexed with semantic embeddings. During a call, customer queries are matched against these indexed chunks using hybrid semantic and BM25 search to generate strictly grounded answers without hallucination.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: q64 ? [{
-          id: q64.id,
-          title: q64.question || '64. What is the Knowledge Base?',
-          category: q64.category || 'knowledge',
-          pageNumber: q64.pageNumber || 5,
-          snippet: q64.answer || undefined,
-          documentTitle: q64.document?.title || 'KAIRA 100 Customer Questions and Answers'
-        }] : [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 0L. How Human Handover Works
-    if (rewrite?.matchedIntent === 'how_handover_works') {
-      const q12 = await prisma.knowledgeEntry.findFirst({
-        where: { question: { contains: '12. Can an agent take over an AI call?' } },
-        include: { document: true }
-      });
-      return {
-        answer: "When a customer asks to speak with a human or when the AI detects uncertainty, the call triggers an escalation event over Socket.IO. An available human support agent receives the call notification on their dashboard and can take over with one click. When takeover occurs, AI speech immediately stops to prevent overlapping voices, and the agent continues the conversation.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: q12 ? [{
-          id: q12.id,
-          title: q12.question || '12. Can an agent take over an AI call?',
-          category: q12.category || 'general',
-          pageNumber: q12.pageNumber || 2,
-          snippet: q12.answer || undefined,
-          documentTitle: q12.document?.title || 'KAIRA 100 Customer Questions and Answers'
-        }] : [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 0M. Security Features
-    if (rewrite?.matchedIntent === 'security_features') {
-      const q83 = await prisma.knowledgeEntry.findFirst({
-        where: { question: { contains: '83. How does KAIRA protect customer information?' } },
-        include: { document: true }
-      });
-      return {
-        answer: "KAIRA implements end-to-end security including bcrypt password hashing, JWT-based authentication, role-based access control for customers, agents, and admins, and strict customer data isolation. Additionally, call recording requires prior consent, and access to recordings and transcripts is restricted strictly according to authorized permissions.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: q83 ? [{
-          id: q83.id,
-          title: q83.question || '83. How does KAIRA protect customer information?',
-          category: q83.category || 'security',
-          pageNumber: q83.pageNumber || 6,
-          snippet: q83.answer || undefined,
-          documentTitle: q83.document?.title || 'KAIRA 100 Customer Questions and Answers'
-        }] : [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 0N. Current Limitations
-    if (rewrite?.matchedIntent === 'current_limitations') {
-      const q90 = await prisma.knowledgeEntry.findFirst({
-        where: { question: { contains: '90. Does KAIRA guarantee perfect speech recognition?' } },
-        include: { document: true }
-      });
-      return {
-        answer: "Current limitations include speech recognition variability in noisy environments or with heavy background chatter, reliance on client network stability, and the strict requirement that company-specific answers must exist within the approved Knowledge Base. If information is not documented, the AI cannot invent it and must refer the customer to a human agent.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: q90 ? [{
-          id: q90.id,
-          title: q90.question || '90. Does KAIRA guarantee perfect speech recognition?',
-          category: q90.category || 'limitations',
-          pageNumber: q90.pageNumber || 7,
-          snippet: q90.answer || undefined,
-          documentTitle: q90.document?.title || 'KAIRA 100 Customer Questions and Answers'
-        }] : [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 0O. Customer Workflow
-    if (rewrite?.matchedIntent === 'customer_workflow') {
-      const q75 = await prisma.knowledgeEntry.findFirst({
-        where: { question: { contains: '75. What can customers do in the customer dashboard?' } },
-        include: { document: true }
-      });
-      return {
-        answer: "Customers register or log in, access the Customer Dashboard, and start an AI voice call with one click. They speak their questions naturally, receive spoken grounded responses, and can request a human agent at any time. After the call concludes, customers can review their call history and conversation summaries.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: q75 ? [{
-          id: q75.id,
-          title: q75.question || '75. What can customers do in the customer dashboard?',
-          category: q75.category || 'workflow',
-          pageNumber: q75.pageNumber || 6,
-          snippet: q75.answer || undefined,
-          documentTitle: q75.document?.title || 'KAIRA 100 Customer Questions and Answers'
-        }] : [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 0P. Agent Workflow
-    if (rewrite?.matchedIntent === 'agent_workflow') {
-      const q76 = await prisma.knowledgeEntry.findFirst({
-        where: { question: { contains: '76. What can agents do in the agent dashboard?' } },
-        include: { document: true }
-      });
-      return {
-        answer: "Support agents log into the Agent Dashboard to monitor incoming calls and active AI sessions. Agents can accept escalated calls or take over an active call at any moment, use the in-call Knowledge Base Copilot to search company documents in real time, and review post-call summaries and insights.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: q76 ? [{
-          id: q76.id,
-          title: q76.question || '76. What can agents do in the agent dashboard?',
-          category: q76.category || 'workflow',
-          pageNumber: q76.pageNumber || 6,
-          snippet: q76.answer || undefined,
-          documentTitle: q76.document?.title || 'KAIRA 100 Customer Questions and Answers'
-        }] : [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 0Q. Admin Workflow
-    if (rewrite?.matchedIntent === 'admin_workflow') {
-      const q77 = await prisma.knowledgeEntry.findFirst({
-        where: { question: { contains: '77. What can administrators do in the admin dashboard?' } },
-        include: { document: true }
-      });
-      return {
-        answer: "Administrators log into the Admin Dashboard to manage user roles, configure call-quality alert thresholds, upload and index new Knowledge Base PDFs, monitor real-time platform analytics, and download comprehensive call reports.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: q77 ? [{
-          id: q77.id,
-          title: q77.question || '77. What can administrators do in the admin dashboard?',
-          category: q77.category || 'workflow',
-          pageNumber: q77.pageNumber || 6,
-          snippet: q77.answer || undefined,
-          documentTitle: q77.document?.title || 'KAIRA 100 Customer Questions and Answers'
-        }] : [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 0R. Languages Supported
-    if (rewrite?.matchedIntent === 'languages_supported') {
-      const q20 = await prisma.knowledgeEntry.findFirst({
-        where: { question: { contains: '20. Which languages are currently supported?' } },
-        include: { document: true }
-      });
-      return {
-        answer: "KAIRA supports Tamil, English, Telugu, Hindi, Malayalam, and Kannada. The platform includes language preferences and is designed to reply in the customer's detected or chosen language.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: q20 ? [{
-          id: q20.id,
-          title: q20.question || '20. Which languages are currently supported?',
-          category: q20.category || 'language',
-          pageNumber: q20.pageNumber || 3,
-          snippet: q20.answer || undefined,
-          documentTitle: q20.document?.title || 'KAIRA 100 Customer Questions and Answers'
-        }] : [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
     // Strip leading conversational greetings if followed by an actual question
     const strippedQuery = cleanInput.replace(/^(hello|hi|hey|good\s+(morning|afternoon|evening)|howdy)\s*(there|kaira|assistant)?[\s,]+/i, '').trim();
     const effectiveQuery = strippedQuery.length >= 3 ? strippedQuery : cleanInput;
 
-    // 0. Call Introduction Context Check & Dynamic Conversational Continuity
-    const lastAssistantMsg = [...history].reverse().find(m => m.role === 'assistant')?.content?.toLowerCase() || '';
-    const isRespondingToCallIntro = lastAssistantMsg.includes('good time to talk') || lastAssistantMsg.includes('calling from kaira') || lastAssistantMsg.includes('speaking with');
-
-    // 0A. Customer declines call timing ("not a good time", "busy right now", "call back later", etc.)
-    if (
-      /\b(not\s+(?:a\s+)?good\s+time|busy|busy\s+right\s+now|cant\s+talk|cannot\s+talk|call\s+(?:me\s+)?back\s+later|not\s+now|no\s+time)\b/i.test(cleanInput) ||
-      (isRespondingToCallIntro && /^(no|nope|nah|not\s+really)$/i.test(cleanInput))
-    ) {
-      return {
-        answer: "No problem at all! I completely understand. When would be a more convenient time for our team to follow up with you?",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 0B. Customer responds affirmatively or confirms identity to call introduction
-    if (
-      /^(yes\s+speaking|speaking|this\s+is\s+[\w\s]+|yes\s+it\s+is|it\s+is|good\s+time|i\s+can\s+talk|go\s+ahead|sure\s+go\s+ahead)$/i.test(cleanInput) ||
-      (isRespondingToCallIntro && /^(yes|yeah|yep|sure|ok|okay|alright|fine|sounds\s+good)(?:\s+speaking)?(?:\s*,\s*.*)?$/i.test(cleanInput))
-    ) {
-      return {
-        answer: "Wonderful! How may I assist you with KAIRA customer support, our products, or voice services today?",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [{ id: 'kaira-overview', title: 'Company Overview & Mission', category: 'company' }],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // ---------------------------------------------------------
-    // CONVERSATIONAL PLEASANTRIES (strictly when pure greeting/pleasantry)
-    // ---------------------------------------------------------
+    // Conversational Pleasantries
     const isPureGreeting = /^(hi|hello|hey|good\s+(morning|afternoon|evening)|howdy)(\s+(there|kaira|assistant))?$/i.test(cleanInput) ||
       cleanInput === 'hi' || cleanInput === 'hello' || cleanInput === 'hey';
 
@@ -1582,220 +960,40 @@ class KnowledgeService {
       };
     }
 
-    // 2. Support Ticket Status Inquiry (Live DB Grounded)
-    if (/\b(ticket|tickets|complaint|complaints|issue\s+status|ticket\s+status|check\s+my\s+ticket|my\s+request)\b/i.test(effectiveQuery)) {
-      if (customerContext?.tickets && customerContext.tickets.length > 0) {
-        const topTicket = customerContext.tickets[0];
-        const ticketIdShort = topTicket.id.length > 6 ? topTicket.id.slice(-6).toUpperCase() : topTicket.id.toUpperCase();
-        return {
-          answer: `I found your support ticket #${ticketIdShort} regarding "${topTicket.subject}". Its current status is ${topTicket.status} with ${topTicket.priority} priority.`,
-          isGrounded: true,
-          requiresTransfer: false,
-          sources: [{ id: topTicket.id, title: topTicket.subject, category: 'support' }],
-          confidence: 1.0,
-          latencyMs: Date.now() - t0
-        };
-      } else if (customerContext) {
-        return {
-          answer: "You currently have no open support tickets on your account. If you are experiencing an issue, I can transfer you to our live support team or open a ticket for you.",
-          isGrounded: true,
-          requiresTransfer: false,
-          sources: [],
-          confidence: 1.0,
-          latencyMs: Date.now() - t0
-        };
+    // Live Customer Context inquiries (Tickets, Account Details)
+    if (customerContext) {
+      if (/\b(ticket|tickets|complaint|complaints|issue\s+status|ticket\s+status|check\s+my\s+ticket)\b/i.test(effectiveQuery)) {
+        if (customerContext.tickets && customerContext.tickets.length > 0) {
+          const topTicket = customerContext.tickets[0];
+          const ticketIdShort = topTicket.id.length > 6 ? topTicket.id.slice(-6).toUpperCase() : topTicket.id.toUpperCase();
+          return {
+            answer: `I found your support ticket #${ticketIdShort} regarding "${topTicket.subject}". Its current status is ${topTicket.status} with ${topTicket.priority} priority.`,
+            isGrounded: true,
+            requiresTransfer: false,
+            sources: [{ id: topTicket.id, title: topTicket.subject, category: 'support' }],
+            confidence: 1.0,
+            latencyMs: Date.now() - t0
+          };
+        }
+      }
+      if (/\b(my\s+account|my\s+profile|(?:my\s+)?(?:registered\s+)?email|(?:my\s+)?(?:registered\s+)?phone|(?:registered\s+)?name|who\s+am\s+i|my\s+details)\b/i.test(effectiveQuery)) {
+        if (customerContext.customerName || customerContext.customerEmail) {
+          return {
+            answer: `Your account is registered under ${customerContext.customerName || 'our records'}${customerContext.customerEmail ? ' with email ' + customerContext.customerEmail : ''}. How can I assist you with your account today?`,
+            isGrounded: true,
+            requiresTransfer: false,
+            sources: [],
+            confidence: 1.0,
+            latencyMs: Date.now() - t0
+          };
+        }
       }
     }
 
-    // 3. Customer Profile / Account Details Inquiry (Live DB Grounded)
-    if (/\b(my\s+account|my\s+profile|(?:my\s+)?(?:registered\s+)?email|(?:my\s+)?(?:registered\s+)?phone|(?:registered\s+)?name|who\s+am\s+i|my\s+details)\b/i.test(effectiveQuery)) {
-      if (customerContext && (customerContext.customerName || customerContext.customerEmail)) {
-        return {
-          answer: `Your account is registered under ${customerContext.customerName || 'our records'}${customerContext.customerEmail ? ' with email ' + customerContext.customerEmail : ''}. How can I assist you with your account today?`,
-          isGrounded: true,
-          requiresTransfer: false,
-          sources: [],
-          confidence: 1.0,
-          latencyMs: Date.now() - t0
-        };
-      }
-    }
-
-    // 1.2 Customer Name / Identity
-    if (/\b(what\s+is\s+my\s+name|my\s+registered\s+name|who\s+am\s+i|who\s+is\s+logged\s+in)\b/i.test(effectiveQuery)) {
-      if (customerContext?.customerName) {
-        return {
-          answer: `You are currently logged in as ${customerContext.customerName}.`,
-          isGrounded: true,
-          requiresTransfer: false,
-          sources: [{ id: customerContext.customerId || 'user', title: 'Customer Profile', category: 'account' }],
-          confidence: 1.0,
-          latencyMs: Date.now() - t0
-        };
-      } else {
-        return {
-          answer: "You are currently connected as a guest customer. Please sign in to link your registered account.",
-          isGrounded: true,
-          requiresTransfer: false,
-          sources: [],
-          confidence: 1.0,
-          latencyMs: Date.now() - t0
-        };
-      }
-    }
-
-    // 1.3 Customer Registered Email
-    if (/\b(what\s+is\s+my\s+email|my\s+registered\s+email|what\s+email\s+is\s+on\s+file)\b/i.test(effectiveQuery)) {
-      if (customerContext?.customerEmail) {
-        return {
-          answer: `Your registered email address is ${customerContext.customerEmail}.`,
-          isGrounded: true,
-          requiresTransfer: false,
-          sources: [{ id: customerContext.customerId || 'user', title: 'Customer Email', category: 'account' }],
-          confidence: 1.0,
-          latencyMs: Date.now() - t0
-        };
-      } else {
-        return {
-          answer: "There is no registered email address associated with this active session.",
-          isGrounded: true,
-          requiresTransfer: false,
-          sources: [],
-          confidence: 1.0,
-          latencyMs: Date.now() - t0
-        };
-      }
-    }
-
-    // 1.4 Customer Registered Phone
-    if (/\b(what\s+is\s+my\s+phone|my\s+registered\s+phone|my\s+contact\s+number)\b/i.test(effectiveQuery)) {
-      if (customerContext?.customerPhone) {
-        return {
-          answer: `Your registered phone number is ${customerContext.customerPhone}.`,
-          isGrounded: true,
-          requiresTransfer: false,
-          sources: [{ id: customerContext.customerId || 'user', title: 'Customer Phone', category: 'account' }],
-          confidence: 1.0,
-          latencyMs: Date.now() - t0
-        };
-      } else {
-        return {
-          answer: "There is no phone number on file for this session.",
-          isGrounded: true,
-          requiresTransfer: false,
-          sources: [],
-          confidence: 1.0,
-          latencyMs: Date.now() - t0
-        };
-      }
-    }
-
-    // 1.5 Support Ticket Status Inquiry
-    if (/\b(ticket|tickets|complaint|complaints|issue\s+status|ticket\s+status|check\s+my\s+ticket|my\s+request|my\s+support\s+tickets)\b/i.test(effectiveQuery)) {
-      if (customerContext?.tickets && customerContext.tickets.length > 0) {
-        const topTicket = customerContext.tickets[0];
-        const ticketIdShort = topTicket.id.length > 6 ? topTicket.id.slice(-6).toUpperCase() : topTicket.id.toUpperCase();
-        return {
-          answer: `I found your support ticket #${ticketIdShort} regarding "${topTicket.subject}". Its current status is ${topTicket.status} with ${topTicket.priority} priority.`,
-          isGrounded: true,
-          requiresTransfer: false,
-          sources: [{ id: topTicket.id, title: topTicket.subject, category: 'support' }],
-          confidence: 1.0,
-          latencyMs: Date.now() - t0
-        };
-      } else if (customerContext?.customerId) {
-        try {
-          const dbTickets = await prisma.supportTicket.findMany({
-            where: { customerId: customerContext.customerId },
-            orderBy: { createdAt: 'desc' },
-            take: 1
-          });
-          if (dbTickets.length > 0) {
-            const topTicket = dbTickets[0];
-            const ticketIdShort = topTicket.id.length > 6 ? topTicket.id.slice(-6).toUpperCase() : topTicket.id.toUpperCase();
-            return {
-              answer: `I found your support ticket #${ticketIdShort} regarding "${topTicket.subject}". Its current status is ${topTicket.status} with ${topTicket.priority} priority.`,
-              isGrounded: true,
-              requiresTransfer: false,
-              sources: [{ id: topTicket.id, title: topTicket.subject, category: 'support' }],
-              confidence: 1.0,
-              latencyMs: Date.now() - t0
-            };
-          }
-        } catch (_) { }
-      }
-      return {
-        answer: "You currently have no open support tickets on your account. If you are experiencing an issue, I can transfer you to our live support team or open a ticket for you.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 1.6 Customer Past Calls / Call History
-    if (/\b(my\s+past\s+calls|my\s+previous\s+calls?|call\s+history|when\s+did\s+i\s+last\s+call|my\s+last\s+call|how\s+many\s+calls)\b/i.test(effectiveQuery)) {
-      if (customerContext?.customerId) {
-        try {
-          const pastCalls = await prisma.callRecord.findMany({
-            where: { customerId: customerContext.customerId },
-            orderBy: { startTime: 'desc' },
-            take: 1
-          });
-          if (pastCalls.length > 0) {
-            const lastCall = pastCalls[0];
-            return {
-              answer: `Your last call was on ${new Date(lastCall.startTime).toLocaleDateString()} with status '${lastCall.status}' and duration ${lastCall.duration} seconds.`,
-              isGrounded: true,
-              requiresTransfer: false,
-              sources: [{ id: lastCall.id, title: 'Call Record History', category: 'account' }],
-              confidence: 1.0,
-              latencyMs: Date.now() - t0
-            };
-          }
-        } catch (_) { }
-      }
-      return {
-        answer: "You have no previous recorded calls on your account.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // 1.7 Customer Profile / Account Details Overview
-    if (/\b(my\s+account|my\s+profile|my\s+details|my\s+information)\b/i.test(effectiveQuery)) {
-      if (customerContext && (customerContext.customerName || customerContext.customerEmail || customerContext.customerId)) {
-        return {
-          answer: `Your account is registered under ${customerContext.customerName || 'our records'}${customerContext.customerId ? ' (ID: ' + customerContext.customerId + ')' : ''}${customerContext.customerEmail ? ' with email ' + customerContext.customerEmail : ''}. How can I assist you with your account today?`,
-          isGrounded: true,
-          requiresTransfer: false,
-          sources: [],
-          confidence: 1.0,
-          latencyMs: Date.now() - t0
-        };
-      } else {
-        return {
-          answer: "To look up your specific account records, please make sure you are signed in or verify your account details with our support team.",
-          isGrounded: true,
-          requiresTransfer: false,
-          sources: [],
-          confidence: 1.0,
-          latencyMs: Date.now() - t0
-        };
-      }
-    }
-
-    // ---------------------------------------------------------
-    // HUMAN TRANSFER REQUEST INTERCEPTION GUARD
-    // Protects questions ABOUT agent capabilities/rules (Q13, Q88, Q89, Q90, Q93)
-    // ---------------------------------------------------------
+    // Human Transfer Request Interception
     const isAskingAboutAgentOrCapabilities = (
       /\b(can|could|does|do|how|what|why|is|will|when|explain)\b/i.test(cleanInput) &&
-      /\b(speak|talk|correct|hear|listen|see|view|review|work|happen|take over|takeover|join|intervene|assist|override|monitor|suggest|suggestion|suggestions|escalate|escalation)\b/i.test(cleanInput)
+      /\b(speak|talk|correct|hear|listen|see|view|review|work|happen|take over|takeover|join|intervene|assist|override|monitor|suggest|suggestions|escalate|escalation)\b/i.test(cleanInput)
     ) || /\b(at the same time|simultaneous|simultaneously)\b/i.test(cleanInput);
 
     const isExplicitTransferRequest = !isAskingAboutAgentOrCapabilities && (
@@ -1814,90 +1012,7 @@ class KnowledgeService {
       };
     }
 
-    // ---------------------------------------------------------
-    // EARLY GENERAL RESPONDERS (Math, Jokes, Geography, Broad IT)
-    // ---------------------------------------------------------
-    // Math calculation handling
-    const mathMatch = cleanInput.match(/(?:what is|calculate|compute)?\s*(\d+)\s*(\+|\-|\*|\/|plus|minus|times|divided by)\s*(\d+)/i);
-    if (mathMatch) {
-      const a = parseInt(mathMatch[1], 10);
-      const op = mathMatch[2].toLowerCase();
-      const b = parseInt(mathMatch[3], 10);
-      let resVal = 0;
-      if (op === '+' || op === 'plus') resVal = a + b;
-      else if (op === '-' || op === 'minus') resVal = a - b;
-      else if (op === '*' || op === 'times') resVal = a * b;
-      else if (op === '/' || op === 'divided by') resVal = b !== 0 ? Math.round((a / b) * 100) / 100 : 0;
-
-      return {
-        answer: `The answer is ${resVal}. How may I help you with KAIRA products or customer support today?`,
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // World Geography & Trivia
-    if (/\b(capital of france)\b/i.test(cleanInput)) {
-      return {
-        answer: "The capital of France is Paris.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-    if (/\b(capital of india)\b/i.test(cleanInput)) {
-      return {
-        answer: "The capital of India is New Delhi.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-    if (/\b(capital of (?:the )?(?:usa|united states))\b/i.test(cleanInput)) {
-      return {
-        answer: "The capital of the United States is Washington, D.C.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 1.0,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // General IT definition
-    if (/\b(what is cloud computing)\b/i.test(cleanInput)) {
-      return {
-        answer: "Cloud computing is the on-demand delivery of computing services including servers, storage, and networking over the internet with pay-as-you-go pricing.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 0.95,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // Humor & Jokes
-    if (/\b(joke|funny|laugh|tell me a joke)\b/i.test(cleanInput)) {
-      return {
-        answer: "Why don't scientists trust atoms? Because they make up everything! How may I assist you today?",
-        isGrounded: false,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 0.9,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // ---------------------------------------------------------
-    // CONVERSATIONAL FOLLOW-UP CONTEXT EXPANSION
-    // ---------------------------------------------------------
+    // Conversational follow-up context expansion
     let enrichedQuery = effectiveQuery;
     const isFollowUpQuery = (
       /\b(it|they|them|this|that|these|those|there|here|switch|during|what about|how about|tell me more|elaborate|clarify|explain more|also|too|again|how much|cost|price|where)\b/i.test(effectiveQuery) ||
@@ -1919,27 +1034,11 @@ class KnowledgeService {
       }
     }
 
-    // Check if customer is asking for clarification / elaboration on previous turn
-    const isClarificationRequest = /\b(elaborate|tell\s+me\s+more|explain\s+more|what\s+do\s+you\s+mean|can\s+you\s+clarify|details|more\s+info)\b/i.test(cleanInput);
-
-    // Handle clear food-ordering intents before fuzzy KB matching. A generic
-    // overlap such as "office" must not make an unrelated company FAQ look grounded.
-    if (/\b(?:order|ordering|delivery|deliver)\b.{0,60}\b(?:pizzas?|food|burgers?|restaurants?)\b|\b(?:pizzas?|food|burgers?|restaurants?)\b.{0,60}\b(?:order|ordering|delivery|deliver)\b/i.test(cleanInput)) {
-      return {
-        answer: "I specialize in KAIRA's AI customer communication platform and voice calling. I cannot order food, but I can connect you with a human representative for help.",
-        isGrounded: false,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 0.8,
-        latencyMs: Date.now() - t0
-      };
-    }
-
     // ---------------------------------------------------------
-    // PRIORITY 2: SEARCH APPROVED KNOWLEDGE BASE (100 Q&A PDF)
+    // HYBRID RETRIEVAL (BM25 + Semantic Vector + Reciprocal Rank Fusion)
     // ---------------------------------------------------------
     let matches = await this.search(effectiveQuery);
-    if (matches.length === 0 || matches[0].score < 0.60) {
+    if (matches.length === 0 || matches[0].score < 0.55) {
       if (enrichedQuery !== effectiveQuery) {
         const enrichedMatches = await this.search(enrichedQuery);
         if (enrichedMatches.length > 0 && (matches.length === 0 || enrichedMatches[0].score > matches[0].score)) {
@@ -1951,13 +1050,9 @@ class KnowledgeService {
       matches = await this.search(trimmedQuery);
     }
 
-    // If matching approved KB entry found
-    if (matches.length > 0 && matches[0].score >= 0.20) {
+    // Grounded match found in Knowledge Base
+    if (matches.length > 0 && matches[0].score >= 0.25) {
       const topMatch = matches[0];
-      const contextText = matches
-        .map(m => `Title: ${m.entry.title}\nCategory: ${m.entry.category}\nQuestion: ${m.entry.question || 'N/A'}\nAnswer: ${m.entry.answer || 'N/A'}\nDetails: ${m.entry.content}`)
-        .join('\n\n---\n\n');
-
       const conflictCheck = this.detectConflict(matches);
       const mappedSources: GroundedSource[] = matches.map(m => ({
         id: m.entry.id,
@@ -1970,81 +1065,35 @@ class KnowledgeService {
         snippet: m.entry.answer || (m.entry.content ? m.entry.content.slice(0, 220) : '')
       }));
 
-      // Try OpenAI if available and not quota-exhausted
-      if (this.openai && !this.isQuotaExhausted) {
-        try {
-          const systemPrompt = `You are KAIRA's official AI voice agent speaking live with a customer over a phone call.
-Keep answers clear, helpful, conversational and natural (2 to 4 sentences).
-Do not use bullet points, markdown or long paragraphs. Speak naturally like a human phone agent.
-
-APPROVED KNOWLEDGE BASE CONTEXT:
-${contextText}`;
-
-          const messages: any[] = [{ role: 'system', content: systemPrompt }];
-          if (history.length > 0) {
-            messages.push(...history.slice(-4));
-          }
-          messages.push({ role: 'user', content: trimmedQuery });
-
-          const completion = await this.openai.chat.completions.create({
-            model: 'gpt-4o-mini',
-            messages,
-            temperature: 0.2,
-            max_tokens: 250
-          });
-
-          const reply = completion.choices[0]?.message?.content?.trim();
-          if (reply && reply.length > 5) {
-            return {
-              answer: conflictCheck.isConflict ? `⚠️ Conflicting Information: ${reply}` : reply,
-              isGrounded: true,
-              requiresTransfer: false,
-              sources: mappedSources,
-              confidence: topMatch.score,
-              isConflict: conflictCheck.isConflict,
-              latencyMs: Date.now() - t0
-            };
-          }
-        } catch (err: any) {
-          if (err?.code === 'insufficient_quota' || err?.status === 429) {
-            this.isQuotaExhausted = true;
-            console.warn('[KnowledgeService] OpenAI quota exhausted. Switching to zero-latency built-in NLP engine.');
-          }
-        }
-      }
-
-      // If user requested clarification/more detail, provide the deeper content chunk
-      if (isClarificationRequest && topMatch.entry.content) {
-        const sentences = topMatch.entry.content.split(/[.\n]/).filter((s: string) => s.trim().length > 10);
-        const detailedAnswer = sentences.slice(0, 4).join('. ').trim() + '.';
-        return {
-          answer: conflictCheck.isConflict ? `⚠️ Conflicting Information: ${detailedAnswer}` : detailedAnswer,
-          isGrounded: true,
-          requiresTransfer: false,
-          sources: mappedSources,
-          confidence: topMatch.score,
-          isConflict: conflictCheck.isConflict,
-          latencyMs: Date.now() - t0
-        };
-      }
-
-      // Built-in zero-latency Grounded answer from official 100 Q&A
+      // PHASE 3 DIRECT FAQ EXTRACTION:
+      // For verified approved FAQ entries, extract the validated answer directly from the KB document!
+      // This produces sub-10ms response times and completely eliminates LLM hallucination risk.
       if (topMatch.entry.answer) {
         let rawAnswer = topMatch.entry.answer;
+
+        // Ensure business hours FAQ cleanly clarifies official schedule
         if (topMatch.entry.question.includes('98') || topMatch.entry.question.toLowerCase().includes('business hours')) {
-          rawAnswer = "Business hours were not supplied in our approved documentation. Please refer to our officially published schedule, or I would be happy to connect you with a member of our human support team.";
+          rawAnswer = "Business hours were not supplied in this FAQ. The AI must refer to the organization's officially published hours, or I would be happy to connect you with a member of our human support team.";
         }
+
+        const isUnsupplied = rawAnswer.toLowerCase().includes('not supplied');
+        const isGrounded = (topMatch.entry.question.includes('98') || topMatch.entry.question.toLowerCase().includes('business hours'))
+          ? true
+          : !isUnsupplied;
+
         const spokenAns = formatForVoice(rawAnswer, false);
         return {
           answer: conflictCheck.isConflict ? `Conflicting Information: ${spokenAns}` : spokenAns,
-          isGrounded: true,
+          isGrounded,
           requiresTransfer: false,
           sources: mappedSources,
           confidence: topMatch.score,
           isConflict: conflictCheck.isConflict,
           latencyMs: Date.now() - t0
         };
-      } else if (topMatch.entry.content) {
+      }
+
+      if (topMatch.entry.content) {
         const sentences = topMatch.entry.content.split(/[.\n]/).filter((s: string) => s.trim().length > 10);
         const answer = sentences.slice(0, 4).join('. ').trim() + '.';
         const rawAns = answer.length > 10 ? answer : topMatch.entry.content.slice(0, 400);
@@ -2062,129 +1111,15 @@ ${contextText}`;
     }
 
     // ---------------------------------------------------------
-    // PRIORITY 4: UNKNOWN / UNSUPPORTED COMPANY INFORMATION
-    // Strictly refuses to hallucinate company details outside the approved KB
+    // UNKNOWN / MISSING COMPANY INFORMATION (PHASE 3, RULE 6)
     // ---------------------------------------------------------
-    const isCompanySpecificQuery = /\b(kairas?|company|platform|your\s+(?:company|service|services|product|products|office|location|ceo|founder|founders|team|policy|policies|refund|plan|plans|pricing|rate|rates|fee|fees|cost|terms|headquarters|contact|phone|email|stock|ticker|investor|investors|discount|code))\b/i.test(cleanInput) ||
-      /\b(stock market|stock ticker|surveillance drone|groceries|discount code|private cell|cell phone|ceo|founder|executive)\b/i.test(cleanInput);
-
-    if (isCompanySpecificQuery) {
-      await this.trackKnowledgeGap(trimmedQuery);
-      return {
-        answer: "I'm sorry, I couldn't find confirmed information about that in our available documents. Would you like me to connect you with one of our support agents?",
-        isGrounded: false,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 0.9,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // ---------------------------------------------------------
-    // PRIORITY 3: GENERAL QUESTIONS (World Knowledge, Tech, Math, etc.)
-    // ---------------------------------------------------------
-    // Try OpenAI for general question answering if active
-    if (this.openai && !this.isQuotaExhausted) {
-      try {
-        const systemPrompt = `You are KAIRA's official AI voice agent speaking on a phone call.
-Answer the customer's general question helpfully, politely and concisely (1 to 2 sentences max).
-Do not guess or fabricate private corporate details.`;
-
-        const messages: any[] = [{ role: 'system', content: systemPrompt }];
-        if (history.length > 0) {
-          messages.push(...history.slice(-4));
-        }
-        messages.push({ role: 'user', content: trimmedQuery });
-
-        const completion = await this.openai.chat.completions.create({
-          model: 'gpt-4o-mini',
-          messages,
-          temperature: 0.3,
-          max_tokens: 80
-        });
-
-        const reply = completion.choices[0]?.message?.content?.trim();
-        if (reply && reply.length > 5) {
-          return {
-            answer: reply,
-            isGrounded: false,
-            requiresTransfer: false,
-            sources: [],
-            confidence: 0.85,
-            latencyMs: Date.now() - t0
-          };
-        }
-      } catch (err: any) {
-        if (err?.code === 'insufficient_quota' || err?.status === 429) {
-          this.isQuotaExhausted = true;
-        }
-      }
-    }
-
-    // General Tech Definitions
-    if (/\b(what is (an )?ai agent|what is voice ai|what is artificial intelligence)\b/i.test(cleanInput)) {
-      return {
-        answer: "An AI voice agent is an intelligent conversational system that speaks, listens, and resolves customer inquiries in real time.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 0.95,
-        latencyMs: Date.now() - t0
-      };
-    }
-    if (/\b(what is webrtc|webrtc)\b/i.test(cleanInput)) {
-      return {
-        answer: "WebRTC is an open-source technology enabling real-time, high-fidelity voice, video, and data communication directly in web browsers without plugins.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 0.95,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // External services outside KAIRA scope
-    if (/\b(pizza|food|burger|order|delivery|restaurant)\b/i.test(cleanInput)) {
-      return {
-        answer: "I specialize in KAIRA's AI customer communication platform and voice calling. I cannot order food, but I'm happy to help with our voice solutions!",
-        isGrounded: false,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 0.8,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    if (/\b(weather|temperature|rain|forecast)\b/i.test(cleanInput)) {
-      return {
-        answer: "I do not have live meteorological sensors, but I can help you with anything related to KAIRA's voice platform and customer support!",
-        isGrounded: false,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 0.8,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    if (/\b(help|assist|guidance|what\s+can\s+you\s+help|features)\b/i.test(cleanInput)) {
-      return {
-        answer: "I can assist you with KAIRA's voice agent features, subscription tiers, multi-language support across 21 languages, or connect you to our live team.",
-        isGrounded: true,
-        requiresTransfer: false,
-        sources: [],
-        confidence: 0.9,
-        latencyMs: Date.now() - t0
-      };
-    }
-
-    // Default polite conversational fallback
     await this.trackKnowledgeGap(trimmedQuery);
     return {
       answer: FALLBACK_MESSAGE,
       isGrounded: false,
       requiresTransfer: false,
       sources: [],
-      confidence: 0.6,
+      confidence: 0.9,
       latencyMs: Date.now() - t0
     };
   }
@@ -2236,8 +1171,6 @@ Do not guess or fabricate private corporate details.`;
 
   /**
    * Dedicated Agent Copilot Method
-   * Grounded strictly in approved Knowledge Base documents.
-   * Never fabricates missing info. Flags conflicts.
    */
   public async getCopilotSuggestion(
     query: string,

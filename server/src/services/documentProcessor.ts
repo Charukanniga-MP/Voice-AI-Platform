@@ -6,6 +6,7 @@ import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
 import { prisma } from '../db.js';
 import { embeddingService } from './embedding.service.js';
+import { knowledgeService } from './knowledge.js';
 
 export interface DocumentChunk {
   title: string;
@@ -406,6 +407,7 @@ export async function processUploadedDocument(
     });
 
     console.log(`[DocProcessor] Successfully indexed ${chunks.length} chunks with embeddings for document: "${baseTitle}"`);
+    knowledgeService.invalidateCache();
 
     return {
       success: true,
@@ -535,6 +537,8 @@ export async function deleteDocument(documentId: string): Promise<void> {
   } catch (err) {
     console.warn(`[DocProcessor] Could not delete disk file for ${doc.fileName}:`, err);
   }
+
+  knowledgeService.invalidateCache();
 }
 
 export const documentProcessor = {

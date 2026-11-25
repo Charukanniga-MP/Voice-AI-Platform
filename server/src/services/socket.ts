@@ -1356,8 +1356,8 @@ export function initSocketServer(io: SocketIOServer) {
         const buf = Buffer.isBuffer(raw)
           ? raw
           : raw instanceof ArrayBuffer
-          ? Buffer.from(raw)
-          : Buffer.from(raw as string, 'base64');
+            ? Buffer.from(raw)
+            : Buffer.from(raw as string, 'base64');
 
         const metrics = sttService.writeAudioChunk(data.callId, buf);
         socket.emit('stt:audio_telemetry', {
@@ -1742,22 +1742,22 @@ export function initSocketServer(io: SocketIOServer) {
           }
         }).catch(e => console.error('[AICall] Error saving customer transcript:', e));
 
-        // 2. Fetch sentiment and conversation history in parallel
-        const [sentimentResult, history] = await Promise.all([
+        // Signal thinking state to customer UI immediately
+        io.to(`call:${data.callId}`).emit('call:ai_thinking', { callId: data.callId, isThinking: true });
+
+        // Retrieve active in-memory multi-turn context
+        const callContext = activeCallContexts.get(data.callId) || [];
+        callContext.push({ sender: 'customer', text: queryText, timestamp: new Date() });
+
+        // 2. Run sentiment analysis and grounded Knowledge Base retrieval concurrently
+        const [sentimentResult, response] = await Promise.all([
           sentimentService.processCustomerUtterance({
             callId: data.callId,
             text: queryText,
             language: callLang,
             customerId: call.customerId
           }),
-          prisma.callTranscript.findMany({
-            where: { callRecordId: call.id },
-            orderBy: { timestamp: 'desc' },
-            take: 6
-          }).then(recent => recent.reverse().map(t => ({
-            role: (t.sender === 'customer' ? 'user' : 'assistant') as 'user' | 'assistant',
-            content: t.text
-          }))).catch(() => [])
+          translationService.getAiAnswerSuggestion(queryText, callLang, callContext, customerContext)
         ]);
 
         // Real-time sentiment update broadcast
@@ -1826,16 +1826,6 @@ export function initSocketServer(io: SocketIOServer) {
           }
         }).catch(err => console.warn('[Socket] Realtime customer turn intelligence error:', err));
 
-        // Signal thinking state to customer UI
-        io.to(`call:${data.callId}`).emit('call:ai_thinking', { callId: data.callId, isThinking: true });
-
-        // Retrieve active multi-turn context
-        const callContext = activeCallContexts.get(data.callId) || [];
-        callContext.push({ sender: 'customer', text: queryText, timestamp: new Date() });
-
-        // Multilingual grounded knowledge retrieval with universal question intelligence & live customer context
-        const response = await translationService.getAiAnswerSuggestion(queryText, callLang, callContext, customerContext);
-
         const aiResponseTime = Date.now();
         const clientSpeechEnd = (data as any).clientSentAt || (data as any).speechEndTime || aiResponseTime;
         const totalRoundTripMs = Math.max(15, aiResponseTime - clientSpeechEnd);
@@ -1852,6 +1842,11 @@ export function initSocketServer(io: SocketIOServer) {
 
         const respLang = response.language || callLang;
         const aiText = response.answer || FALLBACK_MESSAGE;
+
+        const history = callContext.map(c => ({
+          role: (c.sender === 'customer' ? 'user' : 'assistant') as 'user' | 'assistant',
+          content: c.text
+        }));
 
         // Intelligent AI-to-Human Handover Evaluation
         const handoverEval = await handoverService.evaluateHandover({

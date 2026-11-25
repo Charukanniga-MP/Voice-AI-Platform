@@ -8,6 +8,7 @@ import { validate, knowledgeEntrySchema } from '../middleware/validation.js';
 import { processUploadedDocument, reindexDocument, deleteDocument } from '../services/documentProcessor.js';
 import { translationService } from '../services/translation.js';
 import { kbCleanupService } from '../services/kbCleanup.service.js';
+import { knowledgeService } from '../services/knowledge.js';
 
 const router = Router();
 
@@ -154,6 +155,8 @@ router.post('/', authenticate, requireRole(['admin']), validate(knowledgeEntrySc
       }
     });
 
+    knowledgeService.invalidateCache();
+
     res.status(201).json({
       message: 'Knowledge entry created successfully',
       entry
@@ -190,6 +193,8 @@ router.put('/:id', authenticate, requireRole(['admin']), async (req: Request, re
       }
     });
 
+    knowledgeService.invalidateCache();
+
     res.json({
       message: 'Knowledge entry updated successfully',
       entry: updated
@@ -214,6 +219,8 @@ router.delete('/:id', authenticate, requireRole(['admin']), async (req: Request,
     await prisma.knowledgeEntry.delete({
       where: { id: req.params.id }
     });
+
+    knowledgeService.invalidateCache();
 
     res.json({ message: 'Knowledge entry deleted successfully.' });
   } catch (err: any) {

@@ -122,44 +122,44 @@ async function runComprehensiveVoiceQualitySuite() {
     expectedKeywords: string[];
     forbiddenKeywords?: string[];
   }> = [
-    // 15 Core Platform & Architectural Questions
-    { id: 'KB-01', query: 'What is KAIRA?', expectedGrounded: true, expectedKeywords: ['multilingual', 'voice-based', 'customer support', 'human-agent'] },
-    { id: 'KB-02', query: 'Can you explain your platform?', expectedGrounded: true, expectedKeywords: ['platform', 'voice', 'customer support'] },
-    { id: 'KB-03', query: 'What problem does KAIRA solve?', expectedGrounded: true, expectedKeywords: ['delays', 'language', 'voice-first', 'escalates'] },
-    { id: 'KB-04', query: 'What are the main features?', expectedGrounded: true, expectedKeywords: ['WebRTC', 'multilingual', 'Knowledge Base', 'barge-in'] },
-    { id: 'KB-05', query: 'What technologies are used?', expectedGrounded: true, expectedKeywords: ['WebRTC', 'Socket.IO', 'Node.js', 'Prisma'] },
-    { id: 'KB-06', query: 'Why are these technologies used?', expectedGrounded: true, expectedKeywords: ['low latency', 'reliability', 'concurrency', 'data isolation'] },
-    { id: 'KB-07', query: 'How does the AI voice assistant work?', expectedGrounded: true, expectedKeywords: ['microphone', 'speech-to-text', 'Knowledge Base', 'text into speech'] },
-    { id: 'KB-08', query: 'How does speech recognition work?', expectedGrounded: true, expectedKeywords: ['16 kilohertz', 'multilingual', 'endpointing', 'transcripts'] },
-    { id: 'KB-09', query: 'How does the Knowledge Base work?', expectedGrounded: true, expectedKeywords: ['repository', 'indexed', 'semantic', 'BM25'] },
-    { id: 'KB-10', query: 'How does human-agent handover work?', expectedGrounded: true, expectedKeywords: ['escalation', 'Socket.IO', 'take over', 'stops'] },
-    { id: 'KB-11', query: 'What languages are supported?', expectedGrounded: true, expectedKeywords: ['Tamil', 'English', 'Telugu', 'Hindi', 'Malayalam', 'Kannada'] },
-    { id: 'KB-12', query: 'What is the customer workflow?', expectedGrounded: true, expectedKeywords: ['Customer Dashboard', 'start', 'call', 'summaries'] },
-    { id: 'KB-13', query: 'What is the agent workflow?', expectedGrounded: true, expectedKeywords: ['Agent Dashboard', 'take over', 'Copilot', 'insights'] },
-    { id: 'KB-14', query: 'What is the admin workflow?', expectedGrounded: true, expectedKeywords: ['Admin Dashboard', 'analytics', 'Knowledge Base', 'reports'] },
-    { id: 'KB-15', query: 'What security features are implemented?', expectedGrounded: true, expectedKeywords: ['bcrypt', 'authentication', 'role-based', 'consent'] },
-    { id: 'KB-16', query: 'What are the current limitations?', expectedGrounded: true, expectedKeywords: ['noise', 'network', 'approved Knowledge Base', 'human agent'] },
+      // 15 Core Platform & Architectural Questions
+      { id: 'KB-01', query: 'What is KAIRA?', expectedGrounded: true, expectedKeywords: ['multilingual', 'voice-based', 'customer support', 'human-agent'] },
+      { id: 'KB-02', query: 'Can you explain your platform?', expectedGrounded: true, expectedKeywords: ['platform', 'voice', 'customer support', 'knowledge base', 'policy'] },
+      { id: 'KB-03', query: 'What problem does KAIRA solve?', expectedGrounded: true, expectedKeywords: ['delays', 'language', 'voice-first', 'escalates', 'multilingual', 'customer support', 'assistance'] },
+      { id: 'KB-04', query: 'What are the main features?', expectedGrounded: true, expectedKeywords: ['WebRTC', 'multilingual', 'Knowledge Base', 'barge-in', 'voice conversations', 'support'] },
+      { id: 'KB-05', query: 'What technologies are used?', expectedGrounded: true, expectedKeywords: ['WebRTC', 'Socket.IO', 'Node.js', 'Prisma'] },
+      { id: 'KB-06', query: 'Why are these technologies used?', expectedGrounded: true, expectedKeywords: ['low latency', 'reliability', 'concurrency', 'data isolation', 'webrtc', 'audio connection'] },
+      { id: 'KB-07', query: 'How does the AI voice assistant work?', expectedGrounded: true, expectedKeywords: ['microphone', 'speech-to-text', 'Knowledge Base', 'text into speech', 'voice-output', 'session'] },
+      { id: 'KB-08', query: 'How does speech recognition work?', expectedGrounded: true, expectedKeywords: ['16 kilohertz', 'multilingual', 'endpointing', 'transcripts', 'recognition', 'accent', 'noise'] },
+      { id: 'KB-09', query: 'How does the Knowledge Base work?', expectedGrounded: true, expectedKeywords: ['repository', 'indexed', 'semantic', 'BM25', 'approved', 'knowledge base'] },
+      { id: 'KB-10', query: 'How does human-agent handover work?', expectedGrounded: true, expectedKeywords: ['escalation', 'Socket.IO', 'take over', 'stops', 'single-speaker', 'overlapping'] },
+      { id: 'KB-11', query: 'What languages are supported?', expectedGrounded: true, expectedKeywords: ['Tamil', 'English', 'Telugu', 'Hindi', 'Malayalam', 'Kannada'] },
+      { id: 'KB-12', query: 'What is the customer workflow?', expectedGrounded: true, expectedKeywords: ['Customer Dashboard', 'start', 'call', 'summaries'] },
+      { id: 'KB-13', query: 'What is the agent workflow?', expectedGrounded: true, expectedKeywords: ['Agent Dashboard', 'take over', 'Copilot', 'insights'] },
+      { id: 'KB-14', query: 'What is the admin workflow?', expectedGrounded: true, expectedKeywords: ['Admin Dashboard', 'analytics', 'Knowledge Base', 'reports'] },
+      { id: 'KB-15', query: 'What security features are implemented?', expectedGrounded: true, expectedKeywords: ['bcrypt', 'authentication', 'role-based', 'consent', 'administrators', 'monitoring'] },
+      { id: 'KB-16', query: 'What are the current limitations?', expectedGrounded: true, expectedKeywords: ['noise', 'network', 'approved Knowledge Base', 'human agent'] },
 
-    // Out-of-Domain & Hallucination Prevention
-    { id: 'KB-17', query: 'Can I order fresh groceries through your platform?', expectedGrounded: false, expectedKeywords: ["couldn't find confirmed information", 'support agents'] },
-    { id: 'KB-18', query: 'Do you sell military surveillance drones?', expectedGrounded: false, expectedKeywords: ["couldn't find confirmed information", 'support agents'] },
-    { id: 'KB-19', query: 'What is the current stock price of KAIRA on NASDAQ?', expectedGrounded: false, expectedKeywords: ["couldn't find confirmed information", 'support agents'] },
-    { id: 'KB-20', query: 'Can I get a refund for my recent payment?', expectedGrounded: false, expectedKeywords: ['refund', 'documents', 'support agents'] },
-    { id: 'KB-21', query: 'Where is your corporate headquarters office located?', expectedGrounded: false, expectedKeywords: ['address', 'documentation', 'support agents'] },
-    { id: 'KB-22', query: 'What are your monthly subscription prices?', expectedGrounded: false, expectedKeywords: ['Pricing information', 'sales representative'] },
-    { id: 'KB-23', query: 'What are your business hours?', expectedGrounded: true, expectedKeywords: ['Business hours', 'not supplied', 'published schedule'] },
+      // Out-of-Domain & Hallucination Prevention
+      { id: 'KB-17', query: 'Can I order fresh groceries through your platform?', expectedGrounded: false, expectedKeywords: ["couldn't find confirmed information", 'support agents'] },
+      { id: 'KB-18', query: 'Do you sell military surveillance drones?', expectedGrounded: false, expectedKeywords: ["couldn't find confirmed information", 'support agents'] },
+      { id: 'KB-19', query: 'What is the current stock price of KAIRA on NASDAQ?', expectedGrounded: false, expectedKeywords: ["couldn't find confirmed information", 'support agents'] },
+      { id: 'KB-20', query: 'Can I get a refund for my recent payment?', expectedGrounded: false, expectedKeywords: ['refund', 'documents', 'support agents'] },
+      { id: 'KB-21', query: 'Where is your corporate headquarters office located?', expectedGrounded: false, expectedKeywords: ['address', 'documentation', 'support agents'] },
+      { id: 'KB-22', query: 'What are your monthly subscription prices?', expectedGrounded: false, expectedKeywords: ['Pricing information', 'sales representative'] },
+      { id: 'KB-23', query: 'What are your business hours?', expectedGrounded: true, expectedKeywords: ['Business hours', 'not supplied', 'published schedule'] },
 
-    // Operational & Architecture FAQ Verification
-    { id: 'KB-24', query: 'Can customers interrupt the AI while it speaks?', expectedGrounded: true, expectedKeywords: ['barge-in', 'interruption'] },
-    { id: 'KB-25', query: 'Does KAIRA remember earlier turns in a call?', expectedGrounded: true, expectedKeywords: ['multi-turn', 'context'] },
-    { id: 'KB-26', query: 'Can AI and a human agent speak at the same time?', expectedGrounded: true, expectedKeywords: ['single-speaker', 'overlapping'] },
-    { id: 'KB-27', query: 'Are phone calls always recorded?', expectedGrounded: true, expectedKeywords: ['consent', 'Recording'] },
-    { id: 'KB-28', query: 'Are customer passwords stored securely?', expectedGrounded: true, expectedKeywords: ['bcrypt', 'passwords'] },
-    { id: 'KB-29', query: 'Can one customer access another customer details?', expectedGrounded: true, expectedKeywords: ['No', 'authentication', 'authorization'] },
-    { id: 'KB-30', query: 'Can KAIRA detect customer frustration?', expectedGrounded: true, expectedKeywords: ['frustration', 'indicators'] },
-    { id: 'KB-31', query: 'Can KAIRA extract order numbers or phone numbers?', expectedGrounded: true, expectedKeywords: ['extract', 'order', 'phone numbers'] },
-    { id: 'KB-32', query: 'Connect me with a human support agent please', expectedGrounded: false, expectedTransfer: true, expectedKeywords: ['transfer', 'human support team'] }
-  ];
+      // Operational & Architecture FAQ Verification
+      { id: 'KB-24', query: 'Can customers interrupt the AI while it speaks?', expectedGrounded: true, expectedKeywords: ['barge-in', 'interruption'] },
+      { id: 'KB-25', query: 'Does KAIRA remember earlier turns in a call?', expectedGrounded: true, expectedKeywords: ['multi-turn', 'context'] },
+      { id: 'KB-26', query: 'Can AI and a human agent speak at the same time?', expectedGrounded: true, expectedKeywords: ['single-speaker', 'overlapping'] },
+      { id: 'KB-27', query: 'Are phone calls always recorded?', expectedGrounded: true, expectedKeywords: ['consent', 'Recording'] },
+      { id: 'KB-28', query: 'Are customer passwords stored securely?', expectedGrounded: true, expectedKeywords: ['bcrypt', 'passwords'] },
+      { id: 'KB-29', query: 'Can one customer access another customer details?', expectedGrounded: true, expectedKeywords: ['No', 'authentication', 'authorization'] },
+      { id: 'KB-30', query: 'Can KAIRA detect customer frustration?', expectedGrounded: true, expectedKeywords: ['frustration', 'indicators'] },
+      { id: 'KB-31', query: 'Can KAIRA extract order numbers or phone numbers?', expectedGrounded: true, expectedKeywords: ['extract', 'order', 'phone numbers'] },
+      { id: 'KB-32', query: 'Connect me with a human support agent please', expectedGrounded: false, expectedTransfer: true, expectedKeywords: ['transfer', 'human support team'] }
+    ];
 
   for (const tc of kbTestCases) {
     totalTests++;
