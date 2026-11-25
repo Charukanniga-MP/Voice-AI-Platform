@@ -39,6 +39,11 @@ export interface ProviderStatusResponse {
   hasCredentials?: boolean;
   message?: string;
   details?: Record<string, any>;
+  apiAuthentication?: 'connected' | 'failed' | 'unconfigured';
+  accountStatus?: 'active' | 'inactive' | 'trial' | 'unconfigured';
+  callerIdStatus?: 'configured' | 'missing';
+  browserCallingStatus?: 'enabled' | 'not_enabled';
+  realCallingStatus?: 'ready' | 'activation_required' | 'simulation_mode';
 }
 
 class TelephonyVoiceManager {
@@ -184,7 +189,8 @@ class TelephonyVoiceManager {
         },
         body: JSON.stringify({
           customerPhone: normalizedPhone,
-          customerName: customerName || 'Customer'
+          customerName: customerName || 'Customer',
+          agentPhoneOrClient: providerName === 'twilio' ? 'browser' : undefined
         })
       });
 

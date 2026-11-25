@@ -305,7 +305,7 @@ router.post('/voice', validateTwilioWebhook, async (req: Request, res: Response)
       existingCall = await prisma.callRecord.findFirst({
         where: {
           customerPhone: cleanPhone,
-          status: { in: ['active', 'ringing'] },
+          status: { in: ['active', 'ringing', 'initiated'] },
           direction: 'outgoing',
           startTime: { gte: new Date(Date.now() - 60000) }
         },

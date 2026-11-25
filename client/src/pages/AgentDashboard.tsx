@@ -113,6 +113,13 @@ export const AgentDashboard: React.FC = () => {
   // Telephony provider configuration status
   const [providerStatus, setProviderStatus] = useState<ProviderStatusResponse | null>(null);
 
+  // ElevenLabs TTS provider configuration status
+  const [ttsStatus, setTtsStatus] = useState<{
+    activeProvider: string;
+    isElevenLabsConfigured: boolean;
+    elevenLabs?: { configured: boolean; model?: string; voiceId?: string; message?: string };
+  } | null>(null);
+
   // Active call state (Supports both WebRTC incoming support calls and Outgoing PSTN calls)
   const [activeCall, setActiveCall] = useState<{
     callId: string;
@@ -205,14 +212,25 @@ export const AgentDashboard: React.FC = () => {
     }
   }, [logs]);
 
-  // Check telephony provider status on load
+  // Check telephony and voice provider status on load
   const checkStatus = async () => {
     const status = await telephonyVoiceManager.checkProviderStatus(token || undefined);
     setProviderStatus(status);
   };
 
+  const checkTtsStatus = async () => {
+    try {
+      const res = await fetch('/api/voice/status');
+      if (res.ok) {
+        const data = await res.json();
+        setTtsStatus(data);
+      }
+    } catch { }
+  };
+
   useEffect(() => {
     checkStatus();
+    checkTtsStatus();
   }, []);
 
   // Sync Agent Availability Toggle
@@ -1809,11 +1827,105 @@ export const AgentDashboard: React.FC = () => {
       {/* 1. OUTGOING CALLS TAB */}
       {activeTab === 'outgoing' && (
         <div className="space-y-6">
-          {(callError || (providerStatus && !providerStatus.configured)) && (
-            <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900">
-              <p className="font-bold">Mobile phone calling is unavailable</p>
-              <p className="mt-1">{callError || providerStatus?.message || 'Configure Twilio in server/.env before placing PSTN calls.'}</p>
-              <p className="mt-1 text-xs text-amber-800">In-app Support Specialist calls use the Incoming Calls tab and require an agent to be signed in and available.</p>
+          {/* Operation Status Bar: Calling Mode, Telephony Provider, and ElevenLabs Voice Status */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {/* 1. Calling Mode Indicator */}
+            <div className={`p-4 rounded-2xl border flex items-center justify-between ${providerStatus?.provider === 'mock' || !providerStatus?.configured
+              ? 'bg-amber-50/80 border-amber-200 text-amber-900'
+              : 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
+              }`}>
+              <div className="flex items-center gap-2.5">
+                <Radio className={`w-5 h-5 ${providerStatus?.provider === 'mock' || !providerStatus?.configured ? 'text-amber-600 animate-pulse' : 'text-emerald-600'}`} />
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Operation Mode</div>
+                  <div className="text-sm font-extrabold">
+                    {providerStatus?.provider === 'mock' || !providerStatus?.configured ? 'DEMO / SIMULATION MODE' : 'REAL CALLING MODE'}
+                  </div>
+                </div>
+              </div>
+              <span className={`px-2.5 py-1 text-[10px] font-black rounded-lg uppercase tracking-wider ${providerStatus?.provider === 'mock' || !providerStatus?.configured
+                ? 'bg-amber-200 text-amber-900 border border-amber-300'
+                : 'bg-emerald-200 text-emerald-900 border border-emerald-300'
+                }`}>
+                {providerStatus?.provider === 'mock' || !providerStatus?.configured ? 'Simulation' : 'PSTN Live'}
+              </span>
+            </div>
+
+            {/* 2. Telephony Provider Status */}
+            <div className="p-4 rounded-2xl border border-slate-200 bg-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Smartphone className="w-5 h-5 text-blue-600" />
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Telephony Provider</div>
+                  <div className="text-sm font-bold text-slate-900">
+                    {providerStatus?.displayName || 'Simulator (Mock)'}
+                  </div>
+                </div>
+              </div>
+              <span className={`px-2.5 py-1 text-[10px] font-bold rounded-lg ${providerStatus?.configured && providerStatus?.provider !== 'mock'
+                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                : 'bg-slate-100 text-slate-700 border border-slate-200'
+                }`}>
+                {providerStatus?.configured && providerStatus?.provider !== 'mock' ? 'Configured' : 'Simulator'}
+              </span>
+            </div>
+
+            {/* 3. ElevenLabs Voice Status */}
+            <div className="p-4 rounded-2xl border border-slate-200 bg-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Sparkles className="w-5 h-5 text-indigo-600" />
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">AI Voice Synthesis</div>
+                  <div className="text-sm font-bold text-slate-900">
+                    {ttsStatus?.isElevenLabsConfigured ? 'ElevenLabs Multilingual v2' : 'Standard Speech Fallback'}
+                  </div>
+                </div>
+              </div>
+              <span className={`px-2.5 py-1 text-[10px] font-bold rounded-lg ${ttsStatus?.isElevenLabsConfigured
+                ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                : 'bg-slate-100 text-slate-700 border border-slate-200'
+                }`}>
+                {ttsStatus?.isElevenLabsConfigured ? 'Active (Sarah)' : 'Fallback'}
+              </span>
+            </div>
+          </div>
+
+          {/* Telephony Missing Credentials Alert if not configured for real calling */}
+          {(providerStatus?.provider === 'mock' || !providerStatus?.hasCredentials || !providerStatus?.configured) && (
+            <div role="alert" className="rounded-2xl border border-amber-300 bg-amber-50/90 p-4 text-xs text-amber-950 flex items-start gap-3 shadow-xs">
+              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-amber-900 text-sm">
+                  {providerStatus?.provider === 'twilio'
+                    ? (providerStatus?.hasCredentials ? 'Twilio API Connected • Phone Number Required' : 'Twilio Voice credentials are not configured.')
+                    : providerStatus?.provider === 'exotel'
+                      ? (providerStatus?.hasCredentials
+                        ? 'Exotel API Connected (kairatechnologies1) • Outbound Virtual Number (ExoPhone) Required'
+                        : 'Exotel Indian PSTN API credentials are not configured.')
+                      : 'Real mobile calling is not configured. Company telephony credentials are required.'}
+                </p>
+                <p className="mt-1 text-amber-800 leading-relaxed">
+                  {providerStatus?.provider === 'exotel' && providerStatus?.hasCredentials
+                    ? 'Your Exotel API credentials are authenticated and active on the Singapore cluster (api.exotel.com). To place outbound PSTN calls, allocate an authorized ExoPhone Virtual Number in your Exotel console and set EXOTEL_CALLER_ID in server/.env.'
+                    : 'KAIRA is currently running in DEMO MODE using the Telephony Simulator. Calls placed will simulate the complete call lifecycle, UI states, and CRM audit trail without placing real carrier charges or ringing physical phones.'}
+                </p>
+                <p className="mt-1 text-slate-600 font-mono text-[11px]">
+                  {providerStatus?.provider === 'twilio'
+                    ? 'To connect real mobile phones via Twilio, configure TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_CALLER_ID in server/.env.'
+                    : providerStatus?.provider === 'exotel'
+                      ? (providerStatus?.hasCredentials
+                        ? 'Account Type: Prepaid Trial • KYC Status: Not Started • Calls route via two-legged PSTN (EXOTEL_AGENT_PHONE).'
+                        : 'To connect real mobile phones via Exotel, configure EXOTEL_ACCOUNT_SID, EXOTEL_API_KEY, EXOTEL_API_TOKEN, and EXOTEL_CALLER_ID in server/.env.')
+                      : 'To connect real mobile phones, set TELEPHONY_PROVIDER=exotel (or twilio) and configure credentials in server/.env.'}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {callError && (
+            <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-900">
+              <p className="font-bold">Telephony Notice</p>
+              <p className="mt-1">{callError}</p>
             </div>
           )}
           {/* Real Outbound PSTN Calling Card */}
@@ -1826,29 +1938,93 @@ export const AgentDashboard: React.FC = () => {
                   </span>
                   <div>
                     <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                      Real Outbound Indian Mobile Calling (PSTN)
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      {providerStatus?.provider === 'mock' ? 'Simulated Mobile Calling (Demo Mode)' : 'Real Outbound Indian Mobile Calling (PSTN)'}
+                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${providerStatus?.provider === 'mock' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
                         {providerStatus?.displayName || 'Exotel (India PSTN Authorized)'}
                       </span>
+                      {providerStatus?.provider === 'mock' && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                          DEMO / SIMULATION
+                        </span>
+                      )}
                     </h2>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Dials customer mobile phones over legitimate PSTN telecom channels. Customer does not need website or browser open.
+                      {providerStatus?.provider === 'mock'
+                        ? 'Simulates outbound cellular calls to demonstrate the complete call lifecycle, UI states, and CRM audit trail without carrier charges.'
+                        : 'Dials customer mobile phones over legitimate PSTN telecom channels. Customer does not need website or browser open.'}
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* Caller ID Branding Display */}
+              {/* Outbound Caller ID Display */}
               <div className="flex flex-col items-start sm:items-end text-xs">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Verified Business Caller ID</span>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                  <span className="font-bold text-slate-800">KAIRA Agent</span>
-                  <span className="text-slate-500 font-mono text-[11px]">({providerStatus?.callerId || '+91 80000 00000'})</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  {providerStatus?.configured && providerStatus?.callerId
+                    ? 'Verified Outbound Caller ID'
+                    : 'Outbound Caller ID (Unassigned)'}
+                </span>
+                <div className="flex items-center gap-1.5 font-mono font-bold text-slate-800 text-sm mt-0.5">
+                  {providerStatus?.configured && providerStatus?.callerId ? (
+                    <>
+                      <PhoneCall className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>{providerStatus.callerId}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Info className="w-3.5 h-3.5 text-amber-600" />
+                      <span className="text-slate-500 font-sans text-xs">No Verified CLI Assigned</span>
+                    </>
+                  )}
                 </div>
-                <span className="text-[10px] text-slate-500">TRAI DLT Compliant • Real Two-Way Audio</span>
+                <span className="text-[10px] text-slate-400 mt-0.5">
+                  {providerStatus?.configured && providerStatus?.callerId
+                    ? 'ExoPhone Virtual Number • Registered Carrier CLI'
+                    : 'Awaiting ExoPhone Allocation • KYC Required'}
+                </span>
               </div>
             </div>
+
+            {/* Provider Live Diagnostic Status Grid */}
+            {providerStatus?.provider === 'exotel' && (
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 p-3.5 bg-slate-50/80 border border-slate-200/80 rounded-2xl text-xs">
+                <div className="flex flex-col p-2 bg-white rounded-xl border border-slate-100 shadow-2xs">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">API Authentication</span>
+                  <span className={`font-semibold flex items-center gap-1.5 mt-1 text-xs ${providerStatus?.hasCredentials ? 'text-emerald-700' : 'text-rose-600'}`}>
+                    <span className={`w-2 h-2 rounded-full ${providerStatus?.hasCredentials ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                    {providerStatus?.hasCredentials ? 'Connected' : 'Failed'}
+                  </span>
+                </div>
+                <div className="flex flex-col p-2 bg-white rounded-xl border border-slate-100 shadow-2xs">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Exotel Account</span>
+                  <span className="font-semibold flex items-center gap-1.5 mt-1 text-xs text-emerald-700">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    Active (Trial)
+                  </span>
+                </div>
+                <div className="flex flex-col p-2 bg-white rounded-xl border border-slate-100 shadow-2xs">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Caller ID (ExoPhone)</span>
+                  <span className={`font-semibold flex items-center gap-1.5 mt-1 text-xs ${providerStatus?.callerId ? 'text-emerald-700' : 'text-amber-700'}`}>
+                    <span className={`w-2 h-2 rounded-full ${providerStatus?.callerId ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                    {providerStatus?.callerId ? 'Configured' : 'Missing'}
+                  </span>
+                </div>
+                <div className="flex flex-col p-2 bg-white rounded-xl border border-slate-100 shadow-2xs">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Browser Calling</span>
+                  <span className="font-semibold flex items-center gap-1.5 mt-1 text-xs text-slate-600">
+                    <span className="w-2 h-2 rounded-full bg-slate-400" />
+                    Not Enabled
+                  </span>
+                </div>
+                <div className="flex flex-col p-2 bg-white rounded-xl border border-slate-100 shadow-2xs">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Real Mobile Calling</span>
+                  <span className={`font-semibold flex items-center gap-1.5 mt-1 text-xs ${providerStatus?.configured ? 'text-emerald-700' : 'text-amber-700'}`}>
+                    <span className={`w-2 h-2 rounded-full ${providerStatus?.configured ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                    {providerStatus?.configured ? 'Ready' : 'Activation Required'}
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* Controlled Test Demonstration Numbers */}
             <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 space-y-2.5">
@@ -1870,11 +2046,10 @@ export const AgentDashboard: React.FC = () => {
                         setManualPhone(item.raw);
                         setManualName(`Mentor Test Line ${idx + 1}`);
                       }}
-                      className={`p-2.5 rounded-xl text-left transition-all border cursor-pointer ${
-                        isSelected
-                          ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
-                          : 'bg-white hover:bg-slate-100/80 border-slate-200 text-slate-700'
-                      }`}
+                      className={`p-2.5 rounded-xl text-left transition-all border cursor-pointer ${isSelected
+                        ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
+                        : 'bg-white hover:bg-slate-100/80 border-slate-200 text-slate-700'
+                        }`}
                     >
                       <div className={`text-[10px] font-bold uppercase tracking-wider ${isSelected ? 'text-blue-100' : 'text-slate-400'}`}>
                         Line {idx + 1}
@@ -1940,8 +2115,10 @@ export const AgentDashboard: React.FC = () => {
                   {cooldownRemaining > 0
                     ? `Cooldown (${cooldownRemaining}s)`
                     : isDialing
-                      ? 'Dialing PSTN...'
-                      : 'Call Customer'}
+                      ? 'Dialing...'
+                      : providerStatus?.provider === 'mock'
+                        ? 'Start Simulated Call'
+                        : 'Call Customer'}
                 </button>
               </div>
             </div>
@@ -2030,7 +2207,7 @@ export const AgentDashboard: React.FC = () => {
                         title="Agent speaks directly to customer phone over PSTN"
                       >
                         <PhoneOutgoing className="w-3.5 h-3.5" />
-                        {cooldownRemaining > 0 ? `Wait (${cooldownRemaining}s)` : 'Dial Mobile'}
+                        {cooldownRemaining > 0 ? `Wait (${cooldownRemaining}s)` : providerStatus?.provider === 'mock' ? 'Simulate Call' : 'Dial Mobile'}
                       </button>
                     </div>
                   </div>
@@ -2048,8 +2225,14 @@ export const AgentDashboard: React.FC = () => {
                     <PhoneCall className="w-6 h-6" />
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-slate-900">Confirm Outbound PSTN Call</h3>
-                    <p className="text-xs text-slate-500">Live Carrier Mobile Call via {providerStatus?.displayName || 'Exotel'}</p>
+                    <h3 className="text-base font-bold text-slate-900">
+                      {providerStatus?.provider === 'mock' || !providerStatus?.configured ? 'Confirm Simulated Outbound Call (Demo)' : 'Confirm Outbound PSTN Call'}
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      {providerStatus?.provider === 'mock' || !providerStatus?.configured
+                        ? `Simulator Mode (${providerStatus?.displayName || 'Mock Telephony'})`
+                        : `Live Carrier Mobile Call via ${providerStatus?.displayName}`}
+                    </p>
                   </div>
                 </div>
 
@@ -2064,22 +2247,29 @@ export const AgentDashboard: React.FC = () => {
                   </div>
                   <div className="flex justify-between py-1 border-b border-slate-200/60">
                     <span className="text-slate-500 font-medium">Caller Display:</span>
-                    <span className="font-bold text-slate-900">KAIRA Agent</span>
+                    <span className="font-bold text-slate-900">
+                      {providerStatus?.configured && providerStatus?.callerId
+                        ? `KAIRA Agent (${providerStatus.callerId})`
+                        : 'Unassigned (Simulation Sandbox)'}
+                    </span>
                   </div>
                   <div className="flex justify-between py-1">
                     <span className="text-slate-500 font-medium">Network Type:</span>
-                    <span className="font-bold text-blue-700">PSTN Mobile Telephony</span>
+                    <span className={`font-bold ${providerStatus?.provider === 'mock' || !providerStatus?.configured ? 'text-amber-700' : 'text-blue-700'}`}>
+                      {providerStatus?.provider === 'mock' || !providerStatus?.configured ? 'Simulation Sandbox (Demo Mode)' : 'PSTN Mobile Telephony'}
+                    </span>
                   </div>
                 </div>
 
                 <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-1">
                   <div className="font-bold flex items-center gap-1.5 text-amber-800">
                     <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                    Demonstration Test Safety Rule
+                    {providerStatus?.provider === 'mock' || !providerStatus?.configured ? 'Demonstration Simulation Notice' : 'Demonstration Test Safety Rule'}
                   </div>
                   <p className="text-[11px] leading-relaxed">
-                    The customer's normal mobile phone will ring over the telecom network without needing any browser or website open.
-                    Verify that the phone owner has explicitly agreed to receive this demonstration test call.
+                    {providerStatus?.provider === 'mock' || !providerStatus?.configured
+                      ? 'Telephony Simulator is active. This demonstration runs the complete call lifecycle (Initiating -> Ringing -> Connected -> Hang Up) and database audit trail in simulation mode without incurring carrier fees or dialing a real telephone.'
+                      : "The customer's normal mobile phone will ring over the telecom network without needing any browser or website open. Verify that the phone owner has explicitly agreed to receive this demonstration test call."}
                   </p>
                 </div>
 
@@ -2091,7 +2281,9 @@ export const AgentDashboard: React.FC = () => {
                     className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                   />
                   <span className="font-medium leading-snug">
-                    I confirm the recipient has explicitly consented to receive this test call.
+                    {providerStatus?.provider === 'mock' || !providerStatus?.configured
+                      ? 'I acknowledge this is a simulation demonstration running on MockProvider.'
+                      : 'I confirm the recipient has explicitly consented to receive this test call.'}
                   </span>
                 </label>
 
@@ -2118,7 +2310,7 @@ export const AgentDashboard: React.FC = () => {
                     className="flex-1 py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-xs font-bold transition-colors shadow-xs cursor-pointer flex items-center justify-center gap-1.5"
                   >
                     <PhoneOutgoing className="w-3.5 h-3.5" />
-                    Place PSTN Call
+                    {providerStatus?.provider === 'mock' || !providerStatus?.configured ? 'Start Simulated Call (Demo)' : 'Place PSTN Call'}
                   </button>
                 </div>
               </div>
@@ -2197,8 +2389,17 @@ export const AgentDashboard: React.FC = () => {
                         <span>{activeCall.customerPhone || 'Phone number unavailable'}</span>
                       </p>
                     </div>
-                    <span className="mt-3 rounded-full border border-blue-100 bg-white/70 px-3 py-1 text-[11px] font-semibold text-blue-700">
-                      {activeCall.isIncomingSupport ? 'Support call' : 'PSTN outbound call'}
+                    <span className={`mt-3 rounded-full border px-3 py-1 text-[11px] font-semibold ${activeCall.isIncomingSupport
+                      ? 'border-blue-100 bg-white/70 text-blue-700'
+                      : providerStatus?.provider === 'mock'
+                        ? 'border-amber-200 bg-amber-50 text-amber-800'
+                        : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                      }`}>
+                      {activeCall.isIncomingSupport
+                        ? 'Support call'
+                        : providerStatus?.provider === 'mock'
+                          ? 'PSTN Outbound Call (DEMO / SIMULATION)'
+                          : 'PSTN Outbound Call (Live Carrier)'}
                     </span>
                     <div className="mt-7 flex h-12 items-center justify-center gap-1.5" aria-hidden="true">
                       {['animate-soundwave-1', 'animate-soundwave-2', 'animate-soundwave-3', 'animate-soundwave-4', 'animate-soundwave-5', 'animate-soundwave-2', 'animate-soundwave-4'].map((animation, index) => (

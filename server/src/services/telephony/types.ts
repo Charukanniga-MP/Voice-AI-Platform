@@ -59,6 +59,11 @@ export interface TelephonyProviderStatus {
   hasCredentials: boolean;
   message: string;
   details?: Record<string, any>;
+  apiAuthentication?: 'connected' | 'failed' | 'unconfigured';
+  accountStatus?: 'active' | 'inactive' | 'trial' | 'unconfigured';
+  callerIdStatus?: 'configured' | 'missing';
+  browserCallingStatus?: 'enabled' | 'not_enabled';
+  realCallingStatus?: 'ready' | 'activation_required' | 'simulation_mode';
 }
 
 export interface ITelephonyProvider {

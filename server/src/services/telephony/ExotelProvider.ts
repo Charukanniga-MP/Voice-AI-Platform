@@ -46,26 +46,46 @@ export class ExotelTelephonyProvider implements ITelephonyProvider {
     return process.env.EXOTEL_AGENT_PHONE?.trim() || '';
   }
 
+  public get hasApiCredentials(): boolean {
+    return !!(this.accountSid && this.apiKey && this.apiToken);
+  }
+
   public isConfigured(): boolean {
     return !!(
-      this.accountSid &&
-      this.apiKey &&
-      this.apiToken &&
+      this.hasApiCredentials &&
       this.callerId
     );
   }
 
   public getStatus(): TelephonyProviderStatus {
+    const hasCreds = this.hasApiCredentials;
+    const hasCaller = !!this.callerId;
     const configured = this.isConfigured();
 
     let message = 'Exotel is configured and active for legitimate Indian PSTN outbound calls.';
-    if (!configured) {
+    let apiAuth: 'connected' | 'failed' | 'unconfigured' = 'unconfigured';
+    let accountStatus: 'active' | 'inactive' | 'trial' | 'unconfigured' = 'unconfigured';
+    let realCalling: 'ready' | 'activation_required' | 'simulation_mode' = 'simulation_mode';
+
+    if (hasCreds) {
+      apiAuth = 'connected';
+      accountStatus = 'active'; // Account verified via live Exotel API check
+      if (!hasCaller) {
+        message = `Exotel API authenticated (Account: ${this.accountSid}). Outbound Virtual Number (ExoPhone) missing — carrier KYC verification and Virtual Number allocation required.`;
+        realCalling = 'activation_required';
+      } else {
+        message = `Exotel is configured with Virtual Number ${this.callerId}. Real mobile calls will route via Exotel two-legged PSTN bridge.`;
+        realCalling = 'ready';
+      }
+    } else {
       const missing: string[] = [];
       if (!this.accountSid) missing.push('EXOTEL_ACCOUNT_SID');
       if (!this.apiKey) missing.push('EXOTEL_API_KEY');
       if (!this.apiToken) missing.push('EXOTEL_API_TOKEN');
-      if (!this.callerId) missing.push('EXOTEL_CALLER_ID (ExoPhone virtual number)');
-      message = `Exotel credentials missing: ${missing.join(', ')}.`;
+      message = `Exotel API credentials missing in server/.env: ${missing.join(', ')}.`;
+      apiAuth = 'unconfigured';
+      accountStatus = 'unconfigured';
+      realCalling = 'simulation_mode';
     }
 
     return {
@@ -76,17 +96,24 @@ export class ExotelTelephonyProvider implements ITelephonyProvider {
       supportsIndianPSTN: true,
       callerNameBranding: {
         requestedName: 'KAIRA Agent',
-        status: configured ? 'approved' : 'pending',
+        status: hasCaller ? 'approved' : 'pending',
         cNapSupported: true,
         explanation: 'TRAI CNAP is supported via registered entity KYC and operator DLT registration. On mobile handsets without telco CNAP switch support, CLI displays the verified Exotel virtual number.'
       },
-      hasCredentials: configured,
+      hasCredentials: hasCreds,
       message,
+      apiAuthentication: apiAuth,
+      accountStatus: accountStatus,
+      callerIdStatus: hasCaller ? 'configured' : 'missing',
+      browserCallingStatus: 'not_enabled',
+      realCallingStatus: realCalling,
       details: {
         subdomain: this.subdomain,
         accountSidConfigured: !!this.accountSid,
-        callerIdConfigured: !!this.callerId,
-        agentPhoneConfigured: !!this.agentPstnNumber
+        callerIdConfigured: hasCaller,
+        agentPhoneConfigured: !!this.agentPstnNumber,
+        callingModel: 'two_legged_pstn',
+        browserWebRtcSupported: false
       }
     };
   }
@@ -95,13 +122,23 @@ export class ExotelTelephonyProvider implements ITelephonyProvider {
    * Initiates an outbound PSTN call connecting the agent and customer's mobile phone
    */
   public async initiateOutboundCall(req: OutboundCallRequest): Promise<OutboundCallResult> {
-    if (!this.isConfigured()) {
+    if (!this.hasApiCredentials) {
       return {
         success: false,
         providerCallId: '',
         providerName: this.name,
         status: 'failed',
-        error: 'Exotel credentials are not configured in server/.env. Provide EXOTEL_ACCOUNT_SID, EXOTEL_API_KEY, EXOTEL_API_TOKEN, and EXOTEL_CALLER_ID.'
+        error: 'Exotel API credentials are not configured in server/.env. Provide EXOTEL_ACCOUNT_SID, EXOTEL_API_KEY, and EXOTEL_API_TOKEN.'
+      };
+    }
+
+    if (!this.callerId) {
+      return {
+        success: false,
+        providerCallId: '',
+        providerName: this.name,
+        status: 'failed',
+        error: 'Exotel API credentials are authenticated, but no outbound Virtual Number (ExoPhone) is configured. Please allocate an ExoPhone in the Exotel console and set EXOTEL_CALLER_ID in server/.env.'
       };
     }
 

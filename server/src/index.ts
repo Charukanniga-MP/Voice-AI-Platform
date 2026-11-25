@@ -10,9 +10,9 @@ try {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load environment variables before any other module executes
-dotenv.config({ path: path.resolve(__dirname, '../.env'), override: true });
-dotenv.config({ override: true });
+// Load server/.env authoritatively before any other module executes
+const serverEnvPath = path.resolve(__dirname, '../.env');
+dotenv.config({ path: serverEnvPath, override: true });
 
 import express from 'express';
 import http from 'http';

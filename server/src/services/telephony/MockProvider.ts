@@ -26,16 +26,21 @@ export class MockTelephonyProvider implements ITelephonyProvider {
       configured: true,
       provider: this.name,
       displayName: this.displayName,
-      callerId: '+91 80000 00000',
+      callerId: undefined,
       supportsIndianPSTN: true,
       callerNameBranding: {
         requestedName: 'KAIRA Agent',
-        status: 'approved',
-        cNapSupported: true,
-        explanation: 'Simulator mode with KAIRA Agent caller ID branding.'
+        status: 'unsupported',
+        cNapSupported: false,
+        explanation: 'Simulation sandbox — no real telecom carrier CLI is provisioned.'
       },
-      hasCredentials: true,
-      message: 'Telephony Simulator is active. Real PSTN carriers (Exotel/Twilio) can be enabled via TELEPHONY_PROVIDER in server/.env.',
+      hasCredentials: false,
+      message: 'Telephony Simulator is active for demonstration. Real mobile calling requires licensed carrier credentials.',
+      apiAuthentication: 'unconfigured',
+      accountStatus: 'unconfigured',
+      callerIdStatus: 'missing',
+      browserCallingStatus: 'not_enabled',
+      realCallingStatus: 'simulation_mode',
       details: {
         activeSimulations: this.activeSimulations.size
       }

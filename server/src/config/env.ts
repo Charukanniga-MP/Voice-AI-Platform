@@ -5,9 +5,9 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Ensure .env is loaded
-dotenv.config({ path: path.resolve(__dirname, '../../.env'), override: true });
-dotenv.config({ override: true });
+// Ensure server/.env is loaded authoritatively
+const serverEnvPath = path.resolve(__dirname, '../../.env');
+dotenv.config({ path: serverEnvPath, override: true });
 
 export interface EnvConfig {
   PORT: number;

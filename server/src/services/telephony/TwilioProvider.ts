@@ -64,6 +64,11 @@ export class TwilioTelephonyProvider implements ITelephonyProvider {
       },
       hasCredentials: configured,
       message,
+      apiAuthentication: configured ? 'connected' : 'unconfigured',
+      accountStatus: configured ? 'active' : 'unconfigured',
+      callerIdStatus: callerId ? 'configured' : 'missing',
+      browserCallingStatus: configured ? 'enabled' : 'not_enabled',
+      realCallingStatus: configured ? 'ready' : 'simulation_mode',
       details: {
         hasAppSid: !!process.env.TWILIO_TWIML_APP_SID,
         hasApiKey: !!process.env.TWILIO_API_KEY
@@ -90,6 +95,20 @@ export class TwilioTelephonyProvider implements ITelephonyProvider {
         providerName: this.name,
         status: 'failed',
         error: 'TWILIO_CALLER_ID not configured in server/.env'
+      };
+    }
+
+    if (req.agentPhoneOrClient === 'browser') {
+      // Browser-initiated WebRTC call: Twilio Voice SDK in the browser connects
+      // directly to the Twilio Media Gateway, triggering /api/telephony/voice to bridge
+      // the browser audio with the customer's phone number via TwiML <Dial><Number>.
+      // We return 'initiated' to pre-register the call record without generating a duplicate leg.
+      return {
+        success: true,
+        providerCallId: `webrtc_pending_${Date.now()}`,
+        providerName: this.name,
+        status: 'initiated',
+        callerIdUsed: callerId
       };
     }
 
