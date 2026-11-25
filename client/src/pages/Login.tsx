@@ -14,13 +14,12 @@ import {
   ArrowRight,
   Loader2,
   KeyRound,
-  Globe,
   Smartphone
 } from 'lucide-react';
 
 export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({ onAuthSuccess }) => {
   const { login, register } = useAuth();
-  const { t, language, languages } = useLanguage();
+  const { t } = useLanguage();
 
   // Mode: 'login' | 'register' | 'forgot'
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
@@ -233,23 +232,6 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
 
         {/* Clean White Login Card */}
         <div className="bg-white/95 backdrop-blur-xl rounded-3xl p-5 sm:p-8 shadow-2xl shadow-black/40 border border-white/40 space-y-4 sm:space-y-5">
-          {/* Prominent Multilingual Language Selection Interface (Must appear during Login) */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3.5 border-b border-slate-100">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0 shadow-2xs">
-                <Globe className="w-4 h-4" />
-              </div>
-              <div>
-                <span className="block text-[11px] font-bold text-slate-800 leading-tight">
-                  {t('common.login_language_label')}
-                </span>
-                <span className="block text-[10px] text-slate-500 font-medium">
-                  {languages[language]?.name} ({languages[language]?.nativeName})
-                </span>
-              </div>
-            </div>
-          </div>
-
           {/* Error Banner */}
           {error && (
             <div className="p-3.5 rounded-2xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
