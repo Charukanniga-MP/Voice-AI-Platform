@@ -49,6 +49,7 @@ router.get('/', authenticate, requireRole(['admin']), async (req: Request, res: 
           name: a.name,
           email: a.email,
           phone: a.phone || 'N/A',
+          agentStatus: a.agentStatus || 'available',
           createdAt: a.createdAt,
           totalHandledCalls: calls.length,
           lastCallDate: calls.length > 0 ? calls[0].startTime : null

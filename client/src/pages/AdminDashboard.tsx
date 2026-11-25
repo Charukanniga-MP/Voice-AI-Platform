@@ -2588,6 +2588,17 @@ export const AdminDashboard: React.FC = () => {
               />
             </div>
 
+            <div className="flex flex-wrap gap-2 text-[11px] font-semibold" aria-label="Agent availability summary">
+              {(['available', 'busy', 'offline'] as const).map(status => {
+                const count = agents.filter(agent => (agent.agentStatus || 'available') === status).length;
+                const styles = status === 'available'
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : status === 'busy'
+                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                    : 'bg-slate-100 text-slate-600 border-slate-200';
+                return <span key={status} className={`rounded-full border px-2.5 py-1 ${styles}`}>{count} {status}</span>;
+              })}
+            </div>
             {/* Agents Table */}
             <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs overflow-hidden">
               {loadingAgents ? (
@@ -2604,7 +2615,7 @@ export const AdminDashboard: React.FC = () => {
                         <th className="py-3.5 px-4">Direct Phone</th>
                         <th className="py-3.5 px-4">Created Date</th>
                         <th className="py-3.5 px-4">Handled Calls</th>
-                        <th className="py-3.5 px-4">Status</th>
+                        <th className="py-3.5 px-4">Availability</th>
                         <th className="py-3.5 px-4 text-right">Actions</th>
                       </tr>
                     </thead>
@@ -2626,9 +2637,15 @@ export const AdminDashboard: React.FC = () => {
                             {(a as any).totalHandledCalls || 0}
                           </td>
                           <td className="py-3.5 px-4">
-                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                              Active Agent
-                            </span>
+                            {(() => {
+                              const status = a.agentStatus || 'available';
+                              const styles = status === 'available'
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : status === 'busy'
+                                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                  : 'bg-slate-100 text-slate-600 border-slate-200';
+                              return <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border capitalize ${styles}`}>{status}</span>;
+                            })()}
                           </td>
                           <td className="py-3.5 px-4 text-right space-x-2">
                             <button
