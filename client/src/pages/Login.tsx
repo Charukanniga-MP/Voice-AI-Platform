@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext.js';
 import { useLanguage } from '../context/LanguageContext.js';
-import { LanguageSelector } from '../components/LanguageSelector.js';
 import { IndianMobileOtpForm } from '../components/IndianMobileOtpForm.js';
 import {
   Eye,
@@ -249,7 +248,6 @@ export const LoginPage: React.FC<{ onAuthSuccess: (role: string) => void }> = ({
                 </span>
               </div>
             </div>
-            <LanguageSelector variant="dropdown" />
           </div>
 
           {/* Error Banner */}
