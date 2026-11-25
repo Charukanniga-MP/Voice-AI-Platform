@@ -33,13 +33,16 @@ export const Navbar: React.FC = () => {
           </a>
         </div>
 
-        {/* Top-Right Controls: Notifications + Read-only Session Language Indicator + Circular Profile Icon Dropdown */}
+        {/* Top-Right Controls: Notifications, language preference, and profile */}
         <div className="flex items-center gap-2 sm:gap-4">
           {/* Centralized Real-time Notifications */}
           <NotificationDropdown />
 
-          {/* Active Session Language Badge (Language is selected at login and fixed for session) */}
-          <LanguageSelector variant="badge" readOnly={true} />
+          {/* Customers can change the language used for the UI and voice calls. */}
+          <LanguageSelector
+            variant={user.role === 'customer' ? 'dropdown' : 'badge'}
+            readOnly={user.role !== 'customer'}
+          />
 
           {/* Vertical Divider */}
           <div className="h-6 sm:h-7 w-px bg-slate-200/80" />
