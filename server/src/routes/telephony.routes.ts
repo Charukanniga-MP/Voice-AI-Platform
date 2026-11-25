@@ -6,6 +6,12 @@ import { authenticate, requireRole } from '../middleware/auth.js';
 import { prisma } from '../db.js';
 import { callIntelligenceService } from '../services/callIntelligence.js';
 import { telephonyLimiter } from '../middleware/rateLimiter.js';
+import {
+  validateAndNormalizeIndianPhone,
+  maskPhoneNumber,
+  AUTHORIZED_TEST_NUMBERS,
+  isNumberInTestAllowlist
+} from '../utils/phoneValidation.js';
 
 const router = Router();
 
@@ -94,6 +100,97 @@ export function validateCallbackParams(req: Request, res: Response, next: Functi
 router.get('/status', authenticate, (req: Request, res: Response) => {
   const status = telephonyService.getStatus();
   res.json(status);
+});
+
+// 1a. Get Controlled Demonstration Test Numbers Allowlist
+router.get('/allowlist', authenticate, (req: Request, res: Response) => {
+  const enforceAllowlist = process.env.TELEPHONY_ENFORCE_ALLOWLIST === 'true';
+  const maskedList = AUTHORIZED_TEST_NUMBERS.map(num => ({
+    rawE164: num,
+    masked: maskPhoneNumber(num)
+  }));
+
+  res.json({
+    enforceAllowlist,
+    allowedNumbers: maskedList,
+    message: 'Authorized demonstration test lines for controlled PSTN calling evaluation.'
+  });
+});
+
+// 1b. Real Outbound PSTN Mobile Calling Endpoint
+router.post('/outbound-call', telephonyLimiter, authenticate, requireRole(['agent', 'admin']), async (req: Request, res: Response) => {
+  try {
+    const { customerPhone, customerName, agentPhoneOrClient } = req.body;
+
+    if (!customerPhone) {
+      res.status(400).json({ success: false, error: 'Customer phone number is required.' });
+      return;
+    }
+
+    const io = req.app.get('io');
+    const protocol = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
+    const host = (req.headers['x-forwarded-host'] as string) || req.get('host') || 'localhost:5000';
+    const callbackBaseUrl = `${protocol}://${host}`;
+
+    const result = await telephonyService.initiateOutboundPstnCall({
+      destinationNumber: customerPhone,
+      customerName,
+      agentId: req.user!.id,
+      agentName: req.user!.name,
+      agentPhoneOrClient,
+      callbackBaseUrl,
+      io
+    });
+
+    if (!result.success) {
+      res.status(400).json(result);
+      return;
+    }
+
+    res.json(result);
+  } catch (err: any) {
+    console.error('[Telephony Outbound Call Error]', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to initiate outbound PSTN call.' });
+  }
+});
+
+// 1c. Immediate Call Termination Endpoint
+router.post('/terminate-call', authenticate, requireRole(['agent', 'admin']), async (req: Request, res: Response) => {
+  try {
+    const { callId } = req.body;
+    if (!callId) {
+      res.status(400).json({ success: false, error: 'Call ID or providerCallSid is required.' });
+      return;
+    }
+
+    const io = req.app.get('io');
+    const result = await telephonyService.terminateCall(callId, io);
+    res.json(result);
+  } catch (err: any) {
+    console.error('[Telephony Terminate Error]', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to terminate call.' });
+  }
+});
+
+// 1d. Exotel Call Status Webhook
+router.all('/webhook/exotel', async (req: Request, res: Response) => {
+  try {
+    const provider = telephonyService.getProvider();
+    if (provider.name === 'exotel' && !provider.validateWebhookSignature(req)) {
+      console.warn('[Exotel Webhook] Invalid webhook signature detected.');
+      res.status(403).send('Forbidden');
+      return;
+    }
+
+    const io = req.app.get('io');
+    const payload = { ...req.query, ...req.body };
+    const updated = await telephonyService.handleCallStatusWebhook(payload, io, 'exotel');
+
+    res.type('text/plain').send('OK');
+  } catch (err: any) {
+    console.error('[Exotel Webhook Error]', err);
+    res.status(500).send('Error');
+  }
 });
 
 // 1b. Retrieve Dynamic WebRTC ICE / TURN Servers
