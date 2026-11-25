@@ -12,6 +12,7 @@ import { CallQualityAlert } from './callQualityAlerts.js';
 import { callReliabilityService } from './callReliability.js';
 import { handoverService, HandoverReason } from './handover.service.js';
 import { notificationService } from './notification.service.js';
+import { sttService } from './stt/stt.service.js';
 
 // Multi-turn conversational context memory for active calls
 const activeCallContexts = new Map<string, Array<{ sender: 'customer' | 'ai'; text: string; timestamp: Date }>>();
@@ -1298,6 +1299,99 @@ export function initSocketServer(io: SocketIOServer) {
         });
       } catch (err) {
         console.error('[CallLanguage] Error updating language:', err);
+      }
+    });
+
+    // 7C. Real-Time Streaming Speech-to-Text Pipeline (Deepgram / Google / Azure / Audio Telemetry)
+    socket.on('stt:start_stream', async (data: { callId: string; language?: string; sampleRate?: number }) => {
+      try {
+        const lang = data.language || 'en-IN';
+        const sampleRate = data.sampleRate || 16000;
+        const activeProvider = sttService.getActiveProviderName();
+
+        await sttService.startStream(
+          data.callId,
+          { language: lang, sampleRate, interimResults: true },
+          (event) => {
+            if (event.isFinal) {
+              socket.emit('stt:final', {
+                callId: data.callId,
+                text: event.text,
+                transcript: event.text,
+                confidence: event.confidence,
+                language: event.language || lang,
+                latencyMs: event.latencyMs
+              });
+            } else {
+              socket.emit('stt:interim', {
+                callId: data.callId,
+                text: event.text,
+                transcript: event.text,
+                confidence: event.confidence
+              });
+            }
+          },
+          (err) => {
+            socket.emit('stt:error', { callId: data.callId, error: err?.message || 'STT stream error' });
+          }
+        );
+
+        socket.emit('stt:stream_ready', {
+          callId: data.callId,
+          provider: activeProvider,
+          isCloudConfigured: sttService.isCloudSttConfigured(),
+          sampleRate,
+          language: lang
+        });
+      } catch (err: any) {
+        console.error('[STT] Error starting stream:', err);
+        socket.emit('stt:error', { callId: data.callId, error: err?.message });
+      }
+    });
+
+    socket.on('stt:audio_chunk', (data: { callId: string; audioData?: string | Buffer | ArrayBuffer; chunk?: string | Buffer | ArrayBuffer }) => {
+      try {
+        const raw = data.audioData || data.chunk;
+        if (!data.callId || !raw) return;
+        const buf = Buffer.isBuffer(raw)
+          ? raw
+          : raw instanceof ArrayBuffer
+          ? Buffer.from(raw)
+          : Buffer.from(raw as string, 'base64');
+
+        const metrics = sttService.writeAudioChunk(data.callId, buf);
+        socket.emit('stt:audio_telemetry', {
+          callId: data.callId,
+          rms: metrics.rms,
+          isTooQuiet: metrics.isTooQuiet,
+          isClipping: metrics.isClipping
+        });
+
+        if (metrics.isTooQuiet) {
+          socket.emit('stt:audio_warning', {
+            callId: data.callId,
+            warning: 'low_volume',
+            message: 'Microphone volume is very quiet. Please speak closer to your microphone.'
+          });
+        } else if (metrics.isClipping) {
+          socket.emit('stt:audio_warning', {
+            callId: data.callId,
+            warning: 'audio_clipping',
+            message: 'Audio level is too high and distorting. Please lower your microphone input level.'
+          });
+        }
+      } catch (err) {
+        console.error('[STT] Error processing audio chunk:', err);
+      }
+    });
+
+    socket.on('stt:stop_stream', (data: { callId: string }) => {
+      try {
+        if (data.callId) {
+          sttService.stopStream(data.callId);
+        }
+      } catch (err) {
+        console.error('[STT] Error stopping stream:', err);
       }
     });
 
@@ -3220,6 +3314,7 @@ export function initSocketServer(io: SocketIOServer) {
     }) => {
       try {
         console.log(`[Call] Ending call: ${data.callId} by ${data.endedBy || 'user'}`);
+        sttService.stopStream(data.callId);
 
         if (ringingTimers.has(data.callId)) {
           clearTimeout(ringingTimers.get(data.callId)!);

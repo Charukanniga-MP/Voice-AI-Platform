@@ -148,6 +148,7 @@ export const CustomerDashboard: React.FC = () => {
 
   // AI visual states: 'idle' | 'listening' | 'thinking' | 'speaking'
   const [aiVisualState, setAiVisualState] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
+  const [audioWarning, setAudioWarning] = useState<string | null>(null);
 
   // Call recording playback state
   const [playingRecordingId, setPlayingRecordingId] = useState<string | null>(null);
@@ -548,6 +549,17 @@ export const CustomerDashboard: React.FC = () => {
   // Socket event listeners
   useEffect(() => {
     const socket = getSocket();
+
+    // Bind real-time server STT and audio telemetry
+    voiceService.bindSocketStt(socket);
+    voiceService.onAudioWarning = (warning) => {
+      if (warning.type === 'low_volume') {
+        setAudioWarning('Microphone input is very quiet. Please speak closer to your microphone.');
+      } else if (warning.type === 'clipping') {
+        setAudioWarning('Microphone audio is clipping. Please adjust your microphone input volume.');
+      }
+      setTimeout(() => setAudioWarning(null), 3500);
+    };
 
     // 1. Call ringing for Agent
     socket.on('customer:call_ringing', (data: { callId: string; agentName: string; preferredLanguage: string }) => {
@@ -1035,6 +1047,13 @@ export const CustomerDashboard: React.FC = () => {
       setIsCustomerSpeaking(true);
     };
 
+    // Attach real-time 16kHz audio streaming to backend STT engine
+    const localStream = webrtcManager.getLocalStream();
+    if (localStream && !voiceService.isStreamingAudio && !isHumanCall) {
+      const socket = getSocket();
+      voiceService.startAudioStreaming(activeCallId, localStream, socket);
+    }
+
     voiceService.startListening((text, isFinal, utteranceId) => {
       if (isMutedRef.current || isCallHeldRef.current) return;
       const trimmed = text.trim();
@@ -1385,6 +1404,7 @@ export const CustomerDashboard: React.FC = () => {
     dispatchedUtteranceIdsRef.current.clear();
     voiceService.cancelSpeech();
     voiceService.stopListening();
+    voiceService.stopAudioStreaming();
     webrtcManager.endCall();
     recordingConsentRef.current = 'not_requested';
     transitionState('IDLE', 'Call cleanup complete, reset to idle');
@@ -2151,6 +2171,16 @@ export const CustomerDashboard: React.FC = () => {
                 </div>
                 <div className="max-w-[85%] px-4 py-2.5 bg-emerald-50 text-emerald-800 text-xs rounded-2xl rounded-tr-xs border border-emerald-200 italic shadow-2xs animate-pulse">
                   {interimText}...
+                </div>
+              </div>
+            )}
+
+            {/* Audio Quality / Low-Volume Diagnostic Warning */}
+            {audioWarning && (
+              <div className="flex flex-col items-center my-1">
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl shadow-2xs animate-pulse">
+                  <ShieldAlert className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <span>{audioWarning}</span>
                 </div>
               </div>
             )}

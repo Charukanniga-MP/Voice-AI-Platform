@@ -43,6 +43,16 @@ export class VoiceService {
   private activeOnResult?: (text: string, isFinal: boolean, utteranceId?: string) => void;
   private activeOnError?: (err: any) => void;
 
+  private audioContext: AudioContext | null = null;
+  private processorNode: ScriptProcessorNode | null = null;
+  private sourceNode: MediaStreamAudioSourceNode | null = null;
+  private streamingSocket: any = null;
+  private streamingCallId: string | null = null;
+  public isStreamingAudio: boolean = false;
+  public serverSttActive: boolean = false;
+
+  public onAudioWarning?: (warning: { type: 'low_volume' | 'clipping'; rms?: number; peak?: number }) => void;
+  public onAudioTelemetry?: (telemetry: { rms: number; isTooQuiet: boolean; isClipping: boolean }) => void;
   public onInterruption?: () => void;
   public onSpeechStart?: () => void;
   public onLanguageDetected?: (lang: string) => void;
@@ -465,6 +475,161 @@ export class VoiceService {
    */
   public cancelSpeech() {
     voiceOutputController.stop();
+  }
+
+  /**
+   * Start 16kHz PCM audio streaming to the backend STT service
+   */
+  public startAudioStreaming(callId: string, stream: MediaStream, socket: any) {
+    if (typeof window === 'undefined' || !stream) return;
+    try {
+      this.stopAudioStreaming();
+      this.streamingSocket = socket;
+      this.streamingCallId = callId;
+
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+
+      this.audioContext = new AudioContextClass();
+      this.sourceNode = this.audioContext.createMediaStreamSource(stream);
+
+      // ScriptProcessorNode with bufferSize 4096 (1 channel)
+      this.processorNode = this.audioContext.createScriptProcessor(4096, 1, 1);
+
+      const inputSampleRate = this.audioContext.sampleRate;
+      const targetSampleRate = 16000;
+      const sampleRatio = inputSampleRate / targetSampleRate;
+
+      // Start stream on backend
+      if (socket && socket.connected) {
+        socket.emit('stt:start_stream', {
+          callId,
+          language: this.currentLang.slice(0, 2),
+          encoding: 'linear16',
+          sampleRate: 16000
+        });
+      }
+
+      this.processorNode.onaudioprocess = (e: AudioProcessingEvent) => {
+        if (!this.isListening || this.isSpeaking()) return;
+
+        const inputBuffer = e.inputBuffer.getChannelData(0);
+        if (!inputBuffer || inputBuffer.length === 0) return;
+
+        // 1. Telemetry: Compute RMS and Peak
+        let sumSquares = 0;
+        let peak = 0;
+        for (let i = 0; i < inputBuffer.length; i++) {
+          const sample = inputBuffer[i];
+          const abs = Math.abs(sample);
+          if (abs > peak) peak = abs;
+          sumSquares += sample * sample;
+        }
+        const rms = Math.sqrt(sumSquares / inputBuffer.length);
+
+        if (peak >= 0.98 && this.onAudioWarning) {
+          this.onAudioWarning({ type: 'clipping', peak });
+        } else if (rms > 0 && rms < 0.012 && this.onAudioWarning) {
+          this.onAudioWarning({ type: 'low_volume', rms });
+        }
+
+        // 2. Downsample to 16kHz PCM
+        const outputLength = Math.floor(inputBuffer.length / sampleRatio);
+        const pcm16 = new Int16Array(outputLength);
+        for (let i = 0; i < outputLength; i++) {
+          const originalIndex = Math.floor(i * sampleRatio);
+          const sample = Math.max(-1, Math.min(1, inputBuffer[originalIndex]));
+          pcm16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+        }
+
+        // 3. Emit chunk via Socket.IO
+        if (this.streamingSocket && this.streamingSocket.connected && this.streamingCallId === callId) {
+          this.streamingSocket.emit('stt:audio_chunk', {
+            callId,
+            chunk: pcm16.buffer
+          });
+        }
+      };
+
+      this.sourceNode.connect(this.processorNode);
+      this.processorNode.connect(this.audioContext.destination);
+      this.isStreamingAudio = true;
+      console.log(`[VoiceService] 16kHz audio streaming active for call: ${callId} (Input: ${inputSampleRate}Hz)`);
+    } catch (err) {
+      console.warn('[VoiceService] Audio streaming initialization failed, browser STT fallback remains active:', err);
+    }
+  }
+
+  /**
+   * Stop 16kHz PCM audio streaming
+   */
+  public stopAudioStreaming() {
+    this.isStreamingAudio = false;
+    if (this.processorNode) {
+      try { this.processorNode.disconnect(); } catch { }
+      this.processorNode = null;
+    }
+    if (this.sourceNode) {
+      try { this.sourceNode.disconnect(); } catch { }
+      this.sourceNode = null;
+    }
+    if (this.audioContext) {
+      try { this.audioContext.close(); } catch { }
+      this.audioContext = null;
+    }
+    if (this.streamingSocket && this.streamingCallId) {
+      try {
+        this.streamingSocket.emit('stt:stop_stream', { callId: this.streamingCallId });
+      } catch { }
+    }
+    this.streamingSocket = null;
+    this.streamingCallId = null;
+  }
+
+  /**
+   * Bind Socket.IO STT events for server-assisted transcription
+   */
+  public bindSocketStt(socket: any) {
+    if (!socket) return;
+
+    socket.on('stt:interim', (data: { callId: string; transcript?: string; text?: string; confidence?: number }) => {
+      if (this.streamingCallId && data.callId !== this.streamingCallId) return;
+      if (this.isSpeaking()) return;
+      const text = (data.transcript || data.text || '').trim();
+      if (!text) return;
+      this.serverSttActive = true;
+      if (this.activeOnResult) {
+        this.activeOnResult(text, false);
+      }
+    });
+
+    socket.on('stt:final', (data: { callId: string; transcript?: string; text?: string; confidence?: number }) => {
+      if (this.streamingCallId && data.callId !== this.streamingCallId) return;
+      if (this.isSpeaking()) return;
+      const text = (data.transcript || data.text || '').trim();
+      if (!text || text.length < 2) return;
+      this.serverSttActive = true;
+      const utteranceId = 'stt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+      if (this.activeOnResult) {
+        this.activeOnResult(text, true, utteranceId);
+      }
+    });
+
+    socket.on('stt:audio_telemetry', (data: { callId: string; rms: number; isTooQuiet: boolean; isClipping: boolean }) => {
+      if (this.onAudioTelemetry) {
+        this.onAudioTelemetry(data);
+      }
+      if (data.isClipping && this.onAudioWarning) {
+        this.onAudioWarning({ type: 'clipping', peak: 1.0 });
+      } else if (data.isTooQuiet && this.onAudioWarning) {
+        this.onAudioWarning({ type: 'low_volume', rms: data.rms });
+      }
+    });
+
+    socket.on('stt:error', (data: { callId: string; error: string }) => {
+      console.warn('[VoiceService] Server STT notice, browser STT fallback is serving queries:', data.error);
+      this.serverSttActive = false;
+    });
   }
 
   public isSpeechSupported(): boolean {

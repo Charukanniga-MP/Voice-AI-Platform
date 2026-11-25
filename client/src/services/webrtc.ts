@@ -269,6 +269,11 @@ export class WebRTCManager {
     return this.localStream;
   }
 
+  // Retrieve current active local microphone stream
+  public getLocalStream(): MediaStream | null {
+    return this.localStream;
+  }
+
   // Switch microphone input device dynamically during active call
   public async switchMicrophone(deviceId: string): Promise<void> {
     audioDeviceManager.setPreferredMicrophoneId(deviceId);
