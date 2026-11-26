@@ -53,7 +53,7 @@ export class VoiceService {
 
   public onAudioWarning?: (warning: { type: 'low_volume' | 'clipping'; rms?: number; peak?: number }) => void;
   public onAudioTelemetry?: (telemetry: { rms: number; isTooQuiet: boolean; isClipping: boolean }) => void;
-  public onInterruption?: () => void;
+  public onInterruption?: (interruptedText?: string) => void;
   public onSpeechStart?: () => void;
   public onLanguageDetected?: (lang: string) => void;
 
@@ -249,11 +249,11 @@ export class VoiceService {
       // If AI is currently speaking and detected speech is genuine customer input (NOT echo), allow customer interruption.
       if (this.isSpeaking()) {
         const cleanWords = spokenText.split(/\s+/).filter(w => w.length >= 2);
-        if (spokenText.length >= 3 && cleanWords.length >= 1) {
-          console.log(`[VoiceService] Genuine customer barge-in detected ("${spokenText}"). Halting voice output.`);
+        if (spokenText.length >= 2 && cleanWords.length >= 1) {
+          console.log(`[VoiceService] 🛑 Genuine customer barge-in detected ("${spokenText}"). Halting voice output.`);
           this.cancelSpeech();
           if (this.onInterruption) {
-            this.onInterruption();
+            this.onInterruption(spokenText);
           }
         }
       }

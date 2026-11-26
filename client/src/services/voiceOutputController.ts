@@ -125,6 +125,12 @@ export class VoiceOutputController {
    * Tolerates phonetic speech recognition mistranscriptions, dropped words, punctuation differences,
    * and trailing/preceding noise tokens.
    */
+  /**
+   * Highly robust acoustic echo detector:
+   * Accurately differentiates between:
+   * 1. Acoustic Echo: Speaker playback picked up by mic (high word overlap, multiple matching trigrams, or long substring of AI text).
+   * 2. Genuine Customer Barge-in: Customer interrupting with questions or commands ("Wait", "Stop", "Hold on", "How much", "Can you explain", etc.).
+   */
   public isAcousticEcho(candidateText: string, windowMs: number = 15000): boolean {
     const candidate = (candidateText || '').trim();
     if (!candidate || candidate.length < 2) return false;
@@ -136,6 +142,12 @@ export class VoiceOutputController {
     const candWords = candNorm.split(/\s+/).filter(w => w.length >= 2);
     if (candWords.length === 0) return false;
 
+    // 1. Single or two-word customer utterances (e.g. "Wait", "Stop", "Hold on", "Excuse me", "Hello", "No")
+    // are genuine voice interruption commands, NEVER acoustic echo!
+    if (candWords.length <= 2 && candNorm.length < 25) {
+      return false;
+    }
+
     // Common conversational words that should NOT count towards echo match thresholds
     const COMMON_CONVERSATIONAL_WORDS = new Set([
       'can', 'you', 'help', 'me', 'today', 'i', 'want', 'to', 'know', 'what', 'is', 'are', 'the',
@@ -146,6 +158,17 @@ export class VoiceOutputController {
     // If AI is not actively speaking, short conversational customer answers (<= 10 words and < 60 chars)
     // are genuine responses (e.g. "Yes speaking, tell me more about Kaira", "Can you help me today?"), never acoustic feedback
     if (!this.isSpeaking() && candWords.length <= 10 && candNorm.length < 60) {
+      return false;
+    }
+
+    // If AI is speaking, short conversational customer utterances (<= 6 words and < 35 chars)
+    // when not matching multiple consecutive words are genuine barge-in
+    if (candWords.length <= 6 && candNorm.length < 35) {
+      // Check if it's an exact long chunk of AI speech (e.g. 25+ chars)
+      const currentAi = norm(this.currentSpokenText || '');
+      if (currentAi && currentAi.includes(candNorm) && candNorm.length >= 25) {
+        return true;
+      }
       return false;
     }
 
@@ -284,6 +307,15 @@ export class VoiceOutputController {
       }
       this.currentUtterance = null;
     }
+  }
+
+  /**
+   * Immediately halts current speech upon customer voice interruption (barge-in).
+   * Ensures instant silence and prevents any delayed audio chunks from playing.
+   */
+  public interrupt(): void {
+    console.log('[VoiceOutputController] 🛑 Immediate speech interruption (barge-in)');
+    this.stop();
   }
 
   /**

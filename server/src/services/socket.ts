@@ -45,6 +45,7 @@ export interface CallSessionState {
   pendingHandoverReason?: HandoverReason;
   lastHandoverQuery?: string;
   suggestedCallbackPhone?: string;
+  currentTurnId?: number;
 }
 
 /**
@@ -1405,6 +1406,7 @@ export function initSocketServer(io: SocketIOServer) {
       clientMessageId?: string;
       utteranceId?: string;
       clientSentAt?: number;
+      turnId?: number;
     }) => {
       try {
         const rawQuery = (data.query || '').trim();
@@ -1422,6 +1424,11 @@ export function initSocketServer(io: SocketIOServer) {
         if (session && session.speakerType !== 'ai') {
           console.log(`[AICall] Dropped call:query on ${data.callId}: active speaker is human agent ${session.humanSpeakerName}`);
           return;
+        }
+
+        const queryTurnId = data.turnId || ((session?.currentTurnId || 0) + 1);
+        if (session) {
+          session.currentTurnId = Math.max(session.currentTurnId || 0, queryTurnId);
         }
 
         // Server-Side Acoustic Echo Shield
@@ -1937,6 +1944,11 @@ export function initSocketServer(io: SocketIOServer) {
               }
             });
 
+            if (session && session.currentTurnId && session.currentTurnId > queryTurnId) {
+              console.log(`[AICall] Discarded transfer response on ${data.callId} for superseded turn ${queryTurnId} (current: ${session.currentTurnId})`);
+              return;
+            }
+
             socket.emit('call:ai_response', {
               callId: data.callId,
               responseId: transferResponseId,
@@ -1951,7 +1963,8 @@ export function initSocketServer(io: SocketIOServer) {
               latency: {
                 aiMs: aiProcessingMs,
                 totalRoundTripMs
-              }
+              },
+              turnId: queryTurnId
             });
 
             io.to(`call:${data.callId}`).emit('call:live_transcript', {
@@ -2039,6 +2052,11 @@ export function initSocketServer(io: SocketIOServer) {
               }
             });
 
+            if (session && session.currentTurnId && session.currentTurnId > queryTurnId) {
+              console.log(`[AICall] Discarded callback offer on ${data.callId} for superseded turn ${queryTurnId} (current: ${session.currentTurnId})`);
+              return;
+            }
+
             socket.emit('call:ai_response', {
               callId: data.callId,
               responseId: transferResponseId,
@@ -2054,7 +2072,8 @@ export function initSocketServer(io: SocketIOServer) {
               latency: {
                 aiMs: aiProcessingMs,
                 totalRoundTripMs
-              }
+              },
+              turnId: queryTurnId
             });
 
             io.to(`call:${data.callId}`).emit('call:live_transcript', {
@@ -2131,6 +2150,11 @@ export function initSocketServer(io: SocketIOServer) {
           callContext.push({ sender: 'ai', text: aiText, timestamp: new Date() });
           activeCallContexts.set(data.callId, callContext);
 
+          if (session && session.currentTurnId && session.currentTurnId > queryTurnId) {
+            console.log(`[AICall] Discarded AI response on ${data.callId} for superseded turn ${queryTurnId} (current: ${session.currentTurnId})`);
+            return;
+          }
+
           const aiResponseId = `resp_ai_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
           socket.emit('call:ai_response', {
             callId: data.callId,
@@ -2146,7 +2170,8 @@ export function initSocketServer(io: SocketIOServer) {
             latency: {
               aiMs: aiProcessingMs,
               totalRoundTripMs
-            }
+            },
+            turnId: queryTurnId
           });
 
           // Broadcast to call participants
@@ -2189,13 +2214,17 @@ export function initSocketServer(io: SocketIOServer) {
     });
 
     // 8B. Customer interrupts AI speaking (Barge-in / Voice Activity Detection cancellation)
-    socket.on('call:interrupt', (data: { callId: string }) => {
-      console.log(`[AICall] Barge-in: Customer interrupted AI on call: ${data.callId}`);
+    socket.on('call:interrupt', (data: { callId: string; turnId?: number }) => {
+      console.log(`[AICall] Barge-in: Customer interrupted AI on call: ${data.callId}, turn: ${data.turnId}`);
+      const session = callSessions.get(data.callId);
+      if (session) {
+        session.currentTurnId = data.turnId || ((session.currentTurnId || 0) + 1);
+      }
       const lock = activeCallQueryLocks.get(data.callId);
       if (lock) {
         lock.inFlight = false;
       }
-      io.to(`call:${data.callId}`).emit('call:interrupted', { callId: data.callId });
+      io.to(`call:${data.callId}`).emit('call:interrupted', { callId: data.callId, turnId: data.turnId });
     });
 
     // 9. Live Speech Transcription Relay & Real-Time Multilingual Translation

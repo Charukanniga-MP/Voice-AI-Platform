@@ -41,6 +41,7 @@ export type ConversationState =
   | 'LISTENING'
   | 'PROCESSING'
   | 'SPEAKING'
+  | 'AI_SPEAKING'
   | 'INTERRUPTED'
   | 'TRANSFERRING'
   | 'HUMAN_CONNECTED'
@@ -70,9 +71,13 @@ export const CustomerDashboard: React.FC = () => {
   const [aiIsSpeaking, setAiIsSpeaking] = useState(false);
   const aiIsSpeakingRef = useRef(false);
 
-  // Conversation state tracking with strict 11-state machine
+  // Strict Conversation State Machine:
+  // LISTENING -> PROCESSING -> AI_SPEAKING
+  // If customer interrupts:
+  // AI_SPEAKING -> INTERRUPTED -> LISTENING -> PROCESSING -> AI_SPEAKING
   const [conversationState, setConversationState] = useState<ConversationState>('IDLE');
   const conversationStateRef = useRef<ConversationState>('IDLE');
+  const activeTurnIdRef = useRef<number>(1);
   const lastSyncedLanguageRef = useRef<string>('');
 
   const transitionState = (
@@ -84,7 +89,7 @@ export const CustomerDashboard: React.FC = () => {
     conversationStateRef.current = newState;
     setConversationState(newState);
 
-    if (newState === 'SPEAKING' || newState === 'GREETING') {
+    if (newState === 'SPEAKING' || newState === 'AI_SPEAKING' || newState === 'GREETING') {
       setAiVisualState('speaking');
     } else if (newState === 'PROCESSING' || newState === 'TRANSFERRING' || newState === 'CONNECTING') {
       setAiVisualState('thinking');
@@ -647,10 +652,9 @@ export const CustomerDashboard: React.FC = () => {
 
       greetedCallsRef.current.add(data.callId);
 
-      // Mute/stop microphone recognition completely during the initial greeting
-      // to eliminate any possibility of acoustic echo pickup through device speakers
-      voiceService.stopListening();
-      transitionState('GREETING', 'Playing initial KAIRA greeting introduction');
+      // Start listening right away so customer can interrupt/barge in at any time
+      startSpeechRecognition(data.callId, false);
+      transitionState('AI_SPEAKING', 'Playing initial KAIRA greeting introduction');
 
       setTranscripts(prev => [
         ...prev,
@@ -676,15 +680,9 @@ export const CustomerDashboard: React.FC = () => {
         aiIsSpeakingRef.current = false;
         currentAiSpeechTextRef.current = '';
         lastAiSpokenTimeRef.current = Date.now();
-        console.log('[Customer] Initial greeting finished. 400ms acoustic cooldown buffer started...');
-
-        // 400ms cooldown buffer allows room speaker reverberation to dissipate before opening microphone
-        setTimeout(() => {
-          if (callStatusRef.current === 'active_ai' || callStatusRef.current === 'ringing') {
-            transitionState('LISTENING', 'Greeting completed, opening microphone for customer voice');
-            startSpeechRecognition(data.callId, false);
-          }
-        }, 400);
+        if (conversationStateRef.current === 'AI_SPEAKING') {
+          transitionState('LISTENING', 'Greeting completed naturally, listening for customer turn');
+        }
       }, data.language, undefined, data.responseId);
     });
 
@@ -708,6 +706,7 @@ export const CustomerDashboard: React.FC = () => {
       responseId?: string;
       clientMessageId?: string;
       latency?: { aiMs: number; totalRoundTripMs: number };
+      turnId?: number;
     }) => {
       // Clear query watchdog timer since response arrived
       if (queryWatchdogRef.current) {
@@ -719,20 +718,29 @@ export const CustomerDashboard: React.FC = () => {
       const roundTrip = speechEndTimeRef.current ? (Date.now() - speechEndTimeRef.current) : (data.latency?.totalRoundTripMs || data.latency?.aiMs || 0);
       setLiveLatency(roundTrip);
 
+      // Check turn supersession: if response belongs to an interrupted older turn, drop it
+      if (data.turnId && data.turnId < activeTurnIdRef.current) {
+        console.log(`[Customer] Ignored superseded AI response (turn ${data.turnId} < active ${activeTurnIdRef.current})`);
+        return;
+      }
+
       if (data.language && data.language in SUPPORTED_LANGUAGES && data.language !== selectedLanguageRef.current) {
         setSelectedLanguage(data.language as LanguageCode);
         voiceService.setLanguage(data.language);
       }
 
-      transitionState('SPEAKING', 'AI response received, playing speech');
-      // Pause microphone listening during AI speech playback to prevent self-pickup through speakers
-      voiceService.pauseListening();
+      transitionState('AI_SPEAKING', 'AI response received, playing speech');
       setAiIsSpeaking(true);
       aiIsSpeakingRef.current = true;
       currentAiSpeechTextRef.current = data.answer;
       lastAiSpokenTextRef.current = data.answer;
       lastAiSpokenTimeRef.current = Date.now();
       voiceOutputController.recordUtterance(data.answer);
+
+      // Keep speech recognition listening during AI playback for barge-in detection
+      if (callStatusRef.current === 'active_ai') {
+        startSpeechRecognition(callIdRef.current || '', false);
+      }
 
       setTranscripts(prev => {
         const isDuplicate = prev.some(t =>
@@ -768,32 +776,34 @@ export const CustomerDashboard: React.FC = () => {
         aiIsSpeakingRef.current = false;
         currentAiSpeechTextRef.current = '';
         lastAiSpokenTimeRef.current = Date.now();
-        console.log('[Customer] AI response playback completed. 350ms acoustic cooldown buffer started...');
-
-        setTimeout(() => {
-          if (callStatusRef.current === 'active_ai') {
-            transitionState('LISTENING', 'AI finished speaking, microphone listening for customer turn');
-            if (!data.isTransferring || (data as any).isOfferingCallback) {
-              startSpeechRecognition(callIdRef.current || '', false);
-            }
-          }
-        }, 350);
+        console.log('[Customer] AI response playback completed naturally.');
+        if (conversationStateRef.current === 'AI_SPEAKING') {
+          transitionState('LISTENING', 'AI finished speaking naturally, listening for customer turn');
+        }
       }, data.language || selectedLanguageRef.current, undefined, data.responseId);
     });
 
     // 7B. AI speech interrupted (barge-in broadcast)
-    socket.on('call:interrupted', () => {
+    socket.on('call:interrupted', (data?: { callId?: string; turnId?: number }) => {
       if (queryWatchdogRef.current) {
         clearTimeout(queryWatchdogRef.current);
         queryWatchdogRef.current = null;
       }
-      console.log('[Customer] AI speech interrupted');
-      voiceOutputController.stop();
+      console.log('[Customer] AI speech interrupted broadcast received:', data);
+      voiceOutputController.interrupt();
       voiceService.cancelSpeech();
       setAiIsSpeaking(false);
       aiIsSpeakingRef.current = false;
       currentAiSpeechTextRef.current = '';
+      if (data?.turnId && data.turnId > activeTurnIdRef.current) {
+        activeTurnIdRef.current = data.turnId;
+      }
       transitionState('INTERRUPTED', 'Speech interrupted by customer barge-in');
+      setTimeout(() => {
+        if (conversationStateRef.current === 'INTERRUPTED') {
+          transitionState('LISTENING', 'Listening after interruption');
+        }
+      }, 50);
     });
 
     // 8. Admin / Specialist transfer connected
@@ -1027,21 +1037,29 @@ export const CustomerDashboard: React.FC = () => {
       }
     };
 
-    voiceService.onInterruption = () => {
+    voiceService.onInterruption = (interruptedText?: string) => {
+      console.log('[CustomerDashboard] Barge-in triggered by voice service:', interruptedText);
+      voiceOutputController.interrupt();
       voiceService.cancelSpeech();
       setAiIsSpeaking(false);
       aiIsSpeakingRef.current = false;
       currentAiSpeechTextRef.current = '';
       setWasInterrupted(true);
       setTimeout(() => setWasInterrupted(false), 2500);
+      activeTurnIdRef.current += 1;
       transitionState('INTERRUPTED', 'AI speech interrupted by customer barge-in');
       const socket = getSocket();
-      socket.emit('call:interrupt', { callId: activeCallId });
+      socket.emit('call:interrupt', { callId: activeCallId, turnId: activeTurnIdRef.current });
+      setTimeout(() => {
+        if (conversationStateRef.current === 'INTERRUPTED') {
+          transitionState('LISTENING', 'Listening to customer utterance after interruption');
+        }
+      }, 50);
     };
 
     voiceService.onSpeechStart = () => {
       if (isMutedRef.current || isCallHeldRef.current) return;
-      if (conversationStateRef.current === 'SPEAKING' || conversationStateRef.current === 'GREETING') {
+      if (conversationStateRef.current === 'SPEAKING' || conversationStateRef.current === 'AI_SPEAKING' || conversationStateRef.current === 'GREETING') {
         transitionState('INTERRUPTED', 'Customer barge-in detected');
       }
       setIsCustomerSpeaking(true);
@@ -1076,15 +1094,22 @@ export const CustomerDashboard: React.FC = () => {
       if (!isHumanCall && trimmed.length > 0 && (aiIsSpeakingRef.current || (typeof window !== 'undefined' && window.speechSynthesis?.speaking))) {
         if (!isAiEcho) {
           console.log('[CustomerDashboard] Genuine barge-in speech detected:', trimmed);
+          voiceOutputController.interrupt();
           voiceService.cancelSpeech();
           setAiIsSpeaking(false);
           aiIsSpeakingRef.current = false;
           currentAiSpeechTextRef.current = '';
           setWasInterrupted(true);
           setTimeout(() => setWasInterrupted(false), 2500);
+          activeTurnIdRef.current += 1;
           transitionState('INTERRUPTED', 'Customer interrupted AI speech');
           const socket = getSocket();
-          socket.emit('call:interrupt', { callId: activeCallId });
+          socket.emit('call:interrupt', { callId: activeCallId, turnId: activeTurnIdRef.current });
+          setTimeout(() => {
+            if (conversationStateRef.current === 'INTERRUPTED') {
+              transitionState('LISTENING', 'Listening to customer utterance after interruption');
+            }
+          }, 50);
         } else {
           console.log('[CustomerDashboard] Suppressed acoustic feedback during AI playback:', trimmed);
           return;
@@ -1197,7 +1222,8 @@ export const CustomerDashboard: React.FC = () => {
             language: currentActiveLang,
             clientSentAt: speechEndTimeRef.current,
             clientMessageId: clientMsgId,
-            utteranceId
+            utteranceId,
+            turnId: activeTurnIdRef.current
           });
         }
       }
@@ -2025,7 +2051,7 @@ export const CustomerDashboard: React.FC = () => {
                   </span>
                   {callStatus !== 'idle' && (
                     <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
-                      conversationState === 'SPEAKING' || conversationState === 'GREETING'
+                      conversationState === 'SPEAKING' || conversationState === 'AI_SPEAKING' || conversationState === 'GREETING'
                         ? 'bg-indigo-50 text-indigo-700 border-indigo-200 animate-pulse'
                         : conversationState === 'PROCESSING' || conversationState === 'CONNECTING'
                         ? 'bg-amber-50 text-amber-700 border-amber-200 animate-pulse'
@@ -2034,19 +2060,19 @@ export const CustomerDashboard: React.FC = () => {
                         : conversationState === 'HUMAN_CONNECTED'
                         ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                         : conversationState === 'INTERRUPTED'
-                        ? 'bg-rose-50 text-rose-700 border-rose-200'
-                        : conversationState === 'ERROR'
-                        ? 'bg-red-50 text-red-700 border-red-200'
+                        ? 'bg-rose-50 text-rose-700 border-rose-200 animate-pulse'
                         : conversationState === 'LISTENING'
                         ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : conversationState === 'ERROR'
+                        ? 'bg-red-50 text-red-700 border-red-200'
                         : 'bg-slate-50 text-slate-600 border-slate-200'
                     }`}>
                       {conversationState === 'CONNECTING' && 'Connecting...'}
                       {conversationState === 'GREETING' && 'KAIRA Greeting'}
-                      {conversationState === 'LISTENING' && 'Listening for Speech'}
-                      {conversationState === 'PROCESSING' && 'AI Processing Speech'}
-                      {conversationState === 'SPEAKING' && 'KAIRA Speaking'}
+                      {(conversationState === 'AI_SPEAKING' || conversationState === 'SPEAKING') && 'KAIRA Speaking'}
+                      {conversationState === 'PROCESSING' && 'AI Processing'}
                       {conversationState === 'INTERRUPTED' && 'Barge-In Interrupted'}
+                      {conversationState === 'LISTENING' && 'Listening for Speech'}
                       {conversationState === 'TRANSFERRING' && 'Transferring to Specialist'}
                       {conversationState === 'HUMAN_CONNECTED' && 'Human Specialist Connected'}
                       {conversationState === 'ENDED' && 'Call Ended'}
