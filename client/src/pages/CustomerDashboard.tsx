@@ -1018,7 +1018,7 @@ export const CustomerDashboard: React.FC = () => {
 
     // Auto-detect customer's spoken language in real-time
     voiceService.onLanguageDetected = (langCode: string) => {
-      if (langCode && langCode in SUPPORTED_LANGUAGES && langCode !== selectedLanguage) {
+      if (!isHumanCall && langCode && langCode in SUPPORTED_LANGUAGES && langCode !== selectedLanguage) {
         console.log(`[Customer] Spoken language auto-detected: ${langCode}. Syncing session.`);
         setSelectedLanguage(langCode as LanguageCode);
         voiceService.setLanguage(langCode);
@@ -1059,7 +1059,7 @@ export const CustomerDashboard: React.FC = () => {
       const trimmed = text.trim();
 
       // Check text for multi-language script auto-detection
-      const detected = voiceService.detectScriptLanguage(trimmed);
+      const detected = isHumanCall ? null : voiceService.detectScriptLanguage(trimmed);
       let currentActiveLang = selectedLanguage;
       if (detected && detected in SUPPORTED_LANGUAGES && detected !== selectedLanguage) {
         currentActiveLang = detected as LanguageCode;

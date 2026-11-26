@@ -62,10 +62,6 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       localStorage.setItem(STORAGE_KEY, language);
     } catch {}
 
-    if (typeof document !== 'undefined') {
-      document.documentElement.dir = (language === 'ar' || language === 'ur') ? 'rtl' : 'ltr';
-      document.documentElement.lang = language;
-    }
   }, [language]);
 
   const setLanguage = useCallback((newLang: LanguageCode) => {
@@ -92,11 +88,21 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   }, [token]);
 
+  const isEnglishOnlyRole = !user || user.role === 'admin' || user.role === 'agent';
+  const uiLanguage: LanguageCode = isEnglishOnlyRole ? 'en' : language;
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.dir = uiLanguage === 'ar' || uiLanguage === 'ur' ? 'rtl' : 'ltr';
+      document.documentElement.lang = uiLanguage;
+    }
+  }, [uiLanguage]);
+
   const t = useCallback(
     (key: TranslationKey, params?: Record<string, string | number>): string => {
-      return translate(language, key, params);
+      return translate(uiLanguage, key, params);
     },
-    [language]
+    [uiLanguage]
   );
 
   return (
