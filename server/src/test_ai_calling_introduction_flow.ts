@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import { io as Client, Socket } from 'socket.io-client';
 import { prisma } from './db.js';
 
