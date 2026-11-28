@@ -51,23 +51,27 @@ KAIRA is a production-ready, full-stack, AI-powered customer communication platf
 
 ---
 
-## 🦷 KAIRA Dental Receptionist & Appointment Booking (New Upgrade)
+## 🧠 Advanced Conversational Intelligence & Context-Aware Support (New Upgrade)
 
-KAIRA now operates as an intelligent virtual dental clinic receptionist with context-aware natural conversation and full appointment management:
+KAIRA operates as an intelligent real-time conversational voice agent for customer communication and support:
 
-1. **Intelligent Conversational Receptionist**:
-   - Understands natural patient inquiries (wisdom tooth pain, root canals, cleaning, whitening, sensitivity).
-   - Powered by **Google Gemini** & OpenAI LLM with grounded clinical knowledge.
-   - Maintains multi-turn conversation memory with pronoun resolution ("Does it hurt?" refers to previously discussed procedure).
-   - Zero premature or unnecessary human handovers for standard dental inquiries.
+1. **Context-Aware Intent Classification**:
+   - Classifies customer queries across 13 distinct intent categories: General Questions, Account Issues, Previous History, Technical Support, Billing & Pricing, Product Inquiries, Complaints, and Explicit Human Transfers.
+   - Never recites internal technical architecture (WebRTC / WebSockets / RAG) unless explicitly asked how the system works behind the scenes.
+   - Polite out-of-domain scope explanation and redirection for unrelated external topics (e.g. medical, food delivery).
 
-2. **End-to-End Appointment Booking**:
-   - Symptom intake & urgency triage (pain severity, duration, location).
-   - Real-time dentist availability checks and double-booking prevention.
-   - Direct appointment confirmation, unique reference generation (e.g. `DEN-202611-ABCD`), cancellation, and rescheduling.
+2. **Multi-Turn Context & Single-Question Intake**:
+   - Structured per-call conversation context memory tracking current intent, conversation stage, and collected details.
+   - Asks one focused question at a time and never repeats already answered questions.
+   - Full pronoun and follow-up anaphora resolution across consecutive turns.
 
-3. **Real-Time Voice Interruption (Barge-In)**:
-   - Synchronized turn tracking (`turnId`) cancels active audio generation when patient speaks over AI.
+3. **Intelligent Grounding & Dual LLM Support**:
+   - Hybrid BM25 + Vector Search with 0.40 relevance threshold preventing spurious matches.
+   - Integrated Google Gemini REST API and OpenAI SDK with clinical/support prompt grounding.
+   - Zero premature human handovers on standard customer support questions.
+
+4. **Real-Time Voice Interruption (Barge-In)**:
+   - Synchronized turn tracking (`turnId`) cancels active audio generation when customer speaks over AI.
 
 ---
 
