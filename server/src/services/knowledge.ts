@@ -1,6 +1,5 @@
 import { prisma } from '../db.js';
 import OpenAI from 'openai';
-import { dentalLlmService } from './dentalLlm.service.js';
 
 interface SearchResult {
   entry: any;
@@ -530,10 +529,10 @@ class KnowledgeService {
       (isRespondingToCallIntro && /^(yes|yeah|yep|sure|ok|okay|alright|fine|sounds\s+good|hi|hello)(?:\s+speaking)?(?:\s*,\s*.*)?$/i.test(cleanInput))
     ) {
       return {
-        answer: "Wonderful! How may I assist you with your dental care, appointment booking, or clinic questions today?",
+        answer: "Wonderful! How may I assist you with KAIRA's customer communication platform or support services today?",
         isGrounded: true,
         requiresTransfer: false,
-        sources: [{ id: 'kaira-dental-overview', title: 'Dental Clinic Overview', category: 'clinic' }],
+        sources: [{ id: 'kaira-overview', title: 'KAIRA Platform Overview', category: 'support' }],
         confidence: 1.0,
         latencyMs: Date.now() - t0
       };
@@ -547,7 +546,7 @@ class KnowledgeService {
 
     if (isPureGreeting) {
       return {
-        answer: "Hello! Welcome to our dental clinic. I am Kaira, your virtual receptionist. How can I assist you with your dental care or appointment today?",
+        answer: "Hello! Welcome to KAIRA customer support. I am Kaira, your virtual support specialist. How may I assist you today?",
         isGrounded: true,
         requiresTransfer: false,
         sources: [],
@@ -912,9 +911,15 @@ class KnowledgeService {
       matches = await this.search(trimmedQuery);
     }
 
-    // If matching approved KB entry found
-    if (matches.length > 0 && matches[0].score >= 0.20) {
+    // If matching approved KB entry found with adequate confidence
+    if (matches.length > 0 && matches[0].score >= 0.40) {
       const topMatch = matches[0];
+
+      // Guard against unsolicited internal architecture answers when user asked unrelated query
+      const isTechArchitectureAnswer = (topMatch.entry.answer || '').toLowerCase().includes('webrtc') && (topMatch.entry.answer || '').toLowerCase().includes('web speech');
+      const userAskedTech = /\b(how\s+(?:does\s+)?(?:it|kaira|voice\s+agent)\s+work|behind\s+the\s+scenes|architecture|technology|webrtc|speech\s+recognition)\b/i.test(cleanInput);
+
+      if (!isTechArchitectureAnswer || userAskedTech) {
       const contextText = matches
         .map(m => `Title: ${m.entry.title}\nCategory: ${m.entry.category}\nQuestion: ${m.entry.question || 'N/A'}\nAnswer: ${m.entry.answer || 'N/A'}\nDetails: ${m.entry.content}`)
         .join('\n\n---\n\n');
@@ -1013,6 +1018,7 @@ ${contextText}`;
           isConflict: conflictCheck.isConflict,
           latencyMs: Date.now() - t0
         };
+      }
       }
     }
 
@@ -1132,19 +1138,14 @@ Do not guess or fabricate private corporate details.`;
       };
     }
 
-    // Intelligent Dental & General Knowledge Conversational Answering
-    const dentalAns = await dentalLlmService.generateAnswer({
-      query: trimmedQuery,
-      callHistory: history
-    });
-
-    if (dentalAns.confidence >= 0.85 && dentalAns.answer) {
+    // Out-of-Domain: Dental or Medical topics (Politely explain support scope without irrelevant technical explanations)
+    if (/\b(wisdom\s+teeth|tooth\s*ache|teeth|dentist|dental|root\s+canal|gum\s+bleeding|tooth\s+pain|cavity|orthodontist|doctor|hospital|headache|fever|cough|prescription|medicine)\b/i.test(cleanInput)) {
       return {
-        answer: dentalAns.answer,
-        isGrounded: true,
+        answer: "I specialize in KAIRA's customer communication and AI voice platform. While I cannot assist with dental or medical concerns, I'm here to help with your account, technical support, or platform features.",
+        isGrounded: false,
         requiresTransfer: false,
-        sources: [{ id: 'kaira-dental-intelligence', title: 'Intelligent Dental Conversational Brain', category: 'dental-ai' }],
-        confidence: dentalAns.confidence,
+        sources: [],
+        confidence: 0.95,
         latencyMs: Date.now() - t0
       };
     }

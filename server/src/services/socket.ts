@@ -13,7 +13,7 @@ import { callReliabilityService } from './callReliability.js';
 import { handoverService, HandoverReason } from './handover.service.js';
 import { notificationService } from './notification.service.js';
 import { sttService } from './stt/stt.service.js';
-import { dentalAiService } from './dentalAi.service.js';
+import { conversationalIntelligenceService } from './conversationalIntelligence.service.js';
 
 // Multi-turn conversational context memory for active calls
 const activeCallContexts = new Map<string, Array<{ sender: 'customer' | 'ai'; text: string; timestamp: Date }>>();
@@ -1101,7 +1101,7 @@ export function initSocketServer(io: SocketIOServer) {
           createdAt: Date.now()
         });
 
-        // KAIRA Dental Clinic Virtual Receptionist Greeting
+        // KAIRA General AI Voice Support Specialist Greeting
         const hasSpecificName = Boolean(
           cleanDisplayName &&
           cleanDisplayName.toLowerCase() !== 'customer' &&
@@ -1110,7 +1110,7 @@ export function initSocketServer(io: SocketIOServer) {
           cleanDisplayName.toLowerCase() !== 'undefined'
         );
 
-        let greeting: string = dentalAiService.getInitialGreeting(hasSpecificName ? cleanDisplayName : undefined);
+        let greeting: string = conversationalIntelligenceService.getInitialGreeting(hasSpecificName ? cleanDisplayName : undefined);
 
         if (callLang !== 'en') {
           greeting = await translationService.translateText(greeting, callLang, 'en');
@@ -1126,7 +1126,7 @@ export function initSocketServer(io: SocketIOServer) {
             data: {
               callRecordId: call.id,
               sender: 'ai',
-              senderName: 'KAIRA Dental Receptionist',
+              senderName: 'KAIRA AI Support Specialist',
               text: greeting,
               language: callLang
             }
@@ -1767,8 +1767,8 @@ export function initSocketServer(io: SocketIOServer) {
         const callContext = activeCallContexts.get(data.callId) || [];
         callContext.push({ sender: 'customer', text: queryText, timestamp: new Date() });
 
-        // 1B. Priority Dental Clinic Receptionist & Clinical Triage Workflow
-        const dentalTurn = await dentalAiService.handleTurn({
+        // 1B. Priority Advanced Conversational Intelligence & Intent Routing
+        const ciTurn = await conversationalIntelligenceService.handleTurn({
           callId: data.callId,
           query: queryText,
           language: callLang,
@@ -1776,7 +1776,7 @@ export function initSocketServer(io: SocketIOServer) {
           callHistory: callContext
         });
 
-        if (dentalTurn.isDentalHandled && dentalTurn.answer) {
+        if (ciTurn && ciTurn.answer) {
           // Asynchronously update real-time sentiment without blocking turn
           sentimentService.processCustomerUtterance({
             callId: data.callId,
@@ -1793,71 +1793,72 @@ export function initSocketServer(io: SocketIOServer) {
               requiresHumanAssistance: sentimentResult.requiresHumanAssistance,
               timestamp: new Date()
             });
-          }).catch(err => console.warn('[Dental] Sentiment error:', err));
+          }).catch(err => console.warn('[ConversationalAI] Sentiment error:', err));
 
-          callContext.push({ sender: 'ai', text: dentalTurn.answer, timestamp: new Date() });
+          callContext.push({ sender: 'ai', text: ciTurn.answer, timestamp: new Date() });
 
           // Record in DB transcript
           await prisma.callTranscript.create({
             data: {
               callRecordId: call.id,
               sender: 'ai',
-              senderName: 'KAIRA Dental Receptionist',
-              text: dentalTurn.answer,
+              senderName: 'KAIRA AI Support Specialist',
+              text: ciTurn.answer,
               language: callLang
             }
           });
 
-          const dentalResponseId = `resp_den_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+          const aiResponseId = `resp_ci_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
           // Reset lock
           activeCallQueryLocks.delete(data.callId);
 
           // Discard response if customer interrupted and advanced to a newer turn (Barge-in supersession)
           if (session && session.currentTurnId && queryTurnId && session.currentTurnId > queryTurnId) {
-            console.log(`[AICall] Discarded dental AI response on ${data.callId} for superseded turn ${queryTurnId} (current: ${session.currentTurnId})`);
+            console.log(`[AICall] Discarded response on ${data.callId} for superseded turn ${queryTurnId} (current: ${session.currentTurnId})`);
             return;
           }
 
-          if (dentalTurn.requiresTransfer) {
-            console.log(`[AICall] Initiating Dental Escalation on call ${data.callId}. Reason: ${dentalTurn.transferReason}`);
+          if (ciTurn.requiresTransfer) {
+            const transferReason = ciTurn.transferReason || 'Customer Explicitly Requested Human Support';
+            console.log(`[AICall] Initiating Human Handover on call ${data.callId}. Reason: ${transferReason}`);
             await prisma.callRecord.update({
               where: { id: call.id },
               data: {
                 transferred: true,
-                transferReason: dentalTurn.transferReason || 'Dental Urgency Escalation',
+                transferReason,
                 customerQuestion: queryText,
                 type: 'admin_transfer',
                 requiresAssistance: true,
-                assistanceReason: dentalTurn.transferReason
+                assistanceReason: transferReason
               }
             });
 
             socket.emit('call:ai_response', {
               callId: data.callId,
-              responseId: dentalResponseId,
+              responseId: aiResponseId,
               clientMessageId: data.clientMessageId,
               turnId: queryTurnId,
               utteranceId: data.utteranceId,
-              answer: dentalTurn.answer,
+              answer: ciTurn.answer,
               isTransferring: true,
-              transferReason: dentalTurn.transferReason,
+              transferReason,
               language: callLang,
-              audioUrl: `/api/voice/tts?text=${encodeURIComponent(dentalTurn.answer)}&lang=${callLang}`
+              audioUrl: `/api/voice/tts?text=${encodeURIComponent(ciTurn.answer)}&lang=${callLang}`
             });
 
             io.to('role:admin').to('role:agent').emit('call:incoming_transfer', {
               callId: data.callId,
               customerName: call.customerName,
               phone: call.customerPhone,
-              reason: dentalTurn.transferReason,
+              reason: transferReason,
               query: queryText
             });
 
             io.to(`call:${data.callId}`).emit('call:live_transcript', {
               sender: 'ai',
-              senderName: 'KAIRA Dental Receptionist',
-              text: dentalTurn.answer,
+              senderName: 'KAIRA AI Support Specialist',
+              text: ciTurn.answer,
               language: callLang,
               timestamp: new Date()
             });
@@ -1867,21 +1868,22 @@ export function initSocketServer(io: SocketIOServer) {
 
           socket.emit('call:ai_response', {
             callId: data.callId,
-            responseId: dentalResponseId,
+            responseId: aiResponseId,
             clientMessageId: data.clientMessageId,
             turnId: queryTurnId,
             utteranceId: data.utteranceId,
-            answer: dentalTurn.answer,
+            answer: ciTurn.answer,
             isTransferring: false,
+            agentName: 'KAIRA AI Support Specialist',
+            sources: ciTurn.sources || [],
             language: callLang,
-            bookingReference: dentalTurn.bookingReference,
-            audioUrl: `/api/voice/tts?text=${encodeURIComponent(dentalTurn.answer)}&lang=${callLang}`
+            audioUrl: `/api/voice/tts?text=${encodeURIComponent(ciTurn.answer)}&lang=${callLang}`
           });
 
           io.to(`call:${data.callId}`).emit('call:live_transcript', {
             sender: 'ai',
-            senderName: 'KAIRA Dental Receptionist',
-            text: dentalTurn.answer,
+            senderName: 'KAIRA AI Support Specialist',
+            text: ciTurn.answer,
             language: callLang,
             timestamp: new Date()
           });
