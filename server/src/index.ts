@@ -41,6 +41,7 @@ import recordingsRoutes from './routes/recordings.routes.js';
 import adminSettingsRoutes from './routes/adminSettings.routes.js';
 import dataRequestsRoutes from './routes/dataRequests.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
+import aiEvaluationRoutes from './routes/aiEvaluation.routes.js';
 import { initSocketServer } from './services/socket.js';
 import { notificationService } from './services/notification.service.js';
 import { initBiScheduler } from './services/biScheduler.js';
@@ -251,6 +252,7 @@ app.use('/api/admin/recordings', recordingsRoutes);
 app.use('/api/admin/settings', adminSettingsRoutes);
 app.use('/api/data-requests', dataRequestsRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/ai-evaluation', aiEvaluationRoutes);
 
 // Dev-only Team Sync API (Strictly never mounted in production)
 if (process.env.NODE_ENV !== 'production') {

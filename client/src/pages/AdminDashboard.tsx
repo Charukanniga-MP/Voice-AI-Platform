@@ -30,6 +30,7 @@ import { PostCallSentimentSummary } from '../components/PostCallSentimentSummary
 import { LiveSentimentCard } from '../components/LiveSentimentCard.js';
 import { BiReportsSection } from '../components/BiReportsSection.js';
 import { DataRequestCenter } from '../components/DataRequestCenter.js';
+import { AIQualityObservabilitySection } from '../components/AIQualityObservabilitySection.js';
 
 // Pure deduplication utility function
 function deduplicate<T>(items: T[], keyFn: (item: T) => string): T[] {
@@ -50,7 +51,7 @@ export const AdminDashboard: React.FC = () => {
   const { t, language } = useLanguage();
 
   // Active navigation section
-  const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'agents' | 'calls' | 'intelligence' | 'tasks' | 'transfers' | 'knowledge' | 'tickets' | 'quality' | 'sentiment' | 'bi' | 'settings'>('overview');
+  const [activeSection, setActiveSection] = useState<'overview' | 'customers' | 'agents' | 'calls' | 'intelligence' | 'tasks' | 'transfers' | 'knowledge' | 'tickets' | 'quality' | 'sentiment' | 'bi' | 'ai-evaluation' | 'settings'>('overview');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const mainContentRef = useRef<HTMLElement | null>(null);
 
@@ -1628,6 +1629,17 @@ export const AdminDashboard: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setActiveSection('ai-evaluation')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'ai-evaluation'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/40'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+                }`}
+            >
+              <Sparkles className="w-4 h-4 text-indigo-400" />
+              AI Quality & Observability
+            </button>
+
+            <button
               onClick={() => setActiveSection('settings')}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${activeSection === 'settings'
                 ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
@@ -3111,6 +3123,9 @@ export const AdminDashboard: React.FC = () => {
 
         {/* SECTION: AUTOMATED BUSINESS INTELLIGENCE REPORTS & ANALYTICS */}
         {activeSection === 'bi' && <BiReportsSection token={token} />}
+
+        {/* SECTION: AI QUALITY EVALUATION & OBSERVABILITY ENGINE */}
+        {activeSection === 'ai-evaluation' && <AIQualityObservabilitySection token={token} />}
 
         {activeSection === 'settings' && (
           <div className="space-y-6">

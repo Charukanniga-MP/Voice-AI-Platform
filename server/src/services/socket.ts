@@ -14,6 +14,7 @@ import { handoverService, HandoverReason } from './handover.service.js';
 import { notificationService } from './notification.service.js';
 import { sttService } from './stt/stt.service.js';
 import { conversationalIntelligenceService } from './conversationalIntelligence.service.js';
+import { aiEvaluationService } from './aiEvaluation.service.js';
 
 // Multi-turn conversational context memory for active calls
 const activeCallContexts = new Map<string, Array<{ sender: 'customer' | 'ai'; text: string; timestamp: Date }>>();
@@ -3532,6 +3533,8 @@ export function initSocketServer(io: SocketIOServer) {
             conversationAnalysisService.analyzeCallConversation(call.id).catch(err => {
               console.error('[Socket] Asynchronous conversation analysis error:', err);
             });
+            // Asynchronously trigger AI Quality Evaluation & Observability Engine
+            aiEvaluationService.enqueueEvaluationJob(call.id);
             setTimeout(() => realtimeIntelligenceService.clearCall(data.callId), 15000);
           }, 300);
         }

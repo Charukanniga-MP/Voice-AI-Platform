@@ -131,6 +131,16 @@ model CallRecord {
   qualityEvents      CallQualityEvent[]
   recoveryEvents     CallRecoveryEvent[]
   appointments       Appointment[]
+
+  // AI Quality Evaluation & Observability Relations
+  aiEvaluations         AIResponseEvaluation[]
+  conversationEval      ConversationEvaluation?
+  ragEvaluations        RAGEvaluation[]
+  latencyMetrics        LatencyMetrics[]
+  speechEvaluations     SpeechEvaluation[]
+  handoverEvaluations   HandoverEvaluation[]
+  customerFeedbackRecord CustomerFeedback?
+  repetitionIncidents   RepetitionIncident[]
 }
 
 model CallRecoveryEvent {
@@ -786,6 +796,191 @@ model BookingAuditLog {
   @@index([bookingReference, timestamp])
   @@index([appointmentId, timestamp])
 }
+
+// ==========================================
+// AI Quality Evaluation & Observability Engine Models
+// ==========================================
+
+model AIResponseEvaluation {
+  id                    String      @id @default(cuid())
+  callRecordId          String
+  callRecord            CallRecord  @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  transcriptId          String?
+  turnIndex             Int?
+  query                 String
+  response              String
+  relevanceScore        Float       // 0.0 to 1.0
+  relevanceExplanation  String?
+  correctnessScore      Float       // 0.0 to 1.0
+  correctnessExplanation String?
+  hallucinationScore    Float       // 0.0 (grounded) to 1.0 (pure hallucination)
+  isHallucination       Boolean     @default(false)
+  unsupportedClaims     String?     // JSON array of strings
+  supportedClaims       String?     // JSON array of strings
+  evaluationExplanation String?
+  retrievedEvidence     String?     // JSON array of evidence chunks
+  evaluatedAt           DateTime    @default(now())
+
+  @@index([callRecordId])
+  @@index([isHallucination])
+  @@index([evaluatedAt])
+}
+
+model ConversationEvaluation {
+  id                    String      @id @default(cuid())
+  callRecordId          String      @unique
+  callRecord            CallRecord  @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  overallQualityScore   Float       // 0.0 to 100.0
+  relevanceAvg          Float?      // 0.0 to 1.0
+  correctnessAvg        Float?      // 0.0 to 1.0
+  hallucinationRate     Float?      // percentage 0.0 to 100.0 (lower is better)
+  retrievalAccuracyAvg  Float?      // 0.0 to 1.0
+  latencyAvgMs          Float?
+  latencyP95Ms          Float?
+  speechAccuracyAvg     Float?      // 0.0 to 1.0
+  handoverSuccessRate   Float?      // 0.0 to 1.0
+  csatScore             Float?      // 1.0 to 5.0 (or 0 to 100)
+  repetitionRate        Float?      // percentage of repeated turns
+  evaluationStatus      String      @default("completed") // "pending" | "completed" | "failed"
+  evaluatedMetricsCount Int         @default(0)
+  weightsApplied        String?     // JSON object of weights dynamically normalized
+  summaryNotes          String?
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  @@index([overallQualityScore])
+  @@index([createdAt])
+}
+
+model RAGEvaluation {
+  id                String      @id @default(cuid())
+  callRecordId      String
+  callRecord        CallRecord  @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  turnIndex         Int?
+  query             String
+  retrievedContext  String      // Extracted snippets or JSON
+  contextRelevance  Float       // 0.0 to 1.0
+  contextPrecision  Float       // 0.0 to 1.0
+  contextRecall     Float       // 0.0 to 1.0
+  kbCoverage        Float       // 0.0 to 1.0
+  retrievalFailure  Boolean     @default(false)
+  createdAt         DateTime    @default(now())
+
+  @@index([callRecordId])
+  @@index([retrievalFailure])
+}
+
+model LatencyMetrics {
+  id             String      @id @default(cuid())
+  callRecordId   String
+  callRecord     CallRecord  @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  turnId         Int?
+  traceId        String      // OpenTelemetry 16-byte hex trace ID
+  spanId         String      // OpenTelemetry 8-byte hex span ID
+  parentSpanId   String?
+  sttMs          Float       @default(0)
+  intentMs       Float       @default(0)
+  ragMs          Float       @default(0)
+  llmMs          Float       @default(0)
+  ttsMs          Float       @default(0)
+  totalMs        Float       @default(0)
+  createdAt      DateTime    @default(now())
+
+  @@index([callRecordId])
+  @@index([traceId])
+}
+
+model SpeechEvaluation {
+  id                String      @id @default(cuid())
+  callRecordId      String
+  callRecord        CallRecord  @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  transcriptId      String?
+  turnIndex         Int?
+  recognizedText    String
+  referenceText     String?
+  wer               Float?      // Word Error Rate (0.0 = perfect)
+  cer               Float?      // Character Error Rate (0.0 = perfect)
+  hasAudioFailure   Boolean     @default(false)
+  languageDetected  String      @default("en")
+  languageAccuracy  Float       @default(1.0)
+  createdAt         DateTime    @default(now())
+
+  @@index([callRecordId])
+}
+
+model HandoverEvaluation {
+  id                String      @id @default(cuid())
+  callRecordId      String
+  callRecord        CallRecord  @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  requestedBy       String      // "customer" | "frustration" | "knowledge_gap"
+  notifiedAgent     Boolean     @default(true)
+  agentAccepted     Boolean     @default(false)
+  transferCompleted Boolean     @default(false)
+  timeToConnectMs   Int?
+  failureReason     String?
+  createdAt         DateTime    @default(now())
+
+  @@index([callRecordId])
+  @@index([requestedBy])
+}
+
+model CustomerFeedback {
+  id            String      @id @default(cuid())
+  callRecordId  String      @unique
+  callRecord    CallRecord  @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  customerId    String?
+  rating        Int         // 1 to 5 stars
+  feedbackText  String?
+  sentiment     String      @default("NEUTRAL") // "POSITIVE" | "NEUTRAL" | "NEGATIVE"
+  csatScore     Float       // CSAT percentage (rating / 5 * 100)
+  createdAt     DateTime    @default(now())
+
+  @@index([rating])
+  @@index([sentiment])
+}
+
+model RepetitionIncident {
+  id                 String      @id @default(cuid())
+  callRecordId       String
+  callRecord         CallRecord  @relation(fields: [callRecordId], references: [id], onDelete: Cascade)
+  questionText       String
+  previousTurnId     Int
+  currentTurnId      Int
+  similarityScore    Float       // 0.0 to 1.0
+  wasAlreadyAnswered Boolean     @default(true)
+  createdAt          DateTime    @default(now())
+
+  @@index([callRecordId])
+}
+
+model EvaluationJob {
+  id           String      @id @default(cuid())
+  callRecordId String
+  status       String      @default("queued") // "queued" | "processing" | "completed" | "failed"
+  error        String?
+  attempts     Int         @default(0)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([status])
+  @@index([callRecordId])
+}
+
+model AIQualityAlert {
+  id           String      @id @default(cuid())
+  alertType    String      // "low_relevance" | "high_hallucination" | "poor_retrieval" | "high_latency" | "repeated_questions" | "failed_handover" | "low_csat"
+  severity     String      // "warning" | "critical"
+  callRecordId String?
+  message      String
+  metrics      String?     // JSON string
+  isDismissed  Boolean     @default(false)
+  createdAt    DateTime    @default(now())
+
+  @@index([isDismissed])
+  @@index([severity])
+  @@index([createdAt])
+}
+
 
 
 

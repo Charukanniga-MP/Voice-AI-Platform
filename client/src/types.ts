@@ -697,4 +697,128 @@ export interface BusinessReportRecord {
   hasCsv: boolean;
 }
 
+// ==========================================
+// AI Quality Evaluation & Observability Types
+// ==========================================
+
+export interface AIQualityKPI {
+  score: number;
+  p95Ms?: number;
+  status: 'excellent' | 'good' | 'warning' | 'critical' | 'needs_attention' | 'no_data';
+  label: string;
+}
+
+export interface AIQualityOverviewData {
+  totalEvaluatedCalls: number;
+  overallQualityScore: number;
+  coveragePercentage: number;
+  kpis: {
+    overallQuality: AIQualityKPI;
+    answerRelevance: AIQualityKPI;
+    answerCorrectness: AIQualityKPI;
+    hallucinationControl: AIQualityKPI;
+    retrievalAccuracy: AIQualityKPI;
+    responseLatency: AIQualityKPI;
+    speechAccuracy: AIQualityKPI;
+    handoverSuccess: AIQualityKPI;
+    customerSatisfaction: AIQualityKPI;
+    repetitionControl: AIQualityKPI;
+  };
+  activeAlertsCount: number;
+}
+
+export interface AIQualityTrendPoint {
+  date: string;
+  overallQualityScore: number;
+  answerRelevance: number;
+  hallucinationRate: number;
+  avgLatencyMs: number;
+  csatScore: number;
+}
+
+export interface AIQualityAlertItem {
+  id: string;
+  alertType: string;
+  severity: 'warning' | 'critical';
+  callRecordId?: string | null;
+  message: string;
+  metrics?: string | null;
+  isDismissed: boolean;
+  createdAt: string;
+}
+
+export interface TurnEvaluationDetail {
+  id: string;
+  turnIndex: number;
+  query: string;
+  response: string;
+  relevanceScore: number;
+  relevanceExplanation?: string | null;
+  correctnessScore: number;
+  correctnessExplanation?: string | null;
+  hallucinationScore: number;
+  isHallucination: boolean;
+  unsupportedClaims: string[];
+  supportedClaims: string[];
+  evaluationExplanation?: string | null;
+  retrievedEvidence: string[];
+  evaluatedAt: string;
+}
+
+export interface RAGEvaluationDetail {
+  id: string;
+  turnIndex?: number | null;
+  query: string;
+  retrievedContext: string[] | string;
+  contextRelevance: number;
+  contextPrecision: number;
+  contextRecall: number;
+  kbCoverage: number;
+  retrievalFailure: boolean;
+}
+
+export interface LatencySpanDetail {
+  id: string;
+  turnId?: number | null;
+  traceId: string;
+  spanId: string;
+  sttMs: number;
+  intentMs: number;
+  ragMs: number;
+  llmMs: number;
+  ttsMs: number;
+  totalMs: number;
+}
+
+export interface ConversationEvaluationItem {
+  id: string;
+  callRecordId: string;
+  overallQualityScore: number;
+  relevanceAvg?: number | null;
+  correctnessAvg?: number | null;
+  hallucinationRate?: number | null;
+  retrievalAccuracyAvg?: number | null;
+  latencyAvgMs?: number | null;
+  latencyP95Ms?: number | null;
+  speechAccuracyAvg?: number | null;
+  handoverSuccessRate?: number | null;
+  csatScore?: number | null;
+  repetitionRate?: number | null;
+  evaluationStatus: string;
+  evaluatedMetricsCount: number;
+  summaryNotes?: string | null;
+  createdAt: string;
+  callRecord: {
+    id: string;
+    callId: string;
+    customerName: string;
+    customerPhone?: string | null;
+    duration: number;
+    startTime: string;
+    transferred: boolean;
+    rating?: number | null;
+  };
+}
+
+
 
