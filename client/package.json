@@ -1,7 +1,8 @@
 {
   "name": "client",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.1.0",
+  "description": "KAIRA Dental Clinic AI Voice Agent & Appointment Booking Platform Frontend",
   "type": "module",
   "scripts": {
     "dev": "vite",

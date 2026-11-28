@@ -51,6 +51,26 @@ KAIRA is a production-ready, full-stack, AI-powered customer communication platf
 
 ---
 
+## 🦷 KAIRA Dental Receptionist & Appointment Booking (New Upgrade)
+
+KAIRA now operates as an intelligent virtual dental clinic receptionist with context-aware natural conversation and full appointment management:
+
+1. **Intelligent Conversational Receptionist**:
+   - Understands natural patient inquiries (wisdom tooth pain, root canals, cleaning, whitening, sensitivity).
+   - Powered by **Google Gemini** & OpenAI LLM with grounded clinical knowledge.
+   - Maintains multi-turn conversation memory with pronoun resolution ("Does it hurt?" refers to previously discussed procedure).
+   - Zero premature or unnecessary human handovers for standard dental inquiries.
+
+2. **End-to-End Appointment Booking**:
+   - Symptom intake & urgency triage (pain severity, duration, location).
+   - Real-time dentist availability checks and double-booking prevention.
+   - Direct appointment confirmation, unique reference generation (e.g. `DEN-202611-ABCD`), cancellation, and rescheduling.
+
+3. **Real-Time Voice Interruption (Barge-In)**:
+   - Synchronized turn tracking (`turnId`) cancels active audio generation when patient speaks over AI.
+
+---
+
 ## 🛠 Technology Stack
 
 - **Backend**: Node.js, Express, Socket.IO, Prisma ORM, SQLite (`server/prisma/dev.db`), `bcryptjs`, `jsonwebtoken`, `multer`, `pdf-parse`, `mammoth`, `openai`.
