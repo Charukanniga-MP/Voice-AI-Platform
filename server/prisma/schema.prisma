@@ -36,6 +36,7 @@ model User {
   sentimentRecords   SentimentAnalysis[]
   agentEvaluations   AgentPerformanceEvaluation[]
   dataRequests       CustomerDataRequest[]
+  patientProfile     Patient?
 }
 
 model CustomerDataRequest {
@@ -129,6 +130,7 @@ model CallRecord {
   agentEvaluation    AgentPerformanceEvaluation?
   qualityEvents      CallQualityEvent[]
   recoveryEvents     CallRecoveryEvent[]
+  appointments       Appointment[]
 }
 
 model CallRecoveryEvent {
@@ -593,6 +595,198 @@ model Notification {
   @@index([role, read, createdAt])
   @@index([type, createdAt])
 }
+
+// ==========================================
+// KAIRA DENTAL CLINIC APPOINTMENT MANAGEMENT
+// ==========================================
+
+model Patient {
+  id               String                @id @default(cuid())
+  userId           String?               @unique
+  user             User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name             String
+  email            String?
+  phone            String                @unique
+  dateOfBirth      DateTime?
+  medicalNotes     String?
+  emergencyContact String?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  appointments     Appointment[]
+  consentRecords   PatientConsent[]
+  reminders        AppointmentReminder[]
+  waitlistEntries  AppointmentWaitlist[]
+
+  @@index([phone])
+  @@index([email])
+}
+
+model Dentist {
+  id              String            @id @default(cuid())
+  name            String
+  email           String            @unique
+  phone           String?
+  specialization  String            // "General Dentistry" | "Orthodontics" | "Endodontics" | "Periodontics" | "Oral Surgery" | "Pediatric"
+  licenseNumber   String            @unique
+  consultationFee Float             @default(50.0)
+  bio             String?
+  isActive        Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  schedules       DentistSchedule[]
+  blockedSlots    BlockedSlot[]
+  appointments    Appointment[]
+
+  @@index([specialization])
+  @@index([isActive])
+}
+
+model DentalService {
+  id              String                @id @default(cuid())
+  name            String
+  code            String                @unique // "CLEANING", "WISDOM_EXAM", "EXTRACTION", "ROOT_CANAL", "FILLING", "WHITENING"
+  category        String                // "preventive", "restorative", "surgical", "cosmetic", "emergency"
+  description     String?
+  durationMinutes Int                   @default(30)
+  price           Float                 @default(100.0)
+  isActive        Boolean               @default(true)
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  appointments    Appointment[]
+  waitlistEntries AppointmentWaitlist[]
+
+  @@index([category])
+  @@index([isActive])
+}
+
+model DentistSchedule {
+  id                  String   @id @default(cuid())
+  dentistId           String
+  dentist             Dentist  @relation(fields: [dentistId], references: [id], onDelete: Cascade)
+  dayOfWeek           Int      // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  startTime           String   // "09:00"
+  endTime             String   // "17:00"
+  slotDurationMinutes Int      @default(30)
+  isWorkingDay        Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([dentistId, dayOfWeek])
+  @@index([dentistId, dayOfWeek])
+}
+
+model BlockedSlot {
+  id            String    @id @default(cuid())
+  dentistId     String?
+  dentist       Dentist?  @relation(fields: [dentistId], references: [id], onDelete: Cascade)
+  startDateTime DateTime
+  endDateTime   DateTime
+  reason        String    // "Lunch Break", "Staff Meeting", "Clinic Maintenance", "Leave"
+  createdAt     DateTime  @default(now())
+
+  @@index([dentistId, startDateTime, endDateTime])
+}
+
+model Appointment {
+  id                  String                @id @default(cuid())
+  bookingReference    String                @unique // e.g. "DEN-2026-ABCD"
+  patientId           String
+  patient             Patient               @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  dentistId           String
+  dentist             Dentist               @relation(fields: [dentistId], references: [id], onDelete: Cascade)
+  serviceId           String
+  service             DentalService         @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  appointmentDateTime DateTime
+  endDateTime         DateTime
+  durationMinutes     Int                   @default(30)
+  status              String                @default("scheduled") // "scheduled" | "confirmed" | "completed" | "cancelled" | "rescheduled" | "no_show"
+  chiefComplaint      String?               // e.g. "Lower right wisdom tooth pain"
+  notes               String?
+  cancellationReason  String?
+  rescheduledFromId   String?
+  callRecordId        String?
+  callRecord          CallRecord?           @relation(fields: [callRecordId], references: [id], onDelete: SetNull)
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  reminders           AppointmentReminder[]
+  auditLogs           BookingAuditLog[]
+  consentRecords      PatientConsent[]
+
+  @@index([dentistId, appointmentDateTime])
+  @@index([patientId, appointmentDateTime])
+  @@index([status, appointmentDateTime])
+  @@index([bookingReference])
+}
+
+model AppointmentReminder {
+  id            String      @id @default(cuid())
+  appointmentId String
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  patientId     String
+  patient       Patient     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  reminderType  String      // "sms" | "email" | "voice"
+  scheduledFor  DateTime
+  sentAt        DateTime?
+  status        String      @default("pending") // "pending" | "sent" | "failed"
+  message       String?
+  createdAt     DateTime    @default(now())
+
+  @@index([appointmentId, scheduledFor])
+  @@index([status, scheduledFor])
+}
+
+model AppointmentWaitlist {
+  id                 String         @id @default(cuid())
+  patientId          String
+  patient            Patient        @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  dentistId          String?
+  serviceId          String?
+  service            DentalService? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  preferredDate      DateTime
+  preferredTimeRange String?        // "morning" | "afternoon" | "any"
+  status             String         @default("waiting") // "waiting" | "notified" | "booked" | "expired"
+  notes              String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@index([patientId, preferredDate])
+  @@index([status, preferredDate])
+}
+
+model PatientConsent {
+  id            String       @id @default(cuid())
+  patientId     String
+  patient       Patient      @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  appointmentId String?
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  consentType   String       // "treatment_consent" | "data_processing" | "call_recording"
+  isGranted     Boolean      @default(true)
+  grantedAt     DateTime     @default(now())
+  ipAddress     String?
+  signature     String?
+
+  @@index([patientId, consentType])
+}
+
+model BookingAuditLog {
+  id               String       @id @default(cuid())
+  appointmentId    String?
+  appointment      Appointment? @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  bookingReference String
+  action           String       // "CREATED" | "CONFIRMED" | "CANCELLED" | "RESCHEDULED" | "STATUS_CHANGE"
+  actorType        String       // "patient" | "ai_voice" | "staff" | "system"
+  actorId          String?
+  details          String?      // JSON string of changes
+  timestamp        DateTime     @default(now())
+
+  @@index([bookingReference, timestamp])
+  @@index([appointmentId, timestamp])
+}
+
 
 
 

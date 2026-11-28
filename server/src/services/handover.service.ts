@@ -174,16 +174,12 @@ class HandoverService {
       reason = 'Customer Frustration';
       detailedReason = `Customer expressed high frustration/anger (${sentimentCategory}, confidence: ${sentimentResult.confidenceScore}): "${queryText}"`;
       rawAnnouncement = "I understand your frustration, and I want to make sure your question is addressed properly. Let me connect you directly with a member of our human support team right away. Please hold for just a moment.";
-    } else if (isUnknownQuestion) {
+    } else if (isUnknownQuestion && isCompanySpecificQuery && frustrationCount > 0) {
+      // Only escalate missing company info if the customer is actively frustrated
       shouldTransfer = true;
-      if (isCompanySpecificQuery) {
-        reason = 'Knowledge Base Missing Information';
-        detailedReason = `Specific company/product information is missing from the Knowledge Base: "${queryText}"`;
-      } else {
-        reason = 'Unknown Question';
-        detailedReason = `Unsupported query not available in Kaira Knowledge Base: "${queryText}"`;
-      }
-      rawAnnouncement = "I'm sorry, I don't have the exact information to answer that correctly. Let me connect you with one of our human representatives who can assist you.";
+      reason = 'Knowledge Base Missing Information';
+      detailedReason = `Specific company/product information is missing from the Knowledge Base: "${queryText}"`;
+      rawAnnouncement = "I'm sorry, I don't have that specific information right now. Let me connect you with one of our representatives who can assist you.";
     }
 
     let verbalAnnouncement = rawAnnouncement;
